@@ -1,0 +1,580 @@
+import React, { Suspense, useEffect, useRef, useState } from "react";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { getUpdateInfo, openExternal } from "./api";
+import { AppProvider, useAppData } from "./state";
+import DashboardPage from "./pages/DashboardPage";
+import { BrandProfile, UpdateInfo } from "./types";
+
+const TrackerPage = React.lazy(() => import("./pages/TrackerPage"));
+const PipelinePage = React.lazy(() => import("./pages/PipelinePage"));
+const CalendarPage = React.lazy(() => import("./pages/CalendarPage"));
+const SettingsPage = React.lazy(() => import("./pages/SettingsPage"));
+
+const DEFAULT_PROFILE: BrandProfile = {
+  name: "Tu Nombre",
+  role: "Ingeniero Industrial IA",
+  avatarSrc: "/brand-avatar.svg",
+  avatarAlt: "Foto de perfil",
+};
+
+const PencilIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" />
+    <path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.82 3.75 3.75 1.83-1.82z" />
+  </svg>
+);
+
+const CameraIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M9 4a2 2 0 0 0-1.6.8L6.7 6H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.7l-.7-1.2A2 2 0 0 0 14 4H9zm3 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" />
+  </svg>
+);
+
+const parseVersion = (value: string | null | undefined): number[] => {
+  if (!value) return [];
+  return value
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((num) => !Number.isNaN(num));
+};
+
+const isNewerVersion = (latest: string | null | undefined, current: string | null | undefined): boolean => {
+  const latestParts = parseVersion(latest);
+  const currentParts = parseVersion(current);
+  const maxLen = Math.max(latestParts.length, currentParts.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    const left = latestParts[i] ?? 0;
+    const right = currentParts[i] ?? 0;
+    if (left > right) return true;
+    if (left < right) return false;
+  }
+  return false;
+};
+
+const AppShell: React.FC = () => {
+  const { loading, error, settings, saveSettings } = useAppData();
+  const location = useLocation();
+  const isDashboard = location.pathname === "/" || location.pathname === "/analytics";
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [profile, setProfile] = useState<BrandProfile>(DEFAULT_PROFILE);
+  const [editingField, setEditingField] = useState<"name" | "role" | null>(null);
+  const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const hasLoadedProfileRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
+  const avatarMenuRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    getUpdateInfo()
+      .then((info) => {
+        if (active) {
+          setUpdateInfo(info);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setUpdateInfo(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const loadVersion = async () => {
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app");
+        const version = await getVersion();
+        if (alive) {
+          setAppVersion(version);
+        }
+      } catch {
+        // ignore in non-tauri contexts
+      }
+    };
+    loadVersion();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleUpdateClick = async () => {
+    if (!updateInfo?.url || isUpdating) {
+      return;
+    }
+    setUpdateError(null);
+    setIsUpdating(true);
+    try {
+      const hasTauri = !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
+      if (hasTauri) {
+        const { checkUpdate, installUpdate } = await import("@tauri-apps/api/updater");
+        const { relaunch } = await import("@tauri-apps/api/process");
+        const { shouldUpdate } = await checkUpdate();
+        if (!shouldUpdate) {
+          setUpdateError("Ya estás en la última versión.");
+          return;
+        }
+        await installUpdate();
+        await relaunch();
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "No se pudo instalar automaticamente.";
+      setUpdateError(`${message} Abriendo el paquete...`);
+    } finally {
+      setIsUpdating(false);
+    }
+    openExternal(updateInfo.url);
+  };
+
+  useEffect(() => {
+    const warmPages = () => {
+      import("./pages/TrackerPage");
+      import("./pages/PipelinePage");
+      import("./pages/CalendarPage");
+      import("./pages/SettingsPage");
+    };
+    if ("requestIdleCallback" in window) {
+      const handle = window.requestIdleCallback(warmPages);
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = window.setTimeout(warmPages, 1200);
+    return () => window.clearTimeout(handle);
+  }, []);
+
+  useEffect(() => {
+    if (!settings || hasLoadedProfileRef.current) {
+      return;
+    }
+    const nextProfile = settings.brand_profile
+      ? { ...DEFAULT_PROFILE, ...settings.brand_profile }
+      : DEFAULT_PROFILE;
+    setProfile(nextProfile);
+    hasLoadedProfileRef.current = true;
+  }, [settings]);
+
+  useEffect(() => {
+    if (!settings || !hasLoadedProfileRef.current) {
+      return;
+    }
+    const settingsProfile = settings.brand_profile ?? null;
+    if (settingsProfile && JSON.stringify(settingsProfile) === JSON.stringify(profile)) {
+      return;
+    }
+    if (!settingsProfile && JSON.stringify(DEFAULT_PROFILE) === JSON.stringify(profile)) {
+      return;
+    }
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      saveSettings({
+        ...settings,
+        brand_profile: profile,
+      });
+    }, 400);
+    return () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, [profile, saveSettings, settings]);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(target)) {
+        setIsAvatarMenuOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsAvatarMenuOpen(false);
+        setIsCameraOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isCameraOpen && streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }, [isCameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) {
+      return;
+    }
+    setIsAvatarMenuOpen(false);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") {
+        setProfile((current) => ({
+          ...current,
+          avatarSrc: result,
+        }));
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const openCamera = async () => {
+    setIsAvatarMenuOpen(false);
+    setCameraError(null);
+    setIsCameraOpen(true);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Tu navegador no permite abrir la cámara. Usa Subir foto.");
+      cameraInputRef.current?.click();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+    } catch {
+      setCameraError("No se pudo acceder a la cámara. Usa Subir foto.");
+      setIsCameraOpen(false);
+      cameraInputRef.current?.click();
+    }
+  };
+
+  const closeCamera = () => {
+    setIsCameraOpen(false);
+    setCameraError(null);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current) {
+      return;
+    }
+    const width = videoRef.current.videoWidth;
+    const height = videoRef.current.videoHeight;
+    if (!width || !height) {
+      setCameraError("La cámara aún no está lista.");
+      return;
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.drawImage(videoRef.current, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    setProfile((current) => ({
+      ...current,
+      avatarSrc: dataUrl,
+    }));
+    closeCamera();
+  };
+
+  const handleProfileKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+      setEditingField(null);
+    }
+    if (event.key === "Escape") {
+      event.currentTarget.blur();
+      setEditingField(null);
+    }
+  };
+
+  const hasTauri = typeof window !== "undefined" && !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
+  const resolvedVersion = hasTauri ? appVersion || updateInfo?.current_version || null : "DEV";
+  const shouldShowUpdate =
+    hasTauri &&
+    !!updateInfo?.update_available &&
+    !!updateInfo?.url &&
+    (!resolvedVersion || !updateInfo?.latest_version || isNewerVersion(updateInfo.latest_version, resolvedVersion));
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark profile-avatar" ref={avatarMenuRef}>
+            <input
+              ref={fileInputRef}
+              className="profile-file-input"
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarChange}
+            />
+            <input
+              ref={cameraInputRef}
+              className="profile-file-input"
+              type="file"
+              accept="image/*"
+              capture="user"
+              onChange={handleAvatarChange}
+            />
+            <button
+              className="avatar-button"
+              type="button"
+              aria-label="Cambiar foto"
+              aria-expanded={isAvatarMenuOpen}
+              onClick={() => setIsAvatarMenuOpen((open) => !open)}
+            >
+              <img className="brand-avatar" src={profile.avatarSrc} alt={profile.avatarAlt} />
+              <span className="avatar-badge">
+                <CameraIcon />
+              </span>
+            </button>
+            {isAvatarMenuOpen && (
+              <div className="avatar-menu" role="menu">
+                <button
+                  className="avatar-action-button"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsAvatarMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  Subir foto
+                </button>
+                <button
+                  className="avatar-action-button secondary"
+                  type="button"
+                  role="menuitem"
+                  onClick={openCamera}
+                >
+                  Tomar foto
+                </button>
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="brand-line">
+              {editingField === "name" ? (
+                <input
+                  id="profile-name"
+                  className="brand-input brand-input-title"
+                  type="text"
+                  value={profile.name}
+                  autoFocus
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  onBlur={() => setEditingField(null)}
+                  onKeyDown={handleProfileKeyDown}
+                />
+              ) : (
+                <>
+                  <span className="brand-title-value">{profile.name}</span>
+                  <button
+                    className="icon-button brand-edit"
+                    type="button"
+                    aria-label="Editar nombre"
+                    onClick={() => setEditingField("name")}
+                  >
+                    <PencilIcon />
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="brand-line">
+              {editingField === "role" ? (
+                <input
+                  id="profile-role"
+                  className="brand-input brand-input-subtitle"
+                  type="text"
+                  value={profile.role}
+                  autoFocus
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      role: event.target.value,
+                    }))
+                  }
+                  onBlur={() => setEditingField(null)}
+                  onKeyDown={handleProfileKeyDown}
+                />
+              ) : (
+                <>
+                  <span className="brand-subtitle-value">{profile.role}</span>
+                  <button
+                    className="icon-button brand-edit"
+                    type="button"
+                    aria-label="Editar posición"
+                    onClick={() => setEditingField("role")}
+                  >
+                    <PencilIcon />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <nav className="nav">
+          <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Dashboard
+          </NavLink>
+          <NavLink to="/tracker" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Tracker Table
+          </NavLink>
+          <NavLink to="/pipeline" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Pipeline
+          </NavLink>
+          <NavLink to="/calendar" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Calendar
+          </NavLink>
+          <NavLink to="/settings" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Settings
+          </NavLink>
+        </nav>
+        <div className="sidebar-footer">
+          <p>Local-first · SQLite/Postgres</p>
+        </div>
+      </aside>
+      <main className="content">
+        {isDashboard && (
+          <header className="topbar">
+            <div>
+              <h1>
+                Personal Interview & Application Tracker
+                {resolvedVersion && <span className="app-version">v{resolvedVersion}</span>}
+              </h1>
+              <p>Offline-first workspace for your job search pipeline.</p>
+            </div>
+            <div className="status-pill">
+              {loading ? "Loading..." : "Ready"}
+            </div>
+          </header>
+        )}
+        {shouldShowUpdate && (
+          <section className="update-banner" role="status">
+            <div>
+              <strong>New version {updateInfo.latest_version} available.</strong>
+              <p>{updateInfo.notes || "Download the latest build to update."}</p>
+              {updateError && <p>{updateError}</p>}
+            </div>
+            <div className="update-actions">
+              <button
+                className="primary"
+                onClick={handleUpdateClick}
+                disabled={isUpdating}
+              >
+                {isUpdating ? "Updating..." : "Download update"}
+              </button>
+            </div>
+          </section>
+        )}
+        {error && <div className="alert">{error}</div>}
+        <div className="page">
+          <Suspense fallback={<div className="empty">Loading page...</div>}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/tracker" element={<TrackerPage />} />
+              <Route path="/pipeline" element={<PipelinePage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/analytics" element={<DashboardPage />} />
+            </Routes>
+          </Suspense>
+        </div>
+      </main>
+      {isCameraOpen && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tomar foto"
+          onClick={closeCamera}
+        >
+          <div className="modal camera-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>Tomar foto</h3>
+                <p>Usa la cámara para actualizar tu foto de perfil.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={closeCamera} aria-label="Cerrar">
+                X
+              </button>
+            </div>
+            <div className="camera-body">
+              {cameraError ? (
+                <div className="alert">{cameraError}</div>
+              ) : (
+                <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
+              )}
+            </div>
+            <div className="camera-actions">
+              <button className="ghost" type="button" onClick={closeCamera}>
+                Cancelar
+              </button>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  closeCamera();
+                  fileInputRef.current?.click();
+                }}
+              >
+                Subir foto
+              </button>
+              <button className="primary" type="button" onClick={capturePhoto} disabled={!!cameraError}>
+                Capturar
+              </button>
+            </div>
+            <canvas ref={canvasRef} className="camera-canvas" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <AppProvider>
+      <AppShell />
+    </AppProvider>
+  );
+};
+
+export default App;

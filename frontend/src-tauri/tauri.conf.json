@@ -1,0 +1,60 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:desktop",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "Interview Atlas",
+    "version": "1.1.1"
+  },
+  "tauri": {
+    "allowlist": {
+      "shell": {
+        "open": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.interview.atlas",
+      "icon": [
+        "icons/icon.icns",
+        "icons/icon.ico",
+        "icons/icon.png"
+      ],
+      "targets": [
+        "dmg",
+        "app",
+        "msi",
+        "nsis",
+        "updater"
+      ],
+      "externalBin": [
+        "../../backend/dist/interview-atlas-backend"
+      ]
+    },
+    "security": {
+      "csp": null
+    },
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/alexllenaf/INTERLENA-updates/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZGNEQ0NkExM0U5RDJDQjkKUldTNUxKMCtvVVpOLy9LY1JyTnp0QVM4N290aEszRVk4Nk83NW5DYXFwUzlPWVVqcFhRajhSSWcK"
+    },
+    "windows": [
+      {
+        "title": "Interview Atlas",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+.DS_Store
+__pycache__/
+*.pyc
+data/
+00_Outdated/
+backend/build/
+backend/dist/
+frontend/dist/
+frontend/node_modules/
+frontend/src-tauri/target/
+frontend/src-tauri/keys
+*.dmg
+*.pkg
+*.tar.gz
+*.sig
+frontend/src-tauri/keys

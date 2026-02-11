@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "notes": "First signed desktop release.",
+  "pub_date": "2026-02-10T12:00:00Z",
+  "url": "https://your-domain.com/updates/Interview%20Atlas.app.tar.gz",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQ1hNeVljWlg5Q1k4RFl4YjRPUEVtSnNWaFVLNXVDZ2RNbUNYaVUrSVZnOWpLR1MzSVY2YzY1SDFLN21yaXZnTmdxejAybEVtY1plcXYxT2xJbGF0c1F0cGh4cUR4WmdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzcwNzUzMjkzCWZpbGU6SW50ZXJ2aWV3IEF0bGFzLmFwcC50YXIuZ3oKeFhROUV4OWd5bXpJUXZxL2xGL2xZM1U0UGp3WHJianlzV0FZR2NkWDg3Z29DTkt6RHJCRkJLYzl2Y2xhbUFPaXV3T3c5Y1E0Vzl3Qm5GRHZkWUVyQXc9PQo=",
+      "url": "https://your-domain.com/updates/Interview%20Atlas.app.tar.gz"
+    }
+  }
+}
