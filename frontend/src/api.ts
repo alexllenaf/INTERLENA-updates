@@ -2,6 +2,9 @@ import { Application, ApplicationInput, Settings, UpdateInfo, View } from "./typ
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
+const hasTauri = () =>
+  typeof window !== "undefined" && !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
+
 class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -47,6 +50,74 @@ async function openExternal(url: string) {
   link.click();
   link.remove();
 }
+
+const parseContentDispositionFilename = (header: string | null): string | null => {
+  if (!header) return null;
+  const starMatch = header.match(/filename\*=([^;]+)/i);
+  if (starMatch?.[1]) {
+    const raw = starMatch[1].trim();
+    const cleaned = raw.replace(/^UTF-8''/i, "").replace(/^"|"$/g, "");
+    try {
+      return decodeURIComponent(cleaned);
+    } catch {
+      return cleaned;
+    }
+  }
+  const match = header.match(/filename=([^;]+)/i);
+  if (match?.[1]) {
+    return match[1].trim().replace(/^"|"$/g, "");
+  }
+  return null;
+};
+
+const downloadBlobInBrowser = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+export async function saveBlobAsFile(blob: Blob, filename: string) {
+  if (hasTauri()) {
+    try {
+      const { save } = await import("@tauri-apps/api/dialog");
+      const { writeBinaryFile } = await import("@tauri-apps/api/fs");
+      const path = await save({ defaultPath: filename });
+      if (path) {
+        const data = new Uint8Array(await blob.arrayBuffer());
+        await writeBinaryFile({ path, contents: data });
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to save file with Tauri", error);
+    }
+  }
+  downloadBlobInBrowser(blob, filename);
+}
+
+const downloadFromUrl = async (url: string, fallbackFilename: string) => {
+  if (!url) return;
+  try {
+    const res = await fetch(url, { credentials: "same-origin" });
+    if (!res.ok) {
+      throw new Error(`Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const filename =
+      parseContentDispositionFilename(res.headers.get("content-disposition")) ||
+      fallbackFilename;
+    await saveBlobAsFile(blob, filename);
+  } catch (error) {
+    console.error("Failed to download file", error);
+    if (!hasTauri()) {
+      void openExternal(url);
+    }
+  }
+};
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -212,18 +283,24 @@ export async function deleteView(viewId: string): Promise<void> {
 }
 
 export function downloadExcel(scope: "all" | "favorites" | "active" = "all") {
-  void openExternal(`${API_BASE}/export/excel?scope=${scope}`);
+  void downloadFromUrl(`${API_BASE}/export/excel?scope=${scope}`, `applications_${scope}.xlsx`);
 }
 
 export function downloadIcs(applicationId?: string) {
   const url = applicationId
     ? `${API_BASE}/export/ics?application_id=${encodeURIComponent(applicationId)}`
     : `${API_BASE}/export/ics`;
-  void openExternal(url);
+  const fallback = applicationId ? `${applicationId}.ics` : "events.ics";
+  void downloadFromUrl(url, fallback);
 }
 
 export function downloadBackup() {
-  void openExternal(`${API_BASE}/backup/export`);
+  void downloadFromUrl(`${API_BASE}/backup/export`, "backup.zip");
+}
+
+export function downloadTodoIcs(appId: number, todoId: string) {
+  const url = `${API_BASE}/export/todo?app_id=${appId}&todo_id=${encodeURIComponent(todoId)}`;
+  void downloadFromUrl(url, `todo_${todoId}.ics`);
 }
 
 export { ApiError, openExternal };

@@ -5,9 +5,14 @@ use tauri::api::process::{Command, CommandEvent};
 
 fn spawn_backend(app: &tauri::App) {
     let port = std::env::var("APP_PORT").unwrap_or_else(|_| "8000".to_string());
+    let feed_url = std::env::var("UPDATE_FEED_URL").unwrap_or_else(|_| {
+        "https://github.com/alexllenaf/INTERLENA-updates/releases/latest/download/latest.json"
+            .to_string()
+    });
     let version = app.package_info().version.to_string();
     let mut envs = HashMap::new();
     envs.insert("APP_VERSION".to_string(), version);
+    envs.insert("UPDATE_FEED_URL".to_string(), feed_url);
     let sidecar = Command::new_sidecar("interview-atlas-backend")
         .map(|cmd| {
             cmd.args(["--host", "127.0.0.1", "--port", &port])

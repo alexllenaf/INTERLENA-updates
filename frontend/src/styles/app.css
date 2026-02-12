@@ -458,6 +458,10 @@ h2 {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.dashboard .charts {
+  margin-top: 12px;
+}
+
 .charts .panel {
   display: flex;
   flex-direction: column;

@@ -8,10 +8,19 @@
   },
   "package": {
     "productName": "Interview Atlas",
-    "version": "1.1.1"
+    "version": "1.1.3"
   },
   "tauri": {
     "allowlist": {
+      "dialog": {
+        "save": true
+      },
+      "fs": {
+        "writeFile": true,
+        "scope": [
+          "**/*"
+        ]
+      },
       "shell": {
         "open": true
       }
@@ -44,7 +53,7 @@
         "https://github.com/alexllenaf/INTERLENA-updates/releases/latest/download/latest.json"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZGNEQ0NkExM0U5RDJDQjkKUldTNUxKMCtvVVpOLy9LY1JyTnp0QVM4N290aEszRVk4Nk83NW5DYXFwUzlPWVVqcFhRajhSSWcK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5ODgxRjFEMDQxMzEyNEIKUldSTEVoTUVIUitJbWRMT0ppVHR0dU1OMGVEeTVzUExZT2dHbkk0RmVMNXJtNU5IMmo2UzgzTHgK"
     },
     "windows": [
       {

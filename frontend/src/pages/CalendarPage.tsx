@@ -4,7 +4,15 @@ import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
 import StarRating from "../components/StarRating";
 import { DateCell, TextCell } from "../components/TableCells";
-import { deleteDocument, documentDownloadUrl, downloadIcs, openExternal, uploadDocuments } from "../api";
+import {
+  deleteDocument,
+  documentDownloadUrl,
+  downloadIcs,
+  downloadTodoIcs,
+  openExternal,
+  saveBlobAsFile,
+  uploadDocuments
+} from "../api";
 import { useAppData } from "../state";
 import { Application, DocumentFile, TodoItem } from "../types";
 import {
@@ -98,20 +106,13 @@ const buildSingleEventIcs = (event: CalendarEvent) => {
   return lines.join("\n");
 };
 
-const downloadEventIcs = (event: CalendarEvent) => {
+const downloadEventIcs = async (event: CalendarEvent) => {
   const content = buildSingleEventIcs(event);
   const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
   const safeName = `${event.type}-${event.company}-${event.dateKey}`
     .replace(/[^a-z0-9-_]+/gi, "_")
     .replace(/_+/g, "_");
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${safeName}.ics`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  await saveBlobAsFile(blob, `${safeName}.ics`);
 };
 
 const CalendarPage: React.FC = () => {
@@ -619,7 +620,7 @@ const CalendarPage: React.FC = () => {
   };
 
   const handleEventDownload = (event: CalendarEvent) => {
-    downloadEventIcs(event);
+    void downloadEventIcs(event);
   };
 
   const handleUpdate = async (payload: any, files: File[] = []) => {
@@ -708,11 +709,8 @@ const CalendarPage: React.FC = () => {
     setTodoCreateDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
-  const downloadTodoIcs = (row: TodoRow) => {
-    const url = `/api/export/todo?app_id=${row.appId}&todo_id=${encodeURIComponent(
-      row.todo.id
-    )}`;
-    void openExternal(url);
+  const handleDownloadTodoIcs = (row: TodoRow) => {
+    downloadTodoIcs(row.appId, row.todo.id);
   };
 
   const detailDocuments = detailApp?.documents_files || [];
@@ -1126,7 +1124,7 @@ const CalendarPage: React.FC = () => {
                             <button
                               className="icon-button"
                               type="button"
-                              onClick={() => downloadTodoIcs(row)}
+                              onClick={() => handleDownloadTodoIcs(row)}
                               aria-label="Download"
                             >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
