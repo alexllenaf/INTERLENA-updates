@@ -44,7 +44,7 @@ jobs:
             host_triple: aarch64-apple-darwin
             platform_key: darwin-aarch64
           - arch_slug: x64
-            runs_on: macos-13
+            runs_on: macos-15-intel
             host_triple: x86_64-apple-darwin
             platform_key: darwin-x86_64
 
