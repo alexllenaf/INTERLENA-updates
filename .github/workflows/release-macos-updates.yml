@@ -120,6 +120,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt pyinstaller
           python backend/build_backend.py
+          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          cp "backend/dist/interview-atlas-backend" "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
+          chmod +x "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
 
       - name: Build macOS app bundle (signed + notarized)
         working-directory: frontend
