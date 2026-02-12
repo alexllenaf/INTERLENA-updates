@@ -154,7 +154,7 @@ jobs:
           TAR_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
           SIG_PATH="${TAR_PATH}.sig"
 
-          test -n "${APP_PATH:-}" && test -f "$APP_PATH"
+          test -n "${APP_PATH:-}" && test -d "$APP_PATH"
           test -n "${DMG_PATH:-}" && test -f "$DMG_PATH"
           test -n "${TAR_PATH:-}" && test -f "$TAR_PATH"
           test -n "${SIG_PATH:-}" && test -f "$SIG_PATH"
@@ -164,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "${APP_PATH:-}" && test -f "$APP_PATH"
+          test -n "${APP_PATH:-}" && test -d "$APP_PATH"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
       - name: Verify Gatekeeper + notarization (only when Apple signing is enabled)
         if: steps.signing_mode.outputs.has_apple_signing == 'true'
@@ -173,7 +173,7 @@ jobs:
           APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           DMG_PATH="$(find frontend/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
 
-          test -n "${APP_PATH:-}" && test -f "$APP_PATH"
+          test -n "${APP_PATH:-}" && test -d "$APP_PATH"
           test -n "${DMG_PATH:-}" && test -f "$DMG_PATH"
 
           spctl --assess --type execute --verbose=4 "$APP_PATH"
