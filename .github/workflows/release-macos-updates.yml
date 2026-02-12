@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish in alexllenaf/INTERLENA-updates (example: v1.1.4)"
+        description: "Release tag to publish in alexllenaf/INTERLENA-updates (example: v1.1.9)"
         required: true
         type: string
       notes:
@@ -31,9 +31,23 @@ env:
   RELEASE_NOTES: ${{ github.event.release.body || inputs.notes || '' }}
 
 jobs:
-  build-sign-notarize-and-publish:
-    runs-on: macos-14
+  build-macos:
+    name: Build macOS (${{ matrix.arch_slug }})
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch_slug: arm64
+            runs_on: macos-14
+            host_triple: aarch64-apple-darwin
+            platform_key: darwin-aarch64
+          - arch_slug: x64
+            runs_on: macos-13
+            host_triple: x86_64-apple-darwin
+            platform_key: darwin-x86_64
+
     steps:
       - name: Checkout private source repo
         uses: actions/checkout@v4
@@ -42,14 +56,10 @@ jobs:
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          UPDATES_REPO_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
         run: |
           set -euo pipefail
           missing=()
-          for secret_name in \
-            TAURI_PRIVATE_KEY \
-            TAURI_KEY_PASSWORD \
-            UPDATES_REPO_TOKEN
+          for secret_name in TAURI_PRIVATE_KEY TAURI_KEY_PASSWORD
           do
             if [ -z "${!secret_name:-}" ]; then
               missing+=("$secret_name")
@@ -120,9 +130,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt pyinstaller
           python backend/build_backend.py
-          HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
-          cp "backend/dist/interview-atlas-backend" "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
-          chmod +x "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
+          cp "backend/dist/interview-atlas-backend" "backend/dist/interview-atlas-backend-${{ matrix.host_triple }}"
+          chmod +x "backend/dist/interview-atlas-backend-${{ matrix.host_triple }}"
 
       - name: Build macOS app bundle (signed)
         if: steps.signing_mode.outputs.has_apple_signing == 'true'
@@ -146,7 +155,7 @@ jobs:
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: npm run tauri:build
 
-      - name: Validate generated artifacts
+      - name: Collect architecture artifacts
         run: |
           set -euo pipefail
           APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
@@ -159,6 +168,22 @@ jobs:
           test -n "${TAR_PATH:-}" && test -f "$TAR_PATH"
           test -n "${SIG_PATH:-}" && test -f "$SIG_PATH"
 
+          OUT_DIR="$RUNNER_TEMP/interview-atlas-${{ matrix.arch_slug }}"
+          mkdir -p "$OUT_DIR"
+          cp "$DMG_PATH" "$OUT_DIR/Interview.Atlas-${{ matrix.arch_slug }}.dmg"
+          cp "$TAR_PATH" "$OUT_DIR/Interview.Atlas-${{ matrix.arch_slug }}.app.tar.gz"
+          cp "$SIG_PATH" "$OUT_DIR/Interview.Atlas-${{ matrix.arch_slug }}.app.tar.gz.sig"
+
+          cat > "$OUT_DIR/meta-${{ matrix.arch_slug }}.json" <<EOF
+          {
+            "arch_slug": "${{ matrix.arch_slug }}",
+            "platform_key": "${{ matrix.platform_key }}",
+            "dmg": "Interview.Atlas-${{ matrix.arch_slug }}.dmg",
+            "tar": "Interview.Atlas-${{ matrix.arch_slug }}.app.tar.gz",
+            "sig": "Interview.Atlas-${{ matrix.arch_slug }}.app.tar.gz.sig"
+          }
+          EOF
+
       - name: Verify codesign (only when Apple signing is enabled)
         if: steps.signing_mode.outputs.has_apple_signing == 'true'
         run: |
@@ -166,6 +191,7 @@ jobs:
           APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           test -n "${APP_PATH:-}" && test -d "$APP_PATH"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
       - name: Verify Gatekeeper + notarization (only when Apple signing is enabled)
         if: steps.signing_mode.outputs.has_apple_signing == 'true'
         run: |
@@ -180,33 +206,60 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
 
-      - name: Normalize artifact names and create latest.json
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform_key }}
+          path: ${{ runner.temp }}/interview-atlas-${{ matrix.arch_slug }}
+          if-no-files-found: error
+
+  publish-release-assets:
+    name: Publish assets to updates repo
+    needs: build-macos
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout private source repo
+        uses: actions/checkout@v4
+
+      - name: Validate publish secret
+        env:
+          UPDATES_REPO_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${UPDATES_REPO_TOKEN:-}" ]; then
+            echo "::error::Missing required secret: UPDATES_REPO_TOKEN"
+            exit 1
+          fi
 
-          APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          DMG_PATH="$(find frontend/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
-          TAR_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
-          SIG_PATH="${TAR_PATH}.sig"
+      - name: Download architecture artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-bundle
 
-          OUT_DIR="$RUNNER_TEMP/interview-atlas-release"
-          mkdir -p "$OUT_DIR"
-          cp "$DMG_PATH" "$OUT_DIR/Interview.Atlas.dmg"
-          cp "$TAR_PATH" "$OUT_DIR/Interview.Atlas.app.tar.gz"
-          cp "$SIG_PATH" "$OUT_DIR/Interview.Atlas.app.tar.gz.sig"
+      - name: Build latest.json
+        run: |
+          set -euo pipefail
+          OUT_DIR="$RUNNER_TEMP/release-bundle"
+          test -f "$OUT_DIR/Interview.Atlas-arm64.dmg"
+          test -f "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz"
+          test -f "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz.sig"
+          test -f "$OUT_DIR/Interview.Atlas-x64.dmg"
+          test -f "$OUT_DIR/Interview.Atlas-x64.app.tar.gz"
+          test -f "$OUT_DIR/Interview.Atlas-x64.app.tar.gz.sig"
+
+          cp "$OUT_DIR/Interview.Atlas-arm64.dmg" "$OUT_DIR/Interview.Atlas.dmg"
+          cp "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz" "$OUT_DIR/Interview.Atlas.app.tar.gz"
+          cp "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz.sig" "$OUT_DIR/Interview.Atlas.app.tar.gz.sig"
 
           VERSION="$(node -p "require('./frontend/src-tauri/tauri.conf.json').package.version")"
           PUBLISHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          ARCH="$(uname -m)"
-          if [ "$ARCH" = "arm64" ]; then
-            PLATFORM_KEY="darwin-aarch64"
-          else
-            PLATFORM_KEY="darwin-x86_64"
-          fi
-
-          export OUT_DIR VERSION PUBLISHED_AT PLATFORM_KEY
+          export VERSION PUBLISHED_AT OUT_DIR
           export ASSET_BASE_URL="https://github.com/${UPDATES_REPO}/releases/latest/download"
-          export SIGNATURE="$(tr -d '\r\n' < "$OUT_DIR/Interview.Atlas.app.tar.gz.sig")"
+          export ARM_SIG="$(tr -d '\r\n' < "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz.sig")"
+          export X64_SIG="$(tr -d '\r\n' < "$OUT_DIR/Interview.Atlas-x64.app.tar.gz.sig")"
 
           if [ -z "${RELEASE_NOTES// }" ]; then
             export RELEASE_NOTES="Interview Atlas ${TAG_NAME}."
@@ -217,30 +270,38 @@ jobs:
           const path = require("path");
 
           const outDir = process.env.OUT_DIR;
+          const base = process.env.ASSET_BASE_URL;
           const payload = {
             version: process.env.VERSION,
             notes: process.env.RELEASE_NOTES,
             pub_date: process.env.PUBLISHED_AT,
-            url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.dmg`,
-            download_url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.dmg`,
+            url: `${base}/Interview.Atlas-arm64.dmg`,
+            download_url: `${base}/Interview.Atlas-arm64.dmg`,
+            downloads: {
+              "darwin-aarch64": { url: `${base}/Interview.Atlas-arm64.dmg` },
+              "darwin-x86_64": { url: `${base}/Interview.Atlas-x64.dmg` },
+              default: `${base}/Interview.Atlas-arm64.dmg`
+            },
             platforms: {
-              [process.env.PLATFORM_KEY]: {
-                signature: process.env.SIGNATURE,
-                url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.app.tar.gz`
+              "darwin-aarch64": {
+                signature: process.env.ARM_SIG,
+                url: `${base}/Interview.Atlas-arm64.app.tar.gz`
+              },
+              "darwin-x86_64": {
+                signature: process.env.X64_SIG,
+                url: `${base}/Interview.Atlas-x64.app.tar.gz`
               }
             }
           };
           fs.writeFileSync(path.join(outDir, "latest.json"), `${JSON.stringify(payload, null, 2)}\n`);
           NODE
 
-          echo "OUT_DIR=$OUT_DIR" >> "$GITHUB_ENV"
-          ls -la "$OUT_DIR"
-
       - name: Publish assets to public updates repo
         env:
           GH_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
         run: |
           set -euo pipefail
+          OUT_DIR="$RUNNER_TEMP/release-bundle"
 
           NOTES_FILE="$RUNNER_TEMP/release-notes.txt"
           printf '%s\n' "${RELEASE_NOTES:-Interview Atlas ${TAG_NAME}.}" > "$NOTES_FILE"
@@ -261,6 +322,12 @@ jobs:
           gh release upload "$TAG_NAME" \
             --repo "$UPDATES_REPO" \
             --clobber \
+            "$OUT_DIR/Interview.Atlas-arm64.dmg" \
+            "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz" \
+            "$OUT_DIR/Interview.Atlas-arm64.app.tar.gz.sig" \
+            "$OUT_DIR/Interview.Atlas-x64.dmg" \
+            "$OUT_DIR/Interview.Atlas-x64.app.tar.gz" \
+            "$OUT_DIR/Interview.Atlas-x64.app.tar.gz.sig" \
             "$OUT_DIR/Interview.Atlas.dmg" \
             "$OUT_DIR/Interview.Atlas.app.tar.gz" \
             "$OUT_DIR/Interview.Atlas.app.tar.gz.sig" \

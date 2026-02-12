@@ -38,8 +38,12 @@ npm run tauri:build
 - Trigger: `release.published` (o `workflow_dispatch`)
 - Publica en `alexllenaf/INTERLENA-updates` estos assets:
   - `Interview.Atlas.dmg`
+  - `Interview.Atlas-arm64.dmg`
+  - `Interview.Atlas-x64.dmg`
   - `Interview.Atlas.app.tar.gz`
   - `Interview.Atlas.app.tar.gz.sig`
+  - `Interview.Atlas-arm64.app.tar.gz` + `.sig`
+  - `Interview.Atlas-x64.app.tar.gz` + `.sig`
   - `latest.json`
 
 Secrets requeridos en el repo privado:

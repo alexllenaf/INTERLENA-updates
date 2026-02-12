@@ -60,7 +60,7 @@ La app abrirá en `http://localhost:5173` y se comunica con el backend en `http:
 
 ## Actualizaciones (macOS)
 - Publica `latest.json` + `Interview.Atlas.app.tar.gz` + `Interview.Atlas.app.tar.gz.sig` para el updater de Tauri.
-- Publica `Interview.Atlas.dmg` para descarga manual del usuario final.
+- Publica `Interview.Atlas.dmg` (compatibilidad) y también `Interview.Atlas-arm64.dmg` + `Interview.Atlas-x64.dmg` para descarga manual según arquitectura.
 - El JSON de update usa `url`/`download_url` para el `.dmg` y `platforms.*.url` para el `.tar.gz` firmado.
 - Define `UPDATE_FEED_URL` apuntando a ese JSON (lo usa el banner de la UI).
 - La app de escritorio usa el updater nativo de Tauri (ver `frontend/src-tauri/tauri.conf.json`).
