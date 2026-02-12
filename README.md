@@ -6,6 +6,19 @@ Aplicación local con frontend en React + TypeScript y backend en FastAPI, con s
 - Python 3.10+
 - Node.js 18+
 
+## Instalación macOS (Interlena)
+### 1) Instalación con Homebrew (tap propio)
+```bash
+brew tap alexllenaf/interlena
+brew install --cask interlena
+```
+
+### 2) Instalación por descarga directa
+1. Descarga el archivo `.dmg` desde GitHub Releases.
+2. Abre el `.dmg` y arrastra `Interlena.app` a `/Applications`.
+3. Si macOS muestra un aviso de seguridad ("developer cannot be verified"), haz `Ctrl + click` sobre `Interlena.app` y selecciona `Open`.
+4. Alternativa: `System Settings` -> `Privacy & Security` -> `Open Anyway`.
+
 ## Backend (FastAPI)
 ```bash
 cd backend
@@ -46,10 +59,14 @@ La app abrirá en `http://localhost:5173` y se comunica con el backend en `http:
 - El diseño prioriza una UX tipo Notion/Airtable con módulos de analítica.
 
 ## Actualizaciones (macOS)
-- Publica un JSON con la versión, urls por plataforma y notas (ver `update_feed.example.json`).
+- Publica `latest.json` + `Interview.Atlas.app.tar.gz` + `Interview.Atlas.app.tar.gz.sig` para el updater de Tauri.
+- Publica `Interview.Atlas.dmg` para descarga manual del usuario final.
+- El JSON de update usa `url`/`download_url` para el `.dmg` y `platforms.*.url` para el `.tar.gz` firmado.
 - Define `UPDATE_FEED_URL` apuntando a ese JSON (lo usa el banner de la UI).
 - La app de escritorio usa el updater nativo de Tauri (ver `frontend/src-tauri/tauri.conf.json`).
 - Opcional: `UPDATE_NOTIFY=0` para desactivar la notificación de macOS.
+- Firma/notarización Apple es opcional en CI: sin esos secrets la app puede abrir con aviso "developer cannot be verified".
+- Workflow CI/CD: `.github/workflows/release-macos-updates.yml`.
 
 ## Desktop (macOS/Windows) con Tauri
 Requisitos: Rust + Node.js + Python 3.10+.
@@ -90,3 +107,8 @@ Detalles: `docs/DESKTOP.md`.
 
 ## Legacy (Streamlit)
 El código original en Streamlit se mantiene en `app.py` y `run_app.py` por compatibilidad.
+
+## License
+Copyright (c) 2026 Alex Llena Fernandez. All rights reserved.
+
+See `LICENSE`.

@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Interview Atlas",
-    "version": "1.1.3"
+    "version": "1.1.4"
   },
   "tauri": {
     "allowlist": {
@@ -62,7 +62,8 @@
         "height": 860,
         "minWidth": 1100,
         "minHeight": 720,
-        "resizable": true
+        "resizable": true,
+        "fileDropEnabled": false
       }
     ]
   }

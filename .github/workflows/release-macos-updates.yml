@@ -1,0 +1,250 @@
+name: Release macOS updates
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish in alexllenaf/INTERLENA-updates (example: v1.1.4)"
+        required: true
+        type: string
+      notes:
+        description: "Release notes (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.event.release.tag_name || inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  UPDATES_REPO: alexllenaf/INTERLENA-updates
+  TAG_NAME: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  RELEASE_NOTES: ${{ github.event.release.body || inputs.notes || '' }}
+
+jobs:
+  build-sign-notarize-and-publish:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout private source repo
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          UPDATES_REPO_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for secret_name in \
+            TAURI_PRIVATE_KEY \
+            TAURI_KEY_PASSWORD \
+            UPDATES_REPO_TOKEN
+          do
+            if [ -z "${!secret_name:-}" ]; then
+              missing+=("$secret_name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Resolve Apple signing mode
+        id: signing_mode
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          has_apple_signing=true
+          missing=()
+          for secret_name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!secret_name:-}" ]; then
+              has_apple_signing=false
+              missing+=("$secret_name")
+            fi
+          done
+
+          echo "has_apple_signing=$has_apple_signing" >> "$GITHUB_OUTPUT"
+          if [ "$has_apple_signing" = "true" ]; then
+            echo "Apple signing/notarization is enabled."
+          else
+            echo "::warning::Apple signing/notarization disabled. Missing secrets: ${missing[*]}"
+            echo "::warning::Resulting app may show 'developer cannot be verified'."
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Build backend sidecar binary
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+          python backend/build_backend.py
+
+      - name: Build macOS app bundle (signed + notarized)
+        working-directory: frontend
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri:build
+
+      - name: Verify signing, Gatekeeper and notarization staples
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find frontend/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          TAR_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          SIG_PATH="${TAR_PATH}.sig"
+
+          test -n "${APP_PATH:-}" && test -f "$APP_PATH"
+          test -n "${DMG_PATH:-}" && test -f "$DMG_PATH"
+          test -n "${TAR_PATH:-}" && test -f "$TAR_PATH"
+          test -n "${SIG_PATH:-}" && test -f "$SIG_PATH"
+
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Verify Gatekeeper + notarization (only when Apple signing is enabled)
+        if: steps.signing_mode.outputs.has_apple_signing == 'true'
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find frontend/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+
+          test -n "${APP_PATH:-}" && test -f "$APP_PATH"
+          test -n "${DMG_PATH:-}" && test -f "$DMG_PATH"
+
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
+      - name: Normalize artifact names and create latest.json
+        run: |
+          set -euo pipefail
+
+          APP_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          DMG_PATH="$(find frontend/src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          TAR_PATH="$(find frontend/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app.tar.gz' -print -quit)"
+          SIG_PATH="${TAR_PATH}.sig"
+
+          OUT_DIR="$RUNNER_TEMP/interview-atlas-release"
+          mkdir -p "$OUT_DIR"
+          cp "$DMG_PATH" "$OUT_DIR/Interview.Atlas.dmg"
+          cp "$TAR_PATH" "$OUT_DIR/Interview.Atlas.app.tar.gz"
+          cp "$SIG_PATH" "$OUT_DIR/Interview.Atlas.app.tar.gz.sig"
+
+          VERSION="$(node -p "require('./frontend/src-tauri/tauri.conf.json').package.version")"
+          PUBLISHED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          ARCH="$(uname -m)"
+          if [ "$ARCH" = "arm64" ]; then
+            PLATFORM_KEY="darwin-aarch64"
+          else
+            PLATFORM_KEY="darwin-x86_64"
+          fi
+
+          export OUT_DIR VERSION PUBLISHED_AT PLATFORM_KEY
+          export ASSET_BASE_URL="https://github.com/${UPDATES_REPO}/releases/latest/download"
+          export SIGNATURE="$(tr -d '\r\n' < "$OUT_DIR/Interview.Atlas.app.tar.gz.sig")"
+
+          if [ -z "${RELEASE_NOTES// }" ]; then
+            export RELEASE_NOTES="Interview Atlas ${TAG_NAME}."
+          fi
+
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const outDir = process.env.OUT_DIR;
+          const payload = {
+            version: process.env.VERSION,
+            notes: process.env.RELEASE_NOTES,
+            pub_date: process.env.PUBLISHED_AT,
+            url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.dmg`,
+            download_url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.dmg`,
+            platforms: {
+              [process.env.PLATFORM_KEY]: {
+                signature: process.env.SIGNATURE,
+                url: `${process.env.ASSET_BASE_URL}/Interview.Atlas.app.tar.gz`
+              }
+            }
+          };
+          fs.writeFileSync(path.join(outDir, "latest.json"), `${JSON.stringify(payload, null, 2)}\n`);
+          NODE
+
+          echo "OUT_DIR=$OUT_DIR" >> "$GITHUB_ENV"
+          ls -la "$OUT_DIR"
+
+      - name: Publish assets to public updates repo
+        env:
+          GH_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          NOTES_FILE="$RUNNER_TEMP/release-notes.txt"
+          printf '%s\n' "${RELEASE_NOTES:-Interview Atlas ${TAG_NAME}.}" > "$NOTES_FILE"
+          TITLE="Interview Atlas ${TAG_NAME#v}"
+
+          if gh release view "$TAG_NAME" --repo "$UPDATES_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --repo "$UPDATES_REPO" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG_NAME" \
+              --repo "$UPDATES_REPO" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE"
+          fi
+
+          gh release upload "$TAG_NAME" \
+            --repo "$UPDATES_REPO" \
+            --clobber \
+            "$OUT_DIR/Interview.Atlas.dmg" \
+            "$OUT_DIR/Interview.Atlas.app.tar.gz" \
+            "$OUT_DIR/Interview.Atlas.app.tar.gz.sig" \
+            "$OUT_DIR/latest.json"

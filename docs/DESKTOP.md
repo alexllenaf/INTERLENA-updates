@@ -33,6 +33,38 @@ npm run build:desktop
 npm run tauri:build
 ```
 
+### Release automatizada (repo privado -> repo público de updates)
+- Workflow: `.github/workflows/release-macos-updates.yml`
+- Trigger: `release.published` (o `workflow_dispatch`)
+- Publica en `alexllenaf/INTERLENA-updates` estos assets:
+  - `Interview.Atlas.dmg`
+  - `Interview.Atlas.app.tar.gz`
+  - `Interview.Atlas.app.tar.gz.sig`
+  - `latest.json`
+
+Secrets requeridos en el repo privado:
+- `TAURI_PRIVATE_KEY`
+- `TAURI_KEY_PASSWORD`
+- `UPDATES_REPO_TOKEN` (token con permisos para crear/editar releases en `alexllenaf/INTERLENA-updates`)
+
+Secrets opcionales para firma/notarización Apple (recomendado):
+- `APPLE_CERTIFICATE` (base64 del `.p12`)
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_ID`
+- `APPLE_PASSWORD` (app-specific password)
+- `APPLE_TEAM_ID`
+
+Si no configuras los secrets Apple:
+- La build sigue publicando `.dmg`, `.tar.gz`, `.sig` y `latest.json`.
+- El usuario puede ver "developer cannot be verified" al abrir.
+- Las validaciones de notarización (`spctl`, `stapler`) se omiten.
+
+Validaciones obligatorias en CI:
+- `codesign --verify --deep --strict`
+- `spctl --assess --type execute` (solo cuando hay firma Apple)
+- `xcrun stapler validate` (solo cuando hay firma Apple)
+
 ## Donde estan los datos
 - macOS: `~/Library/Application Support/Interview Atlas/`
 - Windows: `%APPDATA%\Interview Atlas\`

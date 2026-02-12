@@ -67,17 +67,31 @@ def _notify_mac(title: str, message: str) -> None:
 
 def _parse_payload(payload: dict[str, object]) -> tuple[Optional[str], Optional[str], Optional[str]]:
     latest = payload.get("version") or payload.get("latest") or payload.get("tag")
-    url = payload.get("url") or payload.get("download_url") or payload.get("html_url")
+    url = payload.get("download_url") or payload.get("url") or payload.get("html_url")
     notes = payload.get("notes") or payload.get("changelog")
 
+    platform_key = _platform_key()
     platforms = payload.get("platforms")
     if isinstance(platforms, dict):
-        platform_key = _platform_key()
         if platform_key and isinstance(platforms.get(platform_key), dict):
             platform_payload = platforms.get(platform_key) or {}
             if isinstance(platform_payload, dict):
-                url = platform_payload.get("url") or url
+                # For manual user downloads prefer explicit installer links (e.g. DMG).
+                # Keep platforms.*.url reserved for updater payloads (e.g. .app.tar.gz).
+                url = platform_payload.get("download_url") or url
+                if not url:
+                    url = platform_payload.get("url")
                 notes = platform_payload.get("notes") or notes
+
+    downloads = payload.get("downloads")
+    if platform_key and isinstance(downloads, dict):
+        platform_download = downloads.get(platform_key)
+        if isinstance(platform_download, dict):
+            url = platform_download.get("url") or url
+        elif isinstance(platform_download, str):
+            url = platform_download
+        elif isinstance(downloads.get("default"), str):
+            url = downloads.get("default")
     latest_str = str(latest) if latest is not None else None
     url_str = str(url) if url is not None else None
     notes_str = str(notes) if notes is not None else None
