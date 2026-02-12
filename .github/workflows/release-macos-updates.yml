@@ -124,7 +124,8 @@ jobs:
           cp "backend/dist/interview-atlas-backend" "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
           chmod +x "backend/dist/interview-atlas-backend-${HOST_TRIPLE}"
 
-      - name: Build macOS app bundle (signed + notarized)
+      - name: Build macOS app bundle (signed)
+        if: steps.signing_mode.outputs.has_apple_signing == 'true'
         working-directory: frontend
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -135,6 +136,14 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run tauri:build
+
+      - name: Build macOS app bundle (unsigned)
+        if: steps.signing_mode.outputs.has_apple_signing != 'true'
+        working-directory: frontend
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: npm run tauri:build
 
       - name: Verify signing, Gatekeeper and notarization staples

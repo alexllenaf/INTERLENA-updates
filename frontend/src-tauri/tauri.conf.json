@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Interview Atlas",
-    "version": "1.1.5"
+    "version": "1.1.6"
   },
   "tauri": {
     "allowlist": {
