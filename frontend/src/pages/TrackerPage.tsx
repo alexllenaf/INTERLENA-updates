@@ -1031,7 +1031,7 @@ const TrackerPage: React.FC = () => {
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
-  const [showColumns, setShowColumns] = useState(true);
+  const [showColumns, setShowColumns] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Application | null>(null);
 	  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
