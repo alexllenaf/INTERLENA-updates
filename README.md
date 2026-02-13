@@ -56,7 +56,6 @@ La app abrirá en `http://localhost:5173` y se comunica con el backend en `http:
 
 ## Notas
 - 100% local, sin telemetría.
-- El diseño prioriza una UX tipo Notion/Airtable con módulos de analítica.
 
 ## Actualizaciones (macOS)
 - Publica `latest.json` + `Interview.Atlas.app.tar.gz` + `Interview.Atlas.app.tar.gz.sig` para el updater de Tauri.
@@ -65,7 +64,6 @@ La app abrirá en `http://localhost:5173` y se comunica con el backend en `http:
 - Define `UPDATE_FEED_URL` apuntando a ese JSON (lo usa el banner de la UI).
 - La app de escritorio usa el updater nativo de Tauri (ver `frontend/src-tauri/tauri.conf.json`).
 - Opcional: `UPDATE_NOTIFY=0` para desactivar la notificación de macOS.
-- Firma/notarización Apple es opcional en CI: sin esos secrets la app puede abrir con aviso "developer cannot be verified".
 - Workflow CI/CD: `.github/workflows/release-macos-updates.yml`.
 
 ## Desktop (macOS/Windows) con Tauri
