@@ -284,10 +284,6 @@ const BlockPanel: React.FC<Props> = ({
           dark = isDarkOnWhite(rgb.r, rgb.g, rgb.b, 1);
         }
       }
-
-      // Make inner "surface" backgrounds match the chosen block color so borders/text
-      // remain readable (tables/inputs rely on --surface).
-      vars["--surface"] = vars["--block-bg"] || color;
     }
 
     if (dark) {
