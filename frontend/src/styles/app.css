@@ -423,6 +423,7 @@ h2 {
   box-shadow: var(--shadow);
   width: 100%;
   min-width: 0;
+  color: var(--text);
 }
 
 .block-panel {
@@ -2341,6 +2342,8 @@ button.small {
   padding: 10px 12px;
   font-family: inherit;
   font-size: 14px;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .form-grid {
