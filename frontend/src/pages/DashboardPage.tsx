@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import BlockPanel from "../components/BlockPanel";
 import {
   Bar,
   BarChart,
@@ -10,10 +11,12 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { averageOfferScore, followupStatus, formatDate, successRate } from "../utils";
 
 const DashboardPage: React.FC = () => {
+  const { t } = useI18n();
   const { applications, settings } = useAppData();
   type ChartKey = "outcomes" | "stages" | "timeline" | "score";
   const [expandedChart, setExpandedChart] = useState<ChartKey | null>(null);
@@ -208,70 +211,70 @@ const DashboardPage: React.FC = () => {
     <div className="dashboard">
       <section className="grid cards">
         <div className="card">
-          <p>Total Applications</p>
+          <p>{t("Total Applications")}</p>
           <h2>{metrics.total}</h2>
         </div>
         <div className="card">
-          <p>Total Offers</p>
+          <p>{t("Total Offers")}</p>
           <h2>{metrics.offers}</h2>
         </div>
         <div className="card">
-          <p>Total Rejections</p>
+          <p>{t("Total Rejections")}</p>
           <h2>{metrics.rejected}</h2>
         </div>
         <div className="card">
-          <p>Active Processes</p>
+          <p>{t("Active Processes")}</p>
           <h2>{metrics.active}</h2>
         </div>
         <div className="card">
-          <p>Favorites</p>
+          <p>{t("Favorites")}</p>
           <h2>{metrics.favorites}</h2>
         </div>
         <div className="card">
-          <p>Offer Success Rate</p>
+          <p>{t("Offer Success Rate")}</p>
           <h2>{metrics.successRate}</h2>
         </div>
         <div className="card">
-          <p>Avg Score (Offers)</p>
-          <h2>{metrics.avgScore ? metrics.avgScore.toFixed(2) : "N/A"}</h2>
+          <p>{t("Avg Score (Offers)")}</p>
+          <h2>{metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A")}</h2>
         </div>
       </section>
 
       <section className="grid charts">
         {chartPanels.map((panel) => (
-          <div key={panel.key} className="panel chart-panel">
-            <h3>{panel.title}</h3>
+          <BlockPanel key={panel.key} id={`dashboard:chart:${panel.key}`} as="div" className="chart-panel">
+            <h3>{t(panel.title)}</h3>
             <button
               className="icon-button chart-expand"
               type="button"
               onClick={() => setExpandedChart(panel.key)}
-              aria-label={`Expand ${panel.title}`}
+              aria-label={t("Expand {title}", { title: t(panel.title) })}
             >
               <svg viewBox="0 0 20 20" aria-hidden="true">
                 <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
               </svg>
             </button>
             {renderChartShell(panel.render())}
-          </div>
+          </BlockPanel>
         ))}
       </section>
 
-      <section className="panel">
+      <BlockPanel id="dashboard:alerts" as="section">
         <div className="panel-header">
-          <h3>Event Alerts</h3>
-          <p>Upcoming or overdue follow-ups and to-do items.</p>
+          <h3>{t("Event Alerts")}</h3>
+          <p>{t("Upcoming or overdue follow-ups and to-do items.")}</p>
         </div>
         {alerts.length === 0 ? (
-          <div className="empty">No event alerts.</div>
+          <div className="empty">{t("No event alerts.")}</div>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Type</th>
-                <th>Company</th>
-                <th>Detail</th>
-                <th>Date</th>
-                <th>Status</th>
+                <th>{t("Type")}</th>
+                <th>{t("Company")}</th>
+                <th>{t("Detail")}</th>
+                <th>{t("Date")}</th>
+                <th>{t("Status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -289,23 +292,23 @@ const DashboardPage: React.FC = () => {
             </tbody>
           </table>
         )}
-      </section>
+      </BlockPanel>
 
-      <section className="panel">
+      <BlockPanel id="dashboard:active" as="section">
         <div className="panel-header">
-          <h3>Active Processes</h3>
-          <p>Applications currently in progress.</p>
+          <h3>{t("Active Processes")}</h3>
+          <p>{t("Applications currently in progress.")}</p>
         </div>
         {active.length === 0 ? (
-          <div className="empty">No active processes.</div>
+          <div className="empty">{t("No active processes.")}</div>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Company</th>
-                <th>Position</th>
-                <th>Stage</th>
-                <th>Application Date</th>
+                <th>{t("Company")}</th>
+                <th>{t("Position")}</th>
+                <th>{t("Stage")}</th>
+                <th>{t("Application Date")}</th>
               </tr>
             </thead>
             <tbody>
@@ -320,9 +323,9 @@ const DashboardPage: React.FC = () => {
             </tbody>
           </table>
         )}
-      </section>
+      </BlockPanel>
 
-      {!settings && <div className="empty">Loading settings...</div>}
+      {!settings && <div className="empty">{t("Loading settings...")}</div>}
 
       {expandedConfig && (
         <div
@@ -340,7 +343,7 @@ const DashboardPage: React.FC = () => {
                 className="ghost"
                 onClick={() => setExpandedChart(null)}
                 type="button"
-                aria-label="Close"
+                aria-label={t("Close")}
               >
                 ×
               </button>

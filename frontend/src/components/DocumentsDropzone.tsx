@@ -1,10 +1,12 @@
 import React, { useRef, useState } from "react";
+import { useI18n } from "../i18n";
 
 type DocumentsDropzoneProps = {
   onUpload: (files: FileList | null) => void;
 };
 
 const DocumentsDropzone: React.FC<DocumentsDropzoneProps> = ({ onUpload }) => {
+  const { t } = useI18n();
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -18,7 +20,7 @@ const DocumentsDropzone: React.FC<DocumentsDropzoneProps> = ({ onUpload }) => {
       className={`documents-dropzone ${dragActive ? "active" : ""}`}
       role="button"
       tabIndex={0}
-      aria-label="Upload documents"
+      aria-label={t("Upload documents")}
       onClick={() => inputRef.current?.click()}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -61,8 +63,8 @@ const DocumentsDropzone: React.FC<DocumentsDropzoneProps> = ({ onUpload }) => {
           </svg>
         </span>
         <div className="dropzone-text">
-          <span className="dropzone-title">Arrastra documentos o haz clic para buscar en Finder</span>
-          <span className="dropzone-subtitle">PDF, DOCX, PNG, etc.</span>
+          <span className="dropzone-title">{t("Drag documents or click to browse Finder")}</span>
+          <span className="dropzone-subtitle">{t("PDF, DOCX, PNG, etc.")}</span>
         </div>
       </div>
     </div>

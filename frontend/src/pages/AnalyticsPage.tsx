@@ -1,4 +1,6 @@
 import React, { useMemo } from "react";
+import BlockPanel from "../components/BlockPanel";
+import { useI18n } from "../i18n";
 import {
   Bar,
   BarChart,
@@ -12,6 +14,7 @@ import { useAppData } from "../state";
 import { formatDate } from "../utils";
 
 const AnalyticsPage: React.FC = () => {
+  const { t } = useI18n();
   const { applications } = useAppData();
 
   const outcomes = useMemo(() => {
@@ -44,14 +47,14 @@ const AnalyticsPage: React.FC = () => {
 
   return (
     <div className="analytics">
-      <section className="panel">
-        <h2>Analytics</h2>
-        <p>Break down outcomes, stages, and score distribution.</p>
-      </section>
+      <BlockPanel id="analytics:intro" as="section">
+        <h2>{t("Analytics")}</h2>
+        <p>{t("Break down outcomes, stages, and score distribution.")}</p>
+      </BlockPanel>
 
       <section className="grid charts">
-        <div className="panel">
-          <h3>Outcomes</h3>
+        <BlockPanel id="analytics:chart:outcomes" as="div">
+          <h3>{t("Outcomes")}</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={outcomes}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -61,9 +64,9 @@ const AnalyticsPage: React.FC = () => {
               <Bar dataKey="value" fill="#2B6CB0" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-        <div className="panel">
-          <h3>Stages</h3>
+        </BlockPanel>
+        <BlockPanel id="analytics:chart:stages" as="div">
+          <h3>{t("Stages")}</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={stages}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -73,9 +76,9 @@ const AnalyticsPage: React.FC = () => {
               <Bar dataKey="value" fill="#D69E2E" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-        <div className="panel">
-          <h3>Score Distribution</h3>
+        </BlockPanel>
+        <BlockPanel id="analytics:chart:score" as="div">
+          <h3>{t("Score Distribution")}</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={scoreData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -85,21 +88,21 @@ const AnalyticsPage: React.FC = () => {
               <Bar dataKey="value" fill="#2F855A" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
+        </BlockPanel>
       </section>
 
-      <section className="panel">
-        <h3>Active Processes</h3>
+      <BlockPanel id="analytics:active" as="section">
+        <h3>{t("Active Processes")}</h3>
         {active.length === 0 ? (
-          <div className="empty">No active processes.</div>
+          <div className="empty">{t("No active processes.")}</div>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Company</th>
-                <th>Position</th>
-                <th>Stage</th>
-                <th>Application Date</th>
+                <th>{t("Company")}</th>
+                <th>{t("Position")}</th>
+                <th>{t("Stage")}</th>
+                <th>{t("Application Date")}</th>
               </tr>
             </thead>
             <tbody>
@@ -114,7 +117,7 @@ const AnalyticsPage: React.FC = () => {
             </tbody>
           </table>
         )}
-      </section>
+      </BlockPanel>
     </div>
   );
 };

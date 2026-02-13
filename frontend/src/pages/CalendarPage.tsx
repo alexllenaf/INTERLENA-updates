@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ApplicationForm from "../components/ApplicationForm";
+import BlockPanel from "../components/BlockPanel";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
 import StarRating from "../components/StarRating";
 import { DateCell, TextCell } from "../components/TableCells";
+import { useI18n } from "../i18n";
 import {
   deleteDocument,
   documentDownloadUrl,
@@ -36,8 +38,8 @@ const toDateKey = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-const buildWeekdayLabels = (): string[] => {
-  const formatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+const buildWeekdayLabels = (locale?: string): string[] => {
+  const formatter = new Intl.DateTimeFormat(locale || undefined, { weekday: "short" });
   const base = new Date(2021, 0, 4);
   return Array.from({ length: 7 }, (_, index) => {
     const date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + index);
@@ -116,6 +118,7 @@ const downloadEventIcs = async (event: CalendarEvent) => {
 };
 
 const CalendarPage: React.FC = () => {
+  const { t, locale } = useI18n();
   const { applications, updateApplication, settings, refresh } = useAppData();
   const [selected, setSelected] = useState<string>("");
   const [editing, setEditing] = useState<Application | null>(null);
@@ -146,7 +149,7 @@ const CalendarPage: React.FC = () => {
   );
   const [selectedDay, setSelectedDay] = useState<string>(() => toDateKey(today));
 
-  const weekdayLabels = useMemo(buildWeekdayLabels, []);
+  const weekdayLabels = useMemo(() => buildWeekdayLabels(locale), [locale]);
   useEffect(() => {
     if (!selected) return;
     const exists = applications.some((app) => app.application_id === selected);
@@ -306,8 +309,8 @@ const CalendarPage: React.FC = () => {
   }, [cursor]);
 
   const monthLabel = useMemo(
-    () => cursor.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-    [cursor]
+    () => cursor.toLocaleDateString(locale, { month: "long", year: "numeric" }),
+    [cursor, locale]
   );
 
   const eventsThisMonth = useMemo(
@@ -718,28 +721,28 @@ const CalendarPage: React.FC = () => {
 
   return (
     <div className="calendar">
-      <section className="panel">
-        <h2>Calendar</h2>
-        <p>Track interviews and follow-ups with a consolidated event list.</p>
-      </section>
+      <BlockPanel id="calendar:intro" as="section">
+        <h2>{t("Calendar")}</h2>
+        <p>{t("Track interviews and follow-ups with a consolidated event list.")}</p>
+      </BlockPanel>
 
-      <section className="panel">
+      <BlockPanel id="calendar:alerts" as="section">
         <div className="panel-header">
-          <h3>Calendar Alerts</h3>
-          <p>Upcoming or overdue follow-ups and to-do items.</p>
+          <h3>{t("Calendar Alerts")}</h3>
+          <p>{t("Upcoming or overdue follow-ups and to-do items.")}</p>
         </div>
         {alerts.length === 0 ? (
-          <div className="empty">No event alerts.</div>
+          <div className="empty">{t("No event alerts.")}</div>
         ) : (
           <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Company</th>
-                  <th>Detail</th>
-                  <th>Date</th>
-                  <th>Status</th>
+                  <th>{t("Type")}</th>
+                  <th>{t("Company")}</th>
+                  <th>{t("Detail")}</th>
+                  <th>{t("Date")}</th>
+                  <th>{t("Status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -758,32 +761,32 @@ const CalendarPage: React.FC = () => {
             </table>
           </div>
         )}
-      </section>
+      </BlockPanel>
 
-      <section className="panel">
+      <BlockPanel id="calendar:month" as="section">
         <div className="calendar-header">
           <div>
             <h3>{monthLabel}</h3>
-            <p>{eventsThisMonth} events scheduled this month.</p>
+            <p>{t("{count} events scheduled this month.", { count: eventsThisMonth })}</p>
           </div>
           <div className="calendar-header-actions">
             <div className="calendar-actions">
               <button className="ghost" onClick={() => downloadIcs()}>
-                Download All (ICS)
+                {t("Download All (ICS)")}
               </button>
               <button className="primary" onClick={() => downloadIcs(selected)} disabled={!selected}>
-                Download Selected
+                {t("Download Selected")}
               </button>
             </div>
             <div className="calendar-nav">
               <button className="ghost small" onClick={() => shiftMonth(-1)}>
-                Previous
+                {t("Previous")}
               </button>
               <button className="ghost small" onClick={handleToday}>
-                Today
+                {t("Today")}
               </button>
               <button className="ghost small" onClick={() => shiftMonth(1)}>
-                Next
+                {t("Next")}
               </button>
             </div>
           </div>
@@ -839,7 +842,7 @@ const CalendarPage: React.FC = () => {
                       );
                     })}
                     {remainingEvents > 0 ? (
-                      <span className="calendar-more">+{remainingEvents} more</span>
+                      <span className="calendar-more">{t("+{count} more", { count: remainingEvents })}</span>
                     ) : null}
                   </div>
                 </button>
@@ -850,7 +853,7 @@ const CalendarPage: React.FC = () => {
           <div className="calendar-day-panel">
             <h4>{selectedDateLabel}</h4>
             {selectedEvents.length === 0 ? (
-              <div className="empty">No events scheduled.</div>
+              <div className="empty">{t("No events scheduled.")}</div>
             ) : (
               <div className="calendar-day-list">
                 {selectedEvents.map((event) => (
@@ -860,14 +863,14 @@ const CalendarPage: React.FC = () => {
                       <span>
                         {event.company} — {event.position}
                       </span>
-                      <span>{event.timeLabel ? `${event.timeLabel}` : "All-day"}</span>
+                      <span>{event.timeLabel ? `${event.timeLabel}` : t("All-day")}</span>
                     </div>
                     <div className="row-actions">
                       <button
                         className="icon-button"
                         type="button"
                         onClick={() => handleEventDownload(event)}
-                        aria-label="Download"
+                        aria-label={t("Download")}
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
                           <path d="M10 2.5a.75.75 0 0 1 .75.75v7.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V3.25A.75.75 0 0 1 10 2.5Zm-5 12.75c0-.41.34-.75.75-.75h8.5a.75.75 0 0 1 .75.75v1.5A1.75 1.75 0 0 1 13.25 18h-6.5A1.75 1.75 0 0 1 5 16.75v-1.5Z" />
@@ -877,7 +880,7 @@ const CalendarPage: React.FC = () => {
                         className="icon-button"
                         type="button"
                         onClick={() => handleEventDetail(event)}
-                        aria-label="Details"
+                        aria-label={t("Details")}
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
                           <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
@@ -887,7 +890,7 @@ const CalendarPage: React.FC = () => {
                         className="icon-button"
                         type="button"
                         onClick={() => handleEventEdit(event)}
-                        aria-label="Edit"
+                        aria-label={t("Edit")}
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
                           <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
@@ -898,7 +901,7 @@ const CalendarPage: React.FC = () => {
                           className="icon-button danger"
                           type="button"
                           onClick={() => removeTodoItem(event.appId, event.todoId!)}
-                          aria-label="Delete"
+                          aria-label={t("Delete")}
                         >
                           <svg viewBox="0 0 20 20" aria-hidden="true">
                             <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
@@ -912,30 +915,30 @@ const CalendarPage: React.FC = () => {
             )}
           </div>
         </div>
-      </section>
+      </BlockPanel>
 
-      <section className="panel">
+      <BlockPanel id="calendar:todo" as="section">
         <div className="todo-header">
           <div>
-            <h3>To-Do List</h3>
+            <h3>{t("To-Do List")}</h3>
             <p>
               {hasApplications
-                ? "Manage preparation tasks linked to each application."
-                : "Create an application to start a to-do list."}
+                ? t("Manage preparation tasks linked to each application.")
+                : t("Create an application to start a to-do list.")}
             </p>
           </div>
           <div className="todo-controls">
             <div className="todo-summary">
-              {hasApplications ? `${pendingTodos} pending` : "—"}
+              {hasApplications ? t("{count} pending", { count: pendingTodos }) : "—"}
             </div>
             <div className="field todo-select">
-              <label>Application</label>
+              <label>{t("Application")}</label>
               <select
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
                 disabled={!hasApplications}
               >
-                <option value="">All applications</option>
+                <option value="">{t("All applications")}</option>
                 {applicationOptions.map((app) => (
                   <option key={app.value} value={app.value}>
                     {app.label}
@@ -944,30 +947,30 @@ const CalendarPage: React.FC = () => {
               </select>
             </div>
             <button className="primary" type="button" onClick={openTodoCreate} disabled={!hasApplications}>
-              Add To-Do
+              {t("Add To-Do")}
             </button>
           </div>
         </div>
         {!hasApplications ? (
-          <div className="empty">No applications yet. Add one to start tracking tasks.</div>
+          <div className="empty">{t("No applications yet. Add one to start tracking tasks.")}</div>
         ) : (
           <>
             {orderedTodos.length === 0 ? (
               <div className="empty">
-                {selected ? "No to-do items for this application." : "No to-do items yet."}
+                {selected ? t("No to-do items for this application.") : t("No to-do items yet.")}
               </div>
             ) : (
               <table className="table todo-table">
                 <thead>
                   <tr>
-                    <th>Application</th>
-                    <th>Task</th>
-                    <th>Task Location</th>
-                    <th>Notes</th>
-                    <th>Documents / Links</th>
-                    <th>Due Date</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th>{t("Application")}</th>
+                    <th>{t("Task")}</th>
+                    <th>{t("Task Location")}</th>
+                    <th>{t("Notes")}</th>
+                    <th>{t("Documents / Links")}</th>
+                    <th>{t("Due Date")}</th>
+                    <th>{t("Status")}</th>
+                    <th>{t("Actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1006,7 +1009,7 @@ const CalendarPage: React.FC = () => {
                         <td>
                           <TextCell
                             value={row.todo.task_location || ""}
-                            placeholder="Location"
+                            placeholder={t("Location")}
                             onCommit={(next) =>
                               updateTodoItem(row.appId, row.todo.id, { task_location: next })
                             }
@@ -1015,7 +1018,7 @@ const CalendarPage: React.FC = () => {
                         <td>
                           <TextCell
                             value={row.todo.notes || ""}
-                            placeholder="Notes"
+                            placeholder={t("Notes")}
                             onCommit={(next) =>
                               updateTodoItem(row.appId, row.todo.id, { notes: next })
                             }
@@ -1024,7 +1027,7 @@ const CalendarPage: React.FC = () => {
                         <td>
                           <TextCell
                             value={row.todo.documents_links || ""}
-                            placeholder="Links"
+                            placeholder={t("Links")}
                             onCommit={(next) =>
                               updateTodoItem(row.appId, row.todo.id, { documents_links: next })
                             }
@@ -1037,7 +1040,7 @@ const CalendarPage: React.FC = () => {
                                   className="doc-chip doc-button"
                                   type="button"
                                   onClick={() => setDocumentModal({ appId: row.appId, file })}
-                                  aria-label={`Document ${file.name}`}
+                                  aria-label={t("Document {name}", { name: file.name })}
                                 >
                                   <svg viewBox="0 0 20 20" aria-hidden="true">
                                     <path d="M5 2.5h6l4 4V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Zm6 1.5H6v12h8V8h-3V4Z" />
@@ -1101,42 +1104,42 @@ const CalendarPage: React.FC = () => {
                         </td>
                         <td className="row-actions-cell">
                           <div className="row-actions">
-                            <button
-                              className="icon-button"
-                              type="button"
-                              onClick={() => openTodoDetail(row.appId, row.todo.id)}
-                              aria-label="Details"
-                            >
+                              <button
+                                className="icon-button"
+                                type="button"
+                                onClick={() => openTodoDetail(row.appId, row.todo.id)}
+                                aria-label={t("Details")}
+                              >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
                               </svg>
                             </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              onClick={() => openTodoEdit(row.appId, row.todo.id)}
-                              aria-label="Edit"
-                            >
+                              <button
+                                className="icon-button"
+                                type="button"
+                                onClick={() => openTodoEdit(row.appId, row.todo.id)}
+                                aria-label={t("Edit")}
+                              >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
                               </svg>
                             </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              onClick={() => handleDownloadTodoIcs(row)}
-                              aria-label="Download"
-                            >
+                              <button
+                                className="icon-button"
+                                type="button"
+                                onClick={() => handleDownloadTodoIcs(row)}
+                                aria-label={t("Download")}
+                              >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M10 2a1 1 0 0 1 1 1v8.17l2.59-2.58a1 1 0 1 1 1.41 1.41l-4.3 4.3a1 1 0 0 1-1.41 0l-4.3-4.3a1 1 0 1 1 1.41-1.41L9 11.17V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1Z" />
                               </svg>
                             </button>
-                            <button
-                              className="icon-button danger"
-                              type="button"
-                              onClick={() => removeTodoItem(row.appId, row.todo.id)}
-                              aria-label="Delete"
-                            >
+                              <button
+                                className="icon-button danger"
+                                type="button"
+                                onClick={() => removeTodoItem(row.appId, row.todo.id)}
+                                aria-label={t("Delete")}
+                              >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
                               </svg>
@@ -1151,19 +1154,19 @@ const CalendarPage: React.FC = () => {
             )}
           </>
         )}
-      </section>
+      </BlockPanel>
 
       {todoCreateDraft && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal">
             <header className="modal-header">
               <div>
-                <h2>Add To-Do</h2>
+                <h2>{t("Add To-Do")}</h2>
                 <p>
                   {todoCreateDraft.company_name} — {todoCreateDraft.position}
                 </p>
               </div>
-              <button className="ghost" onClick={closeTodoCreate} type="button" aria-label="Close">
+              <button className="ghost" onClick={closeTodoCreate} type="button" aria-label={t("Close")}>
                 ×
               </button>
             </header>
@@ -1175,7 +1178,7 @@ const CalendarPage: React.FC = () => {
               className="form-grid"
             >
               <div className="field">
-                <label>Application</label>
+                <label>{t("Application")}</label>
                 <select
                   value={todoCreateAppId}
                   onChange={(event) => handleTodoCreateAppChange(event.target.value)}
@@ -1189,7 +1192,7 @@ const CalendarPage: React.FC = () => {
                 </select>
               </div>
               <div className="field">
-                <label>Task</label>
+                <label>{t("Task")}</label>
                 <input
                   value={todoCreateDraft.task}
                   onChange={(event) => updateTodoCreateDraft({ task: event.target.value })}
@@ -1197,7 +1200,7 @@ const CalendarPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Status</label>
+                <label>{t("Status")}</label>
                 <select
                   value={todoCreateDraft.status}
                   onChange={(event) =>
@@ -1212,7 +1215,7 @@ const CalendarPage: React.FC = () => {
                 </select>
               </div>
               <div className="field">
-                <label>Due Date</label>
+                <label>{t("Due Date")}</label>
                 <input
                   type="date"
                   value={todoCreateDraft.due_date}
@@ -1220,7 +1223,7 @@ const CalendarPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Company Name</label>
+                <label>{t("Company Name")}</label>
                 <input
                   list="todo-company-options-create"
                   value={todoCreateDraft.company_name}
@@ -1236,7 +1239,7 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </div>
               <div className="field">
-                <label>Position</label>
+                <label>{t("Position")}</label>
                 <input
                   list="todo-position-options-create"
                   value={todoCreateDraft.position}
@@ -1250,24 +1253,24 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </div>
               <div className="field">
-                <label>Task Location</label>
+                <label>{t("Task Location")}</label>
                 <input
                   value={todoCreateDraft.task_location}
                   onChange={(event) =>
                     updateTodoCreateDraft({ task_location: event.target.value })
                   }
-                  placeholder="Meeting room, HQ, remote..."
+                  placeholder={t("Meeting room, HQ, remote...")}
                 />
               </div>
               <div className="field full">
-                <label>Notes</label>
+                <label>{t("Notes")}</label>
                 <textarea
                   value={todoCreateDraft.notes}
                   onChange={(event) => updateTodoCreateDraft({ notes: event.target.value })}
                 />
               </div>
               <div className="field full">
-                <label>Documents / Links</label>
+                <label>{t("Documents / Links")}</label>
                 <textarea
                   value={todoCreateDraft.documents_links}
                   onChange={(event) =>
@@ -1281,10 +1284,10 @@ const CalendarPage: React.FC = () => {
                     <DocumentsDropzone
                       onUpload={(files) => handleUploadDocuments(todoCreateApp.id, files)}
                     />
-                    <p className="documents-help">Adjunta CVs, portfolios o cartas de oferta.</p>
+                    <p className="documents-help">{t("Attach resumes, portfolios, or offer letters.")}</p>
                     <div className="documents-list">
                       {(todoCreateApp.documents_files || []).length === 0 && (
-                        <div className="documents-empty">No documents uploaded.</div>
+                        <div className="documents-empty">{t("No documents uploaded.")}</div>
                       )}
                       {(todoCreateApp.documents_files || []).map((doc) => (
                         <div className="document-item" key={doc.id}>
@@ -1306,14 +1309,14 @@ const CalendarPage: React.FC = () => {
                             type="button"
                             onClick={() => handleDeleteDocument(todoCreateApp.id, doc.id)}
                           >
-                            Remove
+                            {t("Remove")}
                           </button>
                         </div>
                       ))}
                     </div>
                   </div>
                   <div className="field full">
-                    <label>Contacts</label>
+                    <label>{t("Contacts")}</label>
                     <ContactsEditor
                       contacts={todoCreateApp.contacts || []}
                       onCommit={(next) => updateApplication(todoCreateApp.id, { contacts: next })}
@@ -1323,10 +1326,10 @@ const CalendarPage: React.FC = () => {
               )}
               <div className="form-actions">
                 <button className="ghost" type="button" onClick={closeTodoCreate}>
-                  Cancel
+                  {t("Cancel")}
                 </button>
                 <button className="primary" type="submit">
-                  Add
+                  {t("Add")}
                 </button>
               </div>
             </form>
@@ -1339,12 +1342,12 @@ const CalendarPage: React.FC = () => {
           <div className="modal">
             <header className="modal-header">
               <div>
-                <h2>Edit To-Do</h2>
+                <h2>{t("Edit To-Do")}</h2>
                 <p>
                   {todoEditDraft.company_name} — {todoEditDraft.position}
                 </p>
               </div>
-              <button className="ghost" onClick={() => setTodoEdit(null)} type="button" aria-label="Close">
+              <button className="ghost" onClick={() => setTodoEdit(null)} type="button" aria-label={t("Close")}>
                 ×
               </button>
             </header>
@@ -1357,7 +1360,7 @@ const CalendarPage: React.FC = () => {
               className="form-grid"
             >
               <div className="field">
-                <label>Task</label>
+                <label>{t("Task")}</label>
                 <input
                   value={todoEditDraft.task}
                   onChange={(event) => updateTodoEditDraft({ task: event.target.value })}
@@ -1365,7 +1368,7 @@ const CalendarPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Status</label>
+                <label>{t("Status")}</label>
                 <select
                   value={todoEditDraft.status}
                   onChange={(event) =>
@@ -1380,7 +1383,7 @@ const CalendarPage: React.FC = () => {
                 </select>
               </div>
               <div className="field">
-                <label>Due Date</label>
+                <label>{t("Due Date")}</label>
                 <input
                   type="date"
                   value={todoEditDraft.due_date}
@@ -1388,7 +1391,7 @@ const CalendarPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Company Name</label>
+                <label>{t("Company Name")}</label>
                 <input
                   list="todo-company-options-edit"
                   value={todoEditDraft.company_name}
@@ -1402,7 +1405,7 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </div>
               <div className="field">
-                <label>Position</label>
+                <label>{t("Position")}</label>
                 <input
                   list="todo-position-options-edit"
                   value={todoEditDraft.position}
@@ -1416,22 +1419,22 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </div>
               <div className="field">
-                <label>Task Location</label>
+                <label>{t("Task Location")}</label>
                 <input
                   value={todoEditDraft.task_location}
                   onChange={(event) => updateTodoEditDraft({ task_location: event.target.value })}
-                  placeholder="Meeting room, HQ, remote..."
+                  placeholder={t("Meeting room, HQ, remote...")}
                 />
               </div>
               <div className="field full">
-                <label>Notes</label>
+                <label>{t("Notes")}</label>
                 <textarea
                   value={todoEditDraft.notes}
                   onChange={(event) => updateTodoEditDraft({ notes: event.target.value })}
                 />
               </div>
               <div className="field full">
-                <label>Documents / Links</label>
+                <label>{t("Documents / Links")}</label>
                 <textarea
                   value={todoEditDraft.documents_links}
                   onChange={(event) => updateTodoEditDraft({ documents_links: event.target.value })}
@@ -1441,10 +1444,10 @@ const CalendarPage: React.FC = () => {
                 <DocumentsDropzone
                   onUpload={(files) => handleUploadDocuments(todoEditEntry.app.id, files)}
                 />
-                <p className="documents-help">Adjunta CVs, portfolios o cartas de oferta.</p>
+                <p className="documents-help">{t("Attach resumes, portfolios, or offer letters.")}</p>
                 <div className="documents-list">
                   {(todoEditEntry.app.documents_files || []).length === 0 && (
-                    <div className="documents-empty">No documents uploaded.</div>
+                    <div className="documents-empty">{t("No documents uploaded.")}</div>
                   )}
                   {(todoEditEntry.app.documents_files || []).map((doc) => (
                     <div className="document-item" key={doc.id}>
@@ -1466,14 +1469,14 @@ const CalendarPage: React.FC = () => {
                         type="button"
                         onClick={() => handleDeleteDocument(todoEditEntry.app.id, doc.id)}
                       >
-                        Remove
+                        {t("Remove")}
                       </button>
                     </div>
                   ))}
                 </div>
               </div>
               <div className="field full">
-                <label>Contacts</label>
+                <label>{t("Contacts")}</label>
                 <ContactsEditor
                   contacts={todoEditEntry.app.contacts || []}
                   onCommit={(next) => updateApplication(todoEditEntry.app.id, { contacts: next })}
@@ -1481,10 +1484,10 @@ const CalendarPage: React.FC = () => {
               </div>
               <div className="form-actions">
                 <button className="ghost" type="button" onClick={() => setTodoEdit(null)}>
-                  Cancel
+                  {t("Cancel")}
                 </button>
                 <button className="primary" type="submit">
-                  Save
+                  {t("Save")}
                 </button>
               </div>
             </form>
@@ -1497,18 +1500,18 @@ const CalendarPage: React.FC = () => {
           <div className="drawer" onClick={(event) => event.stopPropagation()}>
             <div className="drawer-header">
               <div>
-                <h3>{todoDetailDraft.task || "To-Do"}</h3>
+                <h3>{todoDetailDraft.task || t("To-Do")}</h3>
                 <p>
                   {todoDetailDraft.company_name} — {todoDetailDraft.position}
                 </p>
               </div>
-              <button className="ghost" onClick={() => setTodoDetail(null)} aria-label="Close">
+              <button className="ghost" onClick={() => setTodoDetail(null)} aria-label={t("Close")}>
                 ×
               </button>
             </div>
             <div className="drawer-body">
               <label>
-                Task
+                {t("Task")}
                 <input
                   className="cell-input"
                   value={todoDetailDraft.task}
@@ -1516,7 +1519,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Status
+                {t("Status")}
                 <select
                   className={`cell-select todo-status ${TODO_STATUS_CLASS[todoDetailDraft.status]}`}
                   value={todoDetailDraft.status}
@@ -1532,7 +1535,7 @@ const CalendarPage: React.FC = () => {
                 </select>
               </label>
               <label>
-                Due Date
+                {t("Due Date")}
                 <input
                   className="cell-date"
                   type="date"
@@ -1541,7 +1544,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Company Name
+                {t("Company Name")}
                 <input
                   className="cell-input"
                   list="todo-company-options-detail"
@@ -1557,7 +1560,7 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </label>
               <label>
-                Position
+                {t("Position")}
                 <input
                   className="cell-input"
                   list="todo-position-options-detail"
@@ -1571,7 +1574,7 @@ const CalendarPage: React.FC = () => {
                 </datalist>
               </label>
               <label>
-                Task Location
+                {t("Task Location")}
                 <input
                   className="cell-input"
                   value={todoDetailDraft.task_location}
@@ -1579,14 +1582,14 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Notes
+                {t("Notes")}
                 <textarea
                   value={todoDetailDraft.notes}
                   onChange={(event) => updateTodoDetailDraft({ notes: event.target.value })}
                 />
               </label>
               <label>
-                Documents / Links
+                {t("Documents / Links")}
                 <textarea
                   value={todoDetailDraft.documents_links}
                   onChange={(event) =>
@@ -1595,7 +1598,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <div className="drawer-section">
-                <h4>Contacts</h4>
+                <h4>{t("Contacts")}</h4>
                 <ContactsEditor
                   contacts={todoDetailEntry.app.contacts || []}
                   onCommit={(next) => updateApplication(todoDetailEntry.app.id, { contacts: next })}
@@ -1614,7 +1617,7 @@ const CalendarPage: React.FC = () => {
                   setTodoDetail(null);
                 }}
               >
-                Save changes
+                {t("Save changes")}
               </button>
             </div>
           </div>
@@ -1638,13 +1641,13 @@ const CalendarPage: React.FC = () => {
                 <h3>{detailApp.company_name}</h3>
                 <p>{detailApp.position}</p>
               </div>
-              <button className="ghost" onClick={() => setDetailApp(null)} aria-label="Close">
+              <button className="ghost" onClick={() => setDetailApp(null)} aria-label={t("Close")}>
                 ×
               </button>
             </div>
             <div className="drawer-body">
               <label>
-                Company Score
+                {t("Company Score")}
                 <StarRating
                   value={detailDraft.company_score}
                   onChange={(next) =>
@@ -1655,7 +1658,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Notes
+                {t("Notes")}
                 <textarea
                   value={detailDraft.notes}
                   onChange={(event) =>
@@ -1664,7 +1667,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Job Description
+                {t("Job Description")}
                 <textarea
                   value={detailDraft.job_description}
                   onChange={(event) =>
@@ -1673,7 +1676,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Improvement Areas
+                {t("Improvement Areas")}
                 <textarea
                   value={detailDraft.improvement_areas}
                   onChange={(event) =>
@@ -1682,7 +1685,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Skill To Upgrade
+                {t("Skill to Upgrade")}
                 <textarea
                   value={detailDraft.skill_to_upgrade}
                   onChange={(event) =>
@@ -1691,7 +1694,7 @@ const CalendarPage: React.FC = () => {
                 />
               </label>
               <label>
-                Documents / Links
+                {t("Documents / Links")}
                 <textarea
                   value={detailDraft.documents_links}
                   onChange={(event) =>
@@ -1703,10 +1706,10 @@ const CalendarPage: React.FC = () => {
                 <DocumentsDropzone
                   onUpload={(files) => handleUploadDocuments(detailApp.id, files)}
                 />
-                <p className="documents-help">Adjunta CVs, portfolios o cartas de oferta.</p>
+                <p className="documents-help">{t("Attach resumes, portfolios, or offer letters.")}</p>
                 <div className="documents-list">
                   {detailDocuments.length === 0 && (
-                    <div className="documents-empty">No documents uploaded.</div>
+                    <div className="documents-empty">{t("No documents uploaded.")}</div>
                   )}
                   {detailDocuments.map((doc) => (
                     <div className="document-item" key={doc.id}>
@@ -1728,14 +1731,14 @@ const CalendarPage: React.FC = () => {
                         type="button"
                         onClick={() => handleDeleteDocument(detailApp.id, doc.id)}
                       >
-                        Remove
+                        {t("Remove")}
                       </button>
                     </div>
                   ))}
                 </div>
               </div>
               <div className="drawer-section">
-                <h4>Contacts</h4>
+                <h4>{t("Contacts")}</h4>
                 <ContactsEditor
                   contacts={detailContacts}
                   onCommit={(next) => updateApplication(detailApp.id, { contacts: next })}
@@ -1757,7 +1760,7 @@ const CalendarPage: React.FC = () => {
                   setDetailApp(null);
                 }}
               >
-                Save changes
+                {t("Save changes")}
               </button>
             </div>
           </div>
@@ -1768,24 +1771,24 @@ const CalendarPage: React.FC = () => {
           <div className="modal doc-modal">
             <header className="modal-header">
               <div>
-                <h2>Document</h2>
+                <h2>{t("Document")}</h2>
                 <p>{documentModal.file.name}</p>
               </div>
-              <button className="ghost" onClick={() => setDocumentModal(null)} type="button" aria-label="Close">
+              <button className="ghost" onClick={() => setDocumentModal(null)} type="button" aria-label={t("Close")}>
                 ×
               </button>
             </header>
             <div className="doc-info">
               <div className="doc-row">
-                <span className="doc-label">Name</span>
+                <span className="doc-label">{t("Name")}</span>
                 <span>{documentModal.file.name}</span>
               </div>
               <div className="doc-row">
-                <span className="doc-label">Added</span>
+                <span className="doc-label">{t("Added")}</span>
                 <span>{formatUploadedAt(documentModal.file.uploaded_at)}</span>
               </div>
               <div className="doc-row">
-                <span className="doc-label">Size</span>
+                <span className="doc-label">{t("Size")}</span>
                 <span>{documentModal.file.size ? formatFileSize(documentModal.file.size) : "—"}</span>
               </div>
             </div>
@@ -1797,7 +1800,7 @@ const CalendarPage: React.FC = () => {
                   handleDownloadDocument(documentModal.appId, documentModal.file.id)
                 }
               >
-                Download
+                {t("Download")}
               </button>
               <button
                 className="danger"
@@ -1807,7 +1810,7 @@ const CalendarPage: React.FC = () => {
                   setDocumentModal(null);
                 }}
               >
-                Delete
+                {t("Delete")}
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { getUpdateInfo, openExternal } from "./api";
+import { useI18n } from "./i18n";
 import { AppProvider, useAppData } from "./state";
 import DashboardPage from "./pages/DashboardPage";
 import { BrandProfile, UpdateInfo } from "./types";
@@ -53,6 +54,7 @@ const isNewerVersion = (latest: string | null | undefined, current: string | nul
 };
 
 const AppShell: React.FC = () => {
+  const { t } = useI18n();
   const { loading, error, settings, saveSettings } = useAppData();
   const location = useLocation();
   const isDashboard = location.pathname === "/" || location.pathname === "/analytics";
@@ -124,7 +126,7 @@ const AppShell: React.FC = () => {
         const { relaunch } = await import("@tauri-apps/api/process");
         const { shouldUpdate } = await checkUpdate();
         if (!shouldUpdate) {
-          setUpdateError("Ya estás en la última versión.");
+          setUpdateError(t("You're already on the latest version."));
           return;
         }
         await installUpdate();
@@ -132,8 +134,8 @@ const AppShell: React.FC = () => {
         return;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "No se pudo instalar automaticamente.";
-      setUpdateError(`${message} Abriendo el paquete...`);
+      const message = err instanceof Error ? err.message : t("Could not auto-install.");
+      setUpdateError(t("{message} Opening the package...", { message }));
     } finally {
       setIsUpdating(false);
     }
@@ -255,7 +257,7 @@ const AppShell: React.FC = () => {
     setCameraError(null);
     setIsCameraOpen(true);
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError("Tu navegador no permite abrir la cámara. Usa Subir foto.");
+      setCameraError(t("Your browser cannot open the camera. Use Upload photo."));
       cameraInputRef.current?.click();
       return;
     }
@@ -270,7 +272,7 @@ const AppShell: React.FC = () => {
         await videoRef.current.play().catch(() => undefined);
       }
     } catch {
-      setCameraError("No se pudo acceder a la cámara. Usa Subir foto.");
+      setCameraError(t("Could not access the camera. Use Upload photo."));
       setIsCameraOpen(false);
       cameraInputRef.current?.click();
     }
@@ -288,7 +290,7 @@ const AppShell: React.FC = () => {
     const width = videoRef.current.videoWidth;
     const height = videoRef.current.videoHeight;
     if (!width || !height) {
-      setCameraError("La cámara aún no está lista.");
+      setCameraError(t("Camera is not ready yet."));
       return;
     }
     const canvas = canvasRef.current;
@@ -352,7 +354,7 @@ const AppShell: React.FC = () => {
             <button
               className="avatar-button"
               type="button"
-              aria-label="Cambiar foto"
+              aria-label={t("Change photo")}
               aria-expanded={isAvatarMenuOpen}
               onClick={() => setIsAvatarMenuOpen((open) => !open)}
             >
@@ -372,7 +374,7 @@ const AppShell: React.FC = () => {
                     fileInputRef.current?.click();
                   }}
                 >
-                  Subir foto
+                  {t("Upload photo")}
                 </button>
                 <button
                   className="avatar-action-button secondary"
@@ -380,7 +382,7 @@ const AppShell: React.FC = () => {
                   role="menuitem"
                   onClick={openCamera}
                 >
-                  Tomar foto
+                  {t("Take photo")}
                 </button>
               </div>
             )}
@@ -409,7 +411,7 @@ const AppShell: React.FC = () => {
                   <button
                     className="icon-button brand-edit"
                     type="button"
-                    aria-label="Editar nombre"
+                    aria-label={t("Edit name")}
                     onClick={() => setEditingField("name")}
                   >
                     <PencilIcon />
@@ -440,7 +442,7 @@ const AppShell: React.FC = () => {
                   <button
                     className="icon-button brand-edit"
                     type="button"
-                    aria-label="Editar posición"
+                    aria-label={t("Edit role")}
                     onClick={() => setEditingField("role")}
                   >
                     <PencilIcon />
@@ -452,23 +454,23 @@ const AppShell: React.FC = () => {
         </div>
         <nav className="nav">
           <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Dashboard
+            {t("Dashboard")}
           </NavLink>
           <NavLink to="/tracker" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Tracker Table
+            {t("Tracker Table")}
           </NavLink>
           <NavLink to="/pipeline" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Pipeline
+            {t("Pipeline")}
           </NavLink>
           <NavLink to="/calendar" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Calendar
+            {t("Calendar")}
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Settings
+            {t("Settings")}
           </NavLink>
         </nav>
         <div className="sidebar-footer">
-          <p>Local-first · SQLite/Postgres</p>
+          <p>{t("Local-first · SQLite/Postgres")}</p>
         </div>
       </aside>
       <main className="content">
@@ -476,21 +478,21 @@ const AppShell: React.FC = () => {
           <header className="topbar">
             <div>
               <h1>
-                Personal Interview & Application Tracker
+                {t("Personal Interview & Application Tracker")}
                 {resolvedVersion && <span className="app-version">v{resolvedVersion}</span>}
               </h1>
-              <p>Offline-first workspace for your job search pipeline.</p>
+              <p>{t("Offline-first workspace for your job search pipeline.")}</p>
             </div>
             <div className="status-pill">
-              {loading ? "Loading..." : "Ready"}
+              {loading ? t("Loading...") : t("Ready")}
             </div>
           </header>
         )}
         {shouldShowUpdate && (
           <section className="update-banner" role="status">
             <div>
-              <strong>New version {updateInfo.latest_version} available.</strong>
-              <p>{updateInfo.notes || "Download the latest build to update."}</p>
+              <strong>{t("New version {version} available.", { version: updateInfo.latest_version })}</strong>
+              <p>{updateInfo.notes || t("Download the latest build to update.")}</p>
               {updateError && <p>{updateError}</p>}
             </div>
             <div className="update-actions">
@@ -499,14 +501,14 @@ const AppShell: React.FC = () => {
                 onClick={handleUpdateClick}
                 disabled={isUpdating}
               >
-                {isUpdating ? "Updating..." : "Download update"}
+                {isUpdating ? t("Updating...") : t("Download update")}
               </button>
             </div>
           </section>
         )}
         {error && <div className="alert">{error}</div>}
         <div className="page">
-          <Suspense fallback={<div className="empty">Loading page...</div>}>
+          <Suspense fallback={<div className="empty">{t("Loading page...")}</div>}>
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/tracker" element={<TrackerPage />} />
@@ -523,16 +525,16 @@ const AppShell: React.FC = () => {
           className="modal-backdrop"
           role="dialog"
           aria-modal="true"
-          aria-label="Tomar foto"
+          aria-label={t("Take photo")}
           onClick={closeCamera}
         >
           <div className="modal camera-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h3>Tomar foto</h3>
-                <p>Usa la cámara para actualizar tu foto de perfil.</p>
+                <h3>{t("Take photo")}</h3>
+                <p>{t("Use the camera to update your profile photo.")}</p>
               </div>
-              <button className="icon-button" type="button" onClick={closeCamera} aria-label="Cerrar">
+              <button className="icon-button" type="button" onClick={closeCamera} aria-label={t("Close")}>
                 X
               </button>
             </div>
@@ -545,7 +547,7 @@ const AppShell: React.FC = () => {
             </div>
             <div className="camera-actions">
               <button className="ghost" type="button" onClick={closeCamera}>
-                Cancelar
+                {t("Cancel")}
               </button>
               <button
                 className="ghost"
@@ -555,10 +557,10 @@ const AppShell: React.FC = () => {
                   fileInputRef.current?.click();
                 }}
               >
-                Subir foto
+                {t("Upload photo")}
               </button>
               <button className="primary" type="button" onClick={capturePhoto} disabled={!!cameraError}>
-                Capturar
+                {t("Capture")}
               </button>
             </div>
             <canvas ref={canvasRef} className="camera-canvas" />

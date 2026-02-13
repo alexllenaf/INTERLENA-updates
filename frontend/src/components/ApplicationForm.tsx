@@ -3,6 +3,7 @@ import ContactsEditor from "./ContactsEditor";
 import DocumentsDropzone from "./DocumentsDropzone";
 import StarRating from "./StarRating";
 import { documentDownloadUrl, openExternal } from "../api";
+import { useI18n } from "../i18n";
 import { Application, ApplicationInput, DocumentFile, Settings, TodoItem } from "../types";
 import { normalizeTodoStatus, TODO_STATUSES, TODO_STATUS_CLASS } from "../constants";
 import { formatFileSize, generateId } from "../utils";
@@ -56,6 +57,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
   onClose,
   onDeleteExistingDocument
 }) => {
+  const { t } = useI18n();
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [existingFiles, setExistingFiles] = useState<DocumentFile[]>(initial?.documents_files || []);
   const [form, setForm] = useState<ApplicationInput>(() => {
@@ -192,16 +194,16 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
       <div className="modal">
         <header className="modal-header">
           <div>
-            <h2>{initial ? "Edit Application" : "New Application"}</h2>
-            <p>Capture each touchpoint and keep your pipeline accurate.</p>
+            <h2>{initial ? t("Edit Application") : t("New Application")}</h2>
+            <p>{t("Capture each touchpoint and keep your pipeline accurate.")}</p>
           </div>
-          <button className="ghost" onClick={onClose} type="button" aria-label="Close">
+          <button className="ghost" onClick={onClose} type="button" aria-label={t("Close")}>
             ×
           </button>
         </header>
         <form onSubmit={handleSubmit} className="form-grid">
           <div className="field">
-            <label>Company Name</label>
+            <label>{t("Company Name")}</label>
             <input
               value={form.company_name ?? ""}
               onChange={(e) => updateField("company_name", e.target.value)}
@@ -209,7 +211,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Position</label>
+            <label>{t("Position")}</label>
             <input
               value={form.position ?? ""}
               onChange={(e) => updateField("position", e.target.value)}
@@ -217,7 +219,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Job Type</label>
+            <label>{t("Job Type")}</label>
             <select value={form.job_type} onChange={(e) => updateField("job_type", e.target.value)} required>
               {settings.job_types.map((job) => (
                 <option key={job} value={job}>
@@ -227,7 +229,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             </select>
           </div>
           <div className="field">
-            <label>Stage</label>
+            <label>{t("Stage")}</label>
             <select value={form.stage} onChange={(e) => updateField("stage", e.target.value)} required>
               {settings.stages.map((stage) => (
                 <option key={stage} value={stage}>
@@ -237,7 +239,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             </select>
           </div>
           <div className="field">
-            <label>Outcome</label>
+            <label>{t("Outcome")}</label>
             <select value={form.outcome} onChange={(e) => updateField("outcome", e.target.value)} required>
               {settings.outcomes.map((outcome) => (
                 <option key={outcome} value={outcome}>
@@ -247,15 +249,15 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             </select>
           </div>
           <div className="field">
-            <label>Location</label>
+            <label>{t("Location")}</label>
             <input
               value={form.location ?? ""}
               onChange={(e) => updateField("location", e.target.value)}
-              placeholder="Remote, City, Country"
+              placeholder={t("Remote, City, Country")}
             />
           </div>
           <div className="field">
-            <label>Application Date</label>
+            <label>{t("Application Date")}</label>
             <input
               type="date"
               value={form.application_date || ""}
@@ -263,7 +265,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Interview Date & Time</label>
+            <label>{t("Interview Date & Time")}</label>
             <input
               type="datetime-local"
               value={form.interview_datetime || ""}
@@ -271,7 +273,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Follow-Up Date</label>
+            <label>{t("Follow-Up Date")}</label>
             <input
               type="date"
               value={form.followup_date || ""}
@@ -279,7 +281,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Interview Rounds</label>
+            <label>{t("Interview Rounds")}</label>
             <input
               type="number"
               value={form.interview_rounds ?? ""}
@@ -287,7 +289,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Total Rounds</label>
+            <label>{t("Total Rounds")}</label>
             <input
               type="number"
               value={form.total_rounds ?? ""}
@@ -295,7 +297,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>My Interview Score</label>
+            <label>{t("My Interview Score")}</label>
             <StarRating
               value={form.my_interview_score ?? null}
               onChange={(next) => updateField("my_interview_score", next)}
@@ -304,7 +306,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Company Score</label>
+            <label>{t("Company Score")}</label>
             <StarRating
               value={form.company_score ?? null}
               onChange={(next) => updateField("company_score", next)}
@@ -313,42 +315,42 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field">
-            <label>Interview Type</label>
+            <label>{t("Interview Type")}</label>
             <input
               value={form.interview_type ?? ""}
               onChange={(e) => updateField("interview_type", e.target.value)}
             />
           </div>
           <div className="field">
-            <label>Interviewers</label>
+            <label>{t("Interviewers")}</label>
             <input
               value={form.interviewers ?? ""}
               onChange={(e) => updateField("interviewers", e.target.value)}
             />
           </div>
           <div className="field">
-            <label>Last Round Cleared</label>
+            <label>{t("Last Round Cleared")}</label>
             <input
               value={form.last_round_cleared ?? ""}
               onChange={(e) => updateField("last_round_cleared", e.target.value)}
             />
           </div>
           <div className="field">
-            <label>Improvement Areas</label>
+            <label>{t("Improvement Areas")}</label>
             <input
               value={form.improvement_areas ?? ""}
               onChange={(e) => updateField("improvement_areas", e.target.value)}
             />
           </div>
           <div className="field">
-            <label>Skill to Upgrade</label>
+            <label>{t("Skill to Upgrade")}</label>
             <input
               value={form.skill_to_upgrade ?? ""}
               onChange={(e) => updateField("skill_to_upgrade", e.target.value)}
             />
           </div>
           <div className="field full">
-            <label>Job Description</label>
+            <label>{t("Job Description")}</label>
             <textarea
               value={form.job_description ?? ""}
               onChange={(e) => updateField("job_description", e.target.value)}
@@ -356,7 +358,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field full">
-            <label>Notes</label>
+            <label>{t("Notes")}</label>
             <textarea
               value={form.notes ?? ""}
               onChange={(e) => updateField("notes", e.target.value)}
@@ -364,7 +366,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             />
           </div>
           <div className="field full">
-            <label>Documents / Links</label>
+            <label>{t("Documents / Links")}</label>
             <textarea
               value={form.documents_links ?? ""}
               onChange={(e) => updateField("documents_links", e.target.value)}
@@ -373,7 +375,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
           </div>
           <div className="field full">
             <DocumentsDropzone onUpload={addPendingFiles} />
-            <p className="documents-help">Adjunta CVs, portfolios o cartas de oferta.</p>
+            <p className="documents-help">{t("Attach resumes, portfolios, or offer letters.")}</p>
             {existingFiles.length > 0 && (
               <div className="documents-list">
                 {existingFiles.map((file) => (
@@ -399,7 +401,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                         type="button"
                         onClick={() => handleRemoveExisting(file.id)}
                       >
-                        Remove
+                        {t("Remove")}
                       </button>
                     )}
                   </div>
@@ -419,7 +421,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                         setPendingFiles((prev) => prev.filter((_, idx) => idx !== index))
                       }
                     >
-                      Remove
+                      {t("Remove")}
                     </button>
                   </div>
                 ))}
@@ -427,7 +429,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             )}
           </div>
           <div className="field full">
-            <label>Contacts</label>
+            <label>{t("Contacts")}</label>
             <ContactsEditor
               contacts={form.contacts || []}
               onCommit={(next) => updateField("contacts", next)}
@@ -437,21 +439,21 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
           <div className="field full">
             <div className="todo-header">
               <div>
-                <h4>To Do Items</h4>
-                <p>Track preparation tasks for this application.</p>
+                <h4>{t("To-Do Items")}</h4>
+                <p>{t("Track preparation tasks for this application.")}</p>
               </div>
-              <div className="todo-summary">{pendingTodos} pending</div>
+              <div className="todo-summary">{t("{count} pending", { count: pendingTodos })}</div>
             </div>
             {todoItems.length === 0 ? (
-              <div className="empty">No to-do items yet.</div>
+              <div className="empty">{t("No to-do items yet.")}</div>
             ) : (
               <table className="table todo-table">
                 <thead>
                   <tr>
-                    <th>Task</th>
-                    <th>Due Date</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th>{t("Task")}</th>
+                    <th>{t("Due Date")}</th>
+                    <th>{t("Status")}</th>
+                    <th>{t("Actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -504,7 +506,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                             type="button"
                             onClick={() => removeTodoItem(item.id)}
                           >
-                            Remove
+                            {t("Remove")}
                           </button>
                         </td>
                       </tr>
@@ -516,7 +518,7 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
             <div className="todo-add-row">
               <input
                 className="cell-input"
-                placeholder="New task"
+                placeholder={t("New task")}
                 value={todoDraft.task}
                 onChange={(event) =>
                   setTodoDraft((prev) => ({ ...prev, task: event.target.value }))
@@ -544,29 +546,66 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                 ))}
               </select>
               <button className="primary small" type="button" onClick={addTodoItem}>
-                Add
+                {t("Add")}
               </button>
             </div>
           </div>
 
           {customProps.length > 0 && (
             <div className="field full">
-              <h4>Custom Properties</h4>
+              <h4>{t("Custom Properties")}</h4>
               <div className="custom-grid">
                 {customProps.map((prop) => (
                   <div key={prop.key} className="field">
                     <label>{prop.name}</label>
-                    <select
-                      value={form.properties?.[prop.key] || ""}
-                      onChange={(e) => updateProperty(prop.key, e.target.value)}
-                    >
-                      <option value="">Select</option>
-                      {prop.options.map((opt) => (
-                        <option key={opt.label} value={opt.label}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                    {prop.type === "select" ? (
+                      <select
+                        value={form.properties?.[prop.key] || ""}
+                        onChange={(e) => updateProperty(prop.key, e.target.value)}
+                      >
+                        <option value="">{t("Select")}</option>
+                        {prop.options.map((opt) => (
+                          <option key={opt.label} value={opt.label}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : prop.type === "checkbox" ? (
+                      <input
+                        type="checkbox"
+                        checked={(form.properties?.[prop.key] || "") === "true"}
+                        onChange={(e) => updateProperty(prop.key, e.target.checked ? "true" : "false")}
+                      />
+                    ) : prop.type === "rating" ? (
+                      <StarRating
+                        value={(() => {
+                          const raw = form.properties?.[prop.key] || "";
+                          if (!raw) return null;
+                          const parsed = Number(raw);
+                          return Number.isNaN(parsed) ? null : parsed;
+                        })()}
+                        onChange={(next) => updateProperty(prop.key, next === null ? "" : String(next))}
+                        size="sm"
+                        step={0.5}
+                      />
+                    ) : prop.type === "date" ? (
+                      <input
+                        type="date"
+                        value={form.properties?.[prop.key] || ""}
+                        onChange={(e) => updateProperty(prop.key, e.target.value)}
+                      />
+                    ) : prop.type === "number" ? (
+                      <input
+                        type="number"
+                        value={form.properties?.[prop.key] || ""}
+                        onChange={(e) => updateProperty(prop.key, e.target.value)}
+                      />
+                    ) : (
+                      <input
+                        value={form.properties?.[prop.key] || ""}
+                        onChange={(e) => updateProperty(prop.key, e.target.value)}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -580,16 +619,16 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                 checked={form.favorite}
                 onChange={(e) => updateField("favorite", e.target.checked)}
               />
-              <span>Favorite</span>
+              <span>{t("Favorite")}</span>
             </label>
           </div>
 
           <div className="form-actions">
             <button className="ghost" type="button" onClick={onClose}>
-              Cancel
+              {t("Cancel")}
             </button>
             <button className="primary" type="submit">
-              {initial ? "Save Changes" : "Create Application"}
+              {initial ? t("Save Changes") : t("Create Application")}
             </button>
           </div>
         </form>

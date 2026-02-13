@@ -6,7 +6,7 @@ export type CustomPropertyOption = {
 export type CustomProperty = {
   key: string;
   name: string;
-  type: "select";
+  type: "select" | "text" | "number" | "date" | "checkbox" | "rating" | "contacts" | "links" | "documents";
   options: CustomPropertyOption[];
 };
 

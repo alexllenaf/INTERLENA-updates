@@ -1,10 +1,13 @@
 import React, { useRef, useState } from "react";
+import BlockPanel from "../components/BlockPanel";
 import StarRating from "../components/StarRating";
+import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { Application, ApplicationInput } from "../types";
 import { followupStatus, formatDateTime } from "../utils";
 
 const PipelinePage: React.FC = () => {
+  const { t } = useI18n();
   const { applications, settings, updateApplication, saveSettings } = useAppData();
   const [draggedStage, setDraggedStage] = useState<string | null>(null);
   const [stageDragOver, setStageDragOver] = useState<string | null>(null);
@@ -16,7 +19,7 @@ const PipelinePage: React.FC = () => {
   const draggedAppRef = useRef<{ id: number; stage: string } | null>(null);
 
   if (!settings) {
-    return <div className="empty">Loading settings...</div>;
+    return <div className="empty">{t("Loading settings...")}</div>;
   }
 
   const stages = settings.stages;
@@ -129,10 +132,10 @@ const PipelinePage: React.FC = () => {
 
   return (
     <div className="pipeline">
-      <section className="panel">
-        <h2>Pipeline</h2>
-        <p>Drag or push opportunities across stages as you progress.</p>
-      </section>
+      <BlockPanel id="pipeline:intro" as="section">
+        <h2>{t("Pipeline")}</h2>
+        <p>{t("Drag or push opportunities across stages as you progress.")}</p>
+      </BlockPanel>
       <div className="pipeline-grid">
         {stages.map((stage, index) => {
           const items = getStageItems(stage);
@@ -211,7 +214,7 @@ const PipelinePage: React.FC = () => {
                   handleAppDrop(stage, null);
                 }}
               >
-                {items.length === 0 && <div className="empty">No items</div>}
+                {items.length === 0 && <div className="empty">{t("No items")}</div>}
                 {items.map((app) => {
                   const leftStage = index > 0 ? stages[index - 1] : null;
                   const rightStage = index < stages.length - 1 ? stages[index + 1] : null;
@@ -257,7 +260,7 @@ const PipelinePage: React.FC = () => {
                         <span>{app.outcome}</span>
                         <span>{formatDateTime(app.interview_datetime)}</span>
                         <span className="pipeline-score">
-                          <span>Score</span>
+                          <span>{t("Score")}</span>
                           <StarRating
                             value={app.my_interview_score ?? null}
                             size="sm"
@@ -265,8 +268,12 @@ const PipelinePage: React.FC = () => {
                             readonly
                           />
                         </span>
-                        {followupState === "overdue" && <span className="tag tag-overdue">Follow-up overdue</span>}
-                        {followupState === "soon" && <span className="tag tag-soon">Follow-up soon</span>}
+                        {followupState === "overdue" && (
+                          <span className="tag tag-overdue">{t("Follow-up overdue")}</span>
+                        )}
+                        {followupState === "soon" && (
+                          <span className="tag tag-soon">{t("Follow-up soon")}</span>
+                        )}
                       </div>
                       <div className="pipeline-actions">
                         <button

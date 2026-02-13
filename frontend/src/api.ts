@@ -230,12 +230,17 @@ export async function updateApplication(id: number, payload: Partial<Application
   });
 }
 
-export async function uploadDocuments(appId: number, files: File[]): Promise<Application> {
+export async function uploadDocuments(
+  appId: number,
+  files: File[],
+  signal?: AbortSignal
+): Promise<Application> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
   return requestForm<Application>(`/applications/${appId}/documents`, {
     method: "POST",
-    body: formData
+    body: formData,
+    signal
   });
 }
 
