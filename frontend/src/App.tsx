@@ -3,6 +3,7 @@ import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { getUpdateInfo, openExternal } from "./api";
 import { useI18n } from "./i18n";
 import { AppProvider, useAppData } from "./state";
+import BlockPanel from "./components/BlockPanel";
 import DashboardPage from "./pages/DashboardPage";
 import { BrandProfile, UpdateInfo } from "./types";
 
@@ -333,7 +334,7 @@ const AppShell: React.FC = () => {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <BlockPanel id="app:sidebar" as="aside" variant="raw" className="sidebar">
         <div className="brand">
           <div className="brand-mark profile-avatar" ref={avatarMenuRef}>
             <input
@@ -472,7 +473,7 @@ const AppShell: React.FC = () => {
         <div className="sidebar-footer">
           <p>{t("Local-first · SQLite/Postgres")}</p>
         </div>
-      </aside>
+      </BlockPanel>
       <main className="content">
         {isDashboard && (
           <header className="topbar">

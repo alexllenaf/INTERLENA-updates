@@ -130,13 +130,21 @@ const COLOR_SWATCHES: { key: string; label: string; value: string | null }[] = [
 
 type Props = {
   id: string;
-  as?: "section" | "div";
+  as?: "section" | "div" | "aside";
+  variant?: "panel" | "raw";
   className?: string;
   children: React.ReactNode;
   style?: React.CSSProperties;
 };
 
-const BlockPanel: React.FC<Props> = ({ id, as = "section", className = "", children, style }) => {
+const BlockPanel: React.FC<Props> = ({
+  id,
+  as = "section",
+  variant = "panel",
+  className = "",
+  children,
+  style
+}) => {
   const { t } = useI18n();
   const [blockStyle, setBlockStyle] = useState<BlockStyle>(() => readStyle(id));
   const [open, setOpen] = useState(false);
@@ -287,13 +295,20 @@ const BlockPanel: React.FC<Props> = ({ id, as = "section", className = "", child
       vars["--muted"] = "rgba(255,255,255,0.78)";
       vars["--border"] = "rgba(255,255,255,0.20)";
       vars["--surface-alt"] = "rgba(255,255,255,0.10)";
+    } else if (color) {
+      // When a block explicitly sets a (light) color, ensure any local theme overrides
+      // (e.g. sidebar defaults) are reset back to the app's light tokens.
+      vars["--text"] = "#1b1f24";
+      vars["--muted"] = "#6b7280";
+      vars["--border"] = "#e2e8f0";
+      vars["--surface-alt"] = "#f7fafc";
     }
 
     return { vars, dark };
   }, [blockStyle]);
 
   const panelClass = [
-    "panel",
+    variant === "panel" ? "panel" : "",
     "block-panel",
     blockStyle.texture === "glass" ? "block-glass" : "block-flat",
     className

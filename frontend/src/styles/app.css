@@ -102,12 +102,23 @@ h2 {
 }
 
 .sidebar {
+  --block-bg: linear-gradient(160deg, #101926, #1b2a3a);
+  --text: #f8fafc;
+  --muted: rgba(248, 250, 252, 0.7);
+  --border: rgba(255, 255, 255, 0.2);
+  --surface: rgba(255, 255, 255, 0.08);
+  --surface-alt: rgba(255, 255, 255, 0.12);
+
   padding: 32px 24px;
-  background: linear-gradient(160deg, #101926, #1b2a3a);
-  color: #f8fafc;
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 32px;
+}
+
+.sidebar.block-panel.block-glass {
+  --block-bg: rgba(16, 25, 38, 0.45);
+  --block-shadow: none;
 }
 
 .brand {
@@ -210,15 +221,15 @@ h2 {
 
 .brand-subtitle-value {
   font-size: 12px;
-  color: rgba(248, 250, 252, 0.7);
+  color: var(--muted);
 }
 
 .brand-input {
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border);
   padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #f8fafc;
+  background: var(--surface);
+  color: var(--text);
   min-width: 120px;
 }
 
@@ -254,7 +265,7 @@ h2 {
 }
 
 .nav-link {
-  color: rgba(248, 250, 252, 0.75);
+  color: var(--muted);
   text-decoration: none;
   padding: 10px 14px;
   border-radius: 12px;
@@ -264,18 +275,18 @@ h2 {
 
 .nav-link.active {
   background: rgba(246, 173, 85, 0.2);
-  color: #fff3e0;
+  color: var(--text);
 }
 
 .nav-link:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--surface-alt);
+  color: var(--text);
 }
 
 .sidebar-footer {
   margin-top: auto;
   font-size: 12px;
-  color: rgba(248, 250, 252, 0.6);
+  color: var(--muted);
 }
 
 .content {
@@ -1341,9 +1352,9 @@ h2 {
   width: 24px;
   height: 24px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.08);
-  color: #f8fafc;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   opacity: 0;
   pointer-events: none;
   transform: translateY(-2px);
@@ -1351,7 +1362,7 @@ h2 {
 }
 
 .icon-button.brand-edit:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--surface-alt);
 }
 
 .brand-line:hover .icon-button.brand-edit,
@@ -3038,6 +3049,10 @@ button:disabled {
     flex-direction: row;
     align-items: center;
     gap: 16px;
+    overflow-x: auto;
+  }
+
+  .sidebar.block-panel.block-glass {
     overflow-x: auto;
   }
 
