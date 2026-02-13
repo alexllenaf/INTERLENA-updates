@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import StarRating from "../components/StarRating";
 import { useAppData } from "../state";
 import { Application, ApplicationInput } from "../types";
@@ -11,6 +11,9 @@ const PipelinePage: React.FC = () => {
   const [draggedApp, setDraggedApp] = useState<{ id: number; stage: string } | null>(null);
   const [dragOverAppId, setDragOverAppId] = useState<number | null>(null);
   const [dragOverAppStage, setDragOverAppStage] = useState<string | null>(null);
+  // Keep drag source in a ref so drop handlers work reliably even if React doesn't re-render during drag.
+  const draggedStageRef = useRef<string | null>(null);
+  const draggedAppRef = useRef<{ id: number; stage: string } | null>(null);
 
   if (!settings) {
     return <div className="empty">Loading settings...</div>;
@@ -47,11 +50,13 @@ const PipelinePage: React.FC = () => {
   };
 
   const resetStageDrag = () => {
+    draggedStageRef.current = null;
     setDraggedStage(null);
     setStageDragOver(null);
   };
 
   const resetAppDrag = () => {
+    draggedAppRef.current = null;
     setDraggedApp(null);
     setDragOverAppId(null);
     setDragOverAppStage(null);
@@ -76,11 +81,12 @@ const PipelinePage: React.FC = () => {
   };
 
   const handleStageDrop = async (targetStage: string) => {
-    if (!draggedStage || draggedStage === targetStage) {
+    const fromStage = draggedStageRef.current;
+    if (!fromStage || fromStage === targetStage) {
       resetStageDrag();
       return;
     }
-    const nextStages = reorderList(stages, draggedStage, targetStage);
+    const nextStages = reorderList(stages, fromStage, targetStage);
     if (nextStages !== stages) {
       await saveSettings({ ...settings, stages: nextStages });
     }
@@ -88,8 +94,9 @@ const PipelinePage: React.FC = () => {
   };
 
   const handleAppDrop = async (targetStage: string, targetId: number | null) => {
-    if (!draggedApp) return;
-    const { id: draggedId, stage: sourceStage } = draggedApp;
+    const dragged = draggedAppRef.current;
+    if (!dragged) return;
+    const { id: draggedId, stage: sourceStage } = dragged;
     if (targetId === draggedId) {
       resetAppDrag();
       return;
@@ -142,18 +149,21 @@ const PipelinePage: React.FC = () => {
                 className="pipeline-header draggable"
                 draggable={!draggedApp}
                 onDragStart={(event) => {
-                  if (draggedApp) return;
+                  if (draggedAppRef.current) return;
                   event.dataTransfer.effectAllowed = "move";
                   event.dataTransfer.setData("text/plain", stage);
+                  draggedStageRef.current = stage;
                   setDraggedStage(stage);
                 }}
                 onDragOver={(event) => {
-                  if (draggedStage && draggedStage !== stage) {
+                  const currentDraggedStage = draggedStageRef.current;
+                  const currentDraggedApp = draggedAppRef.current;
+                  if (currentDraggedStage && currentDraggedStage !== stage) {
                     event.preventDefault();
                     setStageDragOver(stage);
                     return;
                   }
-                  if (draggedApp) {
+                  if (currentDraggedApp) {
                     event.preventDefault();
                     setDragOverAppStage(stage);
                     setDragOverAppId(null);
@@ -163,12 +173,14 @@ const PipelinePage: React.FC = () => {
                   if (stageDragOver === stage) setStageDragOver(null);
                 }}
                 onDrop={(event) => {
-                  if (draggedStage && draggedStage !== stage) {
+                  const currentDraggedStage = draggedStageRef.current;
+                  const currentDraggedApp = draggedAppRef.current;
+                  if (currentDraggedStage && currentDraggedStage !== stage) {
                     event.preventDefault();
                     handleStageDrop(stage);
                     return;
                   }
-                  if (draggedApp) {
+                  if (currentDraggedApp) {
                     event.preventDefault();
                     handleAppDrop(stage, null);
                   }
@@ -188,13 +200,13 @@ const PipelinePage: React.FC = () => {
               <div
                 className="pipeline-cards"
                 onDragOver={(event) => {
-                  if (!draggedApp) return;
+                  if (!draggedAppRef.current) return;
                   event.preventDefault();
                   setDragOverAppStage(stage);
                   setDragOverAppId(null);
                 }}
                 onDrop={(event) => {
-                  if (!draggedApp) return;
+                  if (!draggedAppRef.current) return;
                   event.preventDefault();
                   handleAppDrop(stage, null);
                 }}
@@ -214,10 +226,12 @@ const PipelinePage: React.FC = () => {
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = "move";
                         event.dataTransfer.setData("text/plain", String(app.id));
+                        draggedAppRef.current = { id: app.id, stage: app.stage };
                         setDraggedApp({ id: app.id, stage: app.stage });
                       }}
                       onDragOver={(event) => {
-                        if (!draggedApp || draggedApp.id === app.id) return;
+                        const currentDraggedApp = draggedAppRef.current;
+                        if (!currentDraggedApp || currentDraggedApp.id === app.id) return;
                         event.preventDefault();
                         setDragOverAppId(app.id);
                         setDragOverAppStage(stage);
@@ -226,7 +240,7 @@ const PipelinePage: React.FC = () => {
                         if (dragOverAppId === app.id) setDragOverAppId(null);
                       }}
                       onDrop={(event) => {
-                        if (!draggedApp) return;
+                        if (!draggedAppRef.current) return;
                         event.preventDefault();
                         handleAppDrop(stage, app.id);
                       }}

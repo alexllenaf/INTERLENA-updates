@@ -173,6 +173,8 @@ const SelectCell: React.FC<SelectCellProps> = ({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [dragOption, setDragOption] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  // Keep drag source in a ref so drop handlers still work if React doesn't re-render during drag.
+  const dragOptionRef = React.useRef<string | null>(null);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const resolved = value ?? "";
   const currentOption = options.find((opt) => opt.label === resolved);
@@ -206,6 +208,7 @@ const SelectCell: React.FC<SelectCellProps> = ({
       setMenuFor(null);
       setDragOption(null);
       setDragOver(null);
+      dragOptionRef.current = null;
     }
   }, [open]);
 
@@ -308,10 +311,11 @@ const SelectCell: React.FC<SelectCellProps> = ({
                       if (!draggable) return;
                       event.dataTransfer.setData("text/plain", option.label);
                       event.dataTransfer.effectAllowed = "move";
+                      dragOptionRef.current = option.label;
                       setDragOption(option.label);
                     }}
                     onDragOver={(event) => {
-                      if (!draggable || !dragOption) return;
+                      if (!draggable || !dragOptionRef.current) return;
                       event.preventDefault();
                       setDragOver(option.label);
                     }}
@@ -319,13 +323,16 @@ const SelectCell: React.FC<SelectCellProps> = ({
                       if (dragOver === option.label) setDragOver(null);
                     }}
                     onDrop={(event) => {
-                      if (!dragOption || !draggable || dragOption === option.label) return;
+                      const fromLabel = dragOptionRef.current;
+                      if (!fromLabel || !draggable || fromLabel === option.label) return;
                       event.preventDefault();
-                      onReorderOption?.(dragOption, option.label);
+                      onReorderOption?.(fromLabel, option.label);
+                      dragOptionRef.current = null;
                       setDragOption(null);
                       setDragOver(null);
                     }}
                     onDragEnd={() => {
+                      dragOptionRef.current = null;
                       setDragOption(null);
                       setDragOver(null);
                     }}
@@ -635,6 +642,8 @@ const TrackerPage: React.FC = () => {
   const [bulkOutcome, setBulkOutcome] = useState("");
   const [draggedCol, setDraggedCol] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  // Keep drag source in a ref so drop handlers work reliably even if React doesn't re-render during drag.
+  const draggedColRef = useRef<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const widthsRef = useRef<Record<string, number>>({});
   const [columnOrderDraft, setColumnOrderDraft] = useState<string[]>([]);
@@ -1229,15 +1238,17 @@ const TrackerPage: React.FC = () => {
   };
 
   const handleColumnReorder = (targetCol: string) => {
-    if (!draggedCol || draggedCol === targetCol) return;
+    const fromCol = draggedColRef.current;
+    if (!fromCol || fromCol === targetCol) return;
     const next = [...columnOrderDraft];
-    const fromIndex = next.indexOf(draggedCol);
+    const fromIndex = next.indexOf(fromCol);
     const toIndex = next.indexOf(targetCol);
     if (fromIndex < 0 || toIndex < 0) return;
     next.splice(fromIndex, 1);
-    next.splice(toIndex, 0, draggedCol);
+    next.splice(toIndex, 0, fromCol);
     setColumnOrderDraft(next);
     saveSettings({ ...settings, table_columns: next });
+    draggedColRef.current = null;
     setDraggedCol(null);
     setDragOverCol(null);
   };
@@ -1564,15 +1575,18 @@ const TrackerPage: React.FC = () => {
                       draggable
                       onDragStart={(event) => {
                         event.dataTransfer.setData("text/plain", col);
+                        event.dataTransfer.effectAllowed = "move";
+                        draggedColRef.current = col;
                         setDraggedCol(col);
                       }}
                       onDragEnd={() => {
+                        draggedColRef.current = null;
                         setDraggedCol(null);
                         setDragOverCol(null);
                       }}
                       onDragOver={(event) => {
                         event.preventDefault();
-                        if (draggedCol && draggedCol !== col) {
+                        if (draggedColRef.current && draggedColRef.current !== col) {
                           setDragOverCol(col);
                         }
                       }}

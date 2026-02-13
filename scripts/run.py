@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_APP = ROOT / "run_app.py"
 
 TASKS: dict[str, list[str]] = {
-    "dev": [],
+    "desktop": ["--desktop"],
+    "dev": [],  # Fullstack (web) dev server in the browser.
     "legacy": ["--legacy"],
 }
 
@@ -21,9 +22,9 @@ def main() -> None:
     parser.add_argument(
         "task",
         nargs="?",
-        default="dev",
+        default="desktop",
         choices=sorted(TASKS.keys()),
-        help="Task to run (default: dev).",
+        help="Task to run (default: desktop).",
     )
     parser.add_argument(
         "args",

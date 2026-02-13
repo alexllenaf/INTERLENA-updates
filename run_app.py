@@ -171,6 +171,30 @@ def _run_streamlit(extra_args: list[str]) -> None:
         proc.terminate()
 
 
+def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
+    root = Path(__file__).resolve().parent
+    frontend_dir = root / "frontend"
+    backend_bin = root / "backend" / "dist" / "interview-atlas-backend"
+
+    if not (frontend_dir / "package.json").exists():
+        raise SystemExit("frontend/package.json not found. Did you generate the React app?")
+
+    _ensure_frontend_deps(frontend_dir, allow_install=not skip_install)
+    _require_command(
+        "cargo",
+        "Install Rust (cargo) and retry. On macOS: https://www.rust-lang.org/tools/install",
+    )
+
+    if not backend_bin.exists():
+        raise SystemExit("backend/dist/interview-atlas-backend not found. Build the backend binary first.")
+
+    env = os.environ.copy()
+    env["APP_PORT"] = str(backend_port)
+
+    # Starts the Tauri desktop app in dev mode. Vite runs via beforeDevCommand in tauri.conf.json.
+    raise SystemExit(subprocess.call(["npm", "run", "tauri:dev"], cwd=frontend_dir, env=env))
+
+
 def _run_fullstack(
     *,
     backend_port: int,
@@ -233,11 +257,16 @@ def _run_fullstack(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--legacy", action="store_true", help="Run the old Streamlit app.")
+    parser.add_argument("--desktop", action="store_true", help="Run the Tauri desktop app (dev).")
     parser.add_argument("--backend-port", type=int, default=8000)
     parser.add_argument("--frontend-port", type=int, default=5173)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--no-install", action="store_true")
     args, extra_args = parser.parse_known_args(sys.argv[1:])
+
+    if args.desktop:
+        _run_desktop_dev(backend_port=args.backend_port, skip_install=args.no_install)
+        return
 
     if args.legacy:
         _run_streamlit(extra_args)
