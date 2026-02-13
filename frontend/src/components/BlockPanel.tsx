@@ -391,7 +391,12 @@ const BlockPanel: React.FC<Props> = ({ id, as = "section", className = "", child
 
   return (
     <>
-      <Tag className={panelClass} style={mergedStyle} data-block-id={id}>
+      <Tag
+        className={panelClass}
+        style={mergedStyle}
+        data-block-id={id}
+        data-settings-open={open ? "true" : "false"}
+      >
         <div className="block-settings">
           <button
             className="block-settings-button"

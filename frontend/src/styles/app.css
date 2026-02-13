@@ -463,7 +463,7 @@ h2 {
     radial-gradient(140% 120% at 50% 55%, transparent 45%, rgba(0, 0, 0, 0.1) 100%);
   mix-blend-mode: screen;
   opacity: 0.88;
-  z-index: 0;
+  z-index: -1;
 }
 
 .block-panel.block-glass::after {
@@ -491,12 +491,7 @@ h2 {
   padding: 2px;
   opacity: 0.95;
   mix-blend-mode: overlay;
-  z-index: 0;
-}
-
-.block-panel.block-glass > * {
-  position: relative;
-  z-index: 1;
+  z-index: -1;
 }
 
 .block-settings {
@@ -505,10 +500,20 @@ h2 {
   right: 14px;
   z-index: 3;
   pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.block-panel:hover .block-settings,
+.block-panel:focus-within .block-settings,
+.block-panel[data-settings-open="true"] .block-settings {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .block-settings-button {
-  pointer-events: auto;
+  pointer-events: none;
   width: 32px;
   height: 32px;
   border-radius: 10px;
@@ -519,6 +524,17 @@ h2 {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
   font-weight: 800;
   line-height: 1;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 160ms ease, transform 160ms ease, background 20ms ease-in, color 20ms ease-in;
+}
+
+.block-panel:hover .block-settings-button,
+.block-panel:focus-within .block-settings-button,
+.block-panel[data-settings-open="true"] .block-settings-button {
+  pointer-events: auto;
+  opacity: 1;
+  transform: scale(1);
 }
 
 .block-settings-button:hover {
