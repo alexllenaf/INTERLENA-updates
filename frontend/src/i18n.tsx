@@ -17,6 +17,13 @@ const ES: Record<string, string> = {
   "Tracker Table": "Tabla Tracker",
   "Pipeline": "Pipeline",
   "Calendar": "Calendario",
+  "Rename page": "Renombrar pagina",
+  "Delete sheet": "Eliminar hoja",
+  'Are you sure you want to delete "{name}"?': 'Seguro que quieres eliminar "{name}"?',
+  "Add new sheet": "Anadir nueva hoja",
+  "New Sheet": "Nueva hoja",
+  "This sheet does not exist.": "Esta hoja no existe.",
+  "Write your notes here...": "Escribe tus notas aqui...",
   "Settings": "Ajustes",
   "Local-first · SQLite/Postgres": "Local-first · SQLite/Postgres",
   "Personal Interview & Application Tracker": "Tracker de entrevistas y candidaturas",
@@ -59,6 +66,7 @@ const ES: Record<string, string> = {
   "Download backup (.zip)": "Descargar copia (.zip)",
 
   "Block style": "Estilo del bloque",
+  "Block actions": "Acciones del bloque",
   "Texture": "Textura",
   "Flat": "Plana",
   "Glass": "Cristal",
@@ -220,7 +228,14 @@ const ES: Record<string, string> = {
   "Set stage...": "Asignar etapa...",
   "Set outcome...": "Asignar resultado...",
   "Export Selected": "Exportar seleccion",
-  "Delete Selected": "Eliminar seleccionadas"
+  "Delete Selected": "Eliminar seleccionadas",
+  "Pin column": "Fijar columna",
+  "Unpin column": "Desfijar columna",
+  "Move left": "Mover a la izquierda",
+  "Move right": "Mover a la derecha",
+  "Hide column": "Ocultar columna",
+  "Show all columns": "Mostrar todas las columnas",
+  "Show column {name}": "Mostrar columna {name}"
 };
 
 const interpolate = (template: string, vars?: Vars) => {

@@ -33,6 +33,7 @@ export type Settings = {
   dark_mode: boolean;
   custom_properties: CustomProperty[];
   brand_profile?: BrandProfile;
+  page_configs?: Record<string, unknown>;
 };
 
 export type UpdateInfo = {

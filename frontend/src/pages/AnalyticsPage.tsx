@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   Bar,
   BarChart,
@@ -8,8 +8,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
-import GridPageLayout from "../components/layout/GridPageLayout";
+import { BlockSlotResolver, PageBuilderPage } from "../components/pageBuilder";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { formatDate } from "../utils";
@@ -46,24 +45,10 @@ const AnalyticsPage: React.FC = () => {
 
   const active = applications.filter((app) => app.outcome === "In Progress");
 
-  const blocks: AppBlockConfig[] = [
-    {
-      id: "analytics:intro",
-      type: "titleDescription",
-      layout: { colSpan: GRID_SPAN.full },
-      data: {
-        title: t("Analytics"),
-        description: t("Break down outcomes, stages, and score distribution.")
-      }
-    },
-    {
-      id: "analytics:chart:outcomes",
-      type: "chart",
-      layout: { colSpan: GRID_SPAN.chartMedium },
-      data: {
-        title: t("Outcomes"),
-        size: "medium",
-        content: (
+  const resolveAnalyticsSlot = useCallback<BlockSlotResolver>(
+    (slotId) => {
+      if (slotId === "analytics:chart:outcomes:content") {
+        return (
           <div className="chart-shell">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={outcomes}>
@@ -75,17 +60,11 @@ const AnalyticsPage: React.FC = () => {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        )
+        );
       }
-    },
-    {
-      id: "analytics:chart:stages",
-      type: "chart",
-      layout: { colSpan: GRID_SPAN.chartMedium },
-      data: {
-        title: t("Stages"),
-        size: "medium",
-        content: (
+
+      if (slotId === "analytics:chart:stages:content") {
+        return (
           <div className="chart-shell">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stages}>
@@ -97,17 +76,11 @@ const AnalyticsPage: React.FC = () => {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        )
+        );
       }
-    },
-    {
-      id: "analytics:chart:score",
-      type: "chart",
-      layout: { colSpan: GRID_SPAN.chartMedium },
-      data: {
-        title: t("Score Distribution"),
-        size: "medium",
-        content: (
+
+      if (slotId === "analytics:chart:score:content") {
+        return (
           <div className="chart-shell">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={scoreData}>
@@ -119,46 +92,42 @@ const AnalyticsPage: React.FC = () => {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        )
+        );
       }
-    },
-    {
-      id: "analytics:active",
-      type: "informationalTable",
-      layout: { colSpan: GRID_SPAN.full },
-      data: {
-        title: t("Active Processes"),
-        description: t("Applications currently in progress."),
-        content:
-          active.length === 0 ? (
-            <div className="empty">{t("No active processes.")}</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("Company")}</th>
-                  <th>{t("Position")}</th>
-                  <th>{t("Stage")}</th>
-                  <th>{t("Application Date")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {active.map((app) => (
-                  <tr key={app.id}>
-                    <td>{app.company_name}</td>
-                    <td>{app.position}</td>
-                    <td>{app.stage}</td>
-                    <td>{formatDate(app.application_date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )
-      }
-    }
-  ];
 
-  return <GridPageLayout blocks={blocks} className="analytics" />;
+      if (slotId === "analytics:table:active:content") {
+        return active.length === 0 ? (
+          <div className="empty">{t("No active processes.")}</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("Company")}</th>
+                <th>{t("Position")}</th>
+                <th>{t("Stage")}</th>
+                <th>{t("Application Date")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((app) => (
+                <tr key={app.id}>
+                  <td>{app.company_name}</td>
+                  <td>{app.position}</td>
+                  <td>{app.stage}</td>
+                  <td>{formatDate(app.application_date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+      }
+
+      return null;
+    },
+    [active, outcomes, scoreData, stages, t]
+  );
+
+  return <PageBuilderPage pageId="analytics" className="analytics" resolveSlot={resolveAnalyticsSlot} />;
 };
 
 export default AnalyticsPage;

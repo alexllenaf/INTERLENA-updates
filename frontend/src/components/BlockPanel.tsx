@@ -9,6 +9,13 @@ type BlockStyle = {
   color: string | null;
 };
 
+export type BlockPanelMenuAction = {
+  key: string;
+  label: string;
+  onClick: () => void;
+  tone?: "default" | "danger";
+};
+
 const STORAGE_KEY = "block_styles_v1";
 const MENU_WIDTH = 320;
 const MENU_GUTTER = 12;
@@ -135,6 +142,7 @@ type Props = {
   className?: string;
   children: React.ReactNode;
   style?: React.CSSProperties;
+  menuActions?: BlockPanelMenuAction[];
 };
 
 const BlockPanel: React.FC<Props> = ({
@@ -143,7 +151,8 @@ const BlockPanel: React.FC<Props> = ({
   variant = "panel",
   className = "",
   children,
-  style
+  style,
+  menuActions = []
 }) => {
   const { t } = useI18n();
   const [blockStyle, setBlockStyle] = useState<BlockStyle>(() => readStyle(id));
@@ -157,6 +166,8 @@ const BlockPanel: React.FC<Props> = ({
   const closeTimerRef = useRef<number | null>(null);
   const forceDefaultStyle = className.includes("table-panel-expanded");
   const canStyleBlock = !forceDefaultStyle;
+  const hasMenuActions = menuActions.length > 0;
+  const canOpenMenu = canStyleBlock || hasMenuActions;
 
   useEffect(() => {
     setBlockStyle(readStyle(id));
@@ -252,10 +263,10 @@ const BlockPanel: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
-    if (!canStyleBlock && open) {
+    if (!canOpenMenu && open) {
       closeMenuImmediate();
     }
-  }, [canStyleBlock, open]);
+  }, [canOpenMenu, open]);
 
   const updateBlockStyle = (patch: Partial<BlockStyle>) => {
     setBlockStyle((prev) => {
@@ -332,7 +343,7 @@ const BlockPanel: React.FC<Props> = ({
   }, [style, derived.vars]);
 
   const Tag = as;
-  const menu = canStyleBlock && open && pos && typeof document !== "undefined"
+  const menu = canOpenMenu && open && pos && typeof document !== "undefined"
     ? createPortal(
         <div
           className={`block-style-menu ${visible ? "open" : ""}`}
@@ -343,73 +354,99 @@ const BlockPanel: React.FC<Props> = ({
           aria-modal="false"
         >
           <div className="block-style-menu-header">
-            <div className="block-style-menu-title">{t("Block style")}</div>
+            <div className="block-style-menu-title">
+              {canStyleBlock ? t("Block style") : t("Block actions")}
+            </div>
             <button className="ghost small" type="button" onClick={closeMenu}>
               {t("Close")}
             </button>
           </div>
 
-          <div className="block-style-menu-section">
-            <div className="block-style-menu-label">{t("Texture")}</div>
-            <div className="block-style-toggle">
-              <button
-                type="button"
-                className={blockStyle.texture === "flat" ? "active" : ""}
-                onClick={() => updateBlockStyle({ texture: "flat" })}
-              >
-                {t("Flat")}
-              </button>
-              <button
-                type="button"
-                className={blockStyle.texture === "glass" ? "active" : ""}
-                onClick={() => updateBlockStyle({ texture: "glass" })}
-              >
-                {t("Glass")}
-              </button>
-            </div>
-          </div>
-
-          <div className="block-style-menu-section">
-            <div className="block-style-menu-label">{t("Color")}</div>
-            <div className="block-style-swatches">
-              {COLOR_SWATCHES.map((swatch) => {
-                const selected = swatch.value === blockStyle.color;
-                const isDefault = swatch.value === null && blockStyle.color === null;
-                const isSelected = selected || isDefault;
-                const swatchLabel = t(swatch.label);
-                return (
+          {canStyleBlock && (
+            <>
+              <div className="block-style-menu-section">
+                <div className="block-style-menu-label">{t("Texture")}</div>
+                <div className="block-style-toggle">
                   <button
-                    key={swatch.key}
                     type="button"
-                    className={`block-style-swatch ${isSelected ? "selected" : ""} ${
-                      swatch.value === null ? "default" : ""
-                    }`}
-                    title={swatchLabel}
-                    aria-label={swatchLabel}
-                    style={swatch.value ? { background: swatch.value } : undefined}
-                    onClick={() => updateBlockStyle({ color: swatch.value })}
-                  />
-                );
-              })}
+                    className={blockStyle.texture === "flat" ? "active" : ""}
+                    onClick={() => updateBlockStyle({ texture: "flat" })}
+                  >
+                    {t("Flat")}
+                  </button>
+                  <button
+                    type="button"
+                    className={blockStyle.texture === "glass" ? "active" : ""}
+                    onClick={() => updateBlockStyle({ texture: "glass" })}
+                  >
+                    {t("Glass")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="block-style-menu-section">
+                <div className="block-style-menu-label">{t("Color")}</div>
+                <div className="block-style-swatches">
+                  {COLOR_SWATCHES.map((swatch) => {
+                    const selected = swatch.value === blockStyle.color;
+                    const isDefault = swatch.value === null && blockStyle.color === null;
+                    const isSelected = selected || isDefault;
+                    const swatchLabel = t(swatch.label);
+                    return (
+                      <button
+                        key={swatch.key}
+                        type="button"
+                        className={`block-style-swatch ${isSelected ? "selected" : ""} ${
+                          swatch.value === null ? "default" : ""
+                        }`}
+                        title={swatchLabel}
+                        aria-label={swatchLabel}
+                        style={swatch.value ? { background: swatch.value } : undefined}
+                        onClick={() => updateBlockStyle({ color: swatch.value })}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="block-style-custom">
+                  <label className="block-style-custom-label">
+                    {t("Custom")}
+                    <input
+                      type="color"
+                      value={parseHexColor(blockStyle.color || "#ffffff") ? (blockStyle.color as string) : "#ffffff"}
+                      onChange={(event) => updateBlockStyle({ color: event.target.value })}
+                    />
+                  </label>
+                  <button
+                    className="ghost small"
+                    type="button"
+                    onClick={() => updateBlockStyle(DEFAULT_STYLE)}
+                  >
+                    {t("Reset")}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {hasMenuActions && (
+            <div className="block-style-menu-section">
+              {canStyleBlock && <div className="block-style-menu-label">{t("Actions")}</div>}
+              <div className="block-style-actions">
+                {menuActions.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    className={`block-style-action ${action.tone === "danger" ? "danger" : ""}`}
+                    onClick={() => {
+                      action.onClick();
+                      closeMenu();
+                    }}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="block-style-custom">
-              <label className="block-style-custom-label">
-                {t("Custom")}
-                <input
-                  type="color"
-                  value={parseHexColor(blockStyle.color || "#ffffff") ? (blockStyle.color as string) : "#ffffff"}
-                  onChange={(event) => updateBlockStyle({ color: event.target.value })}
-                />
-              </label>
-              <button
-                className="ghost small"
-                type="button"
-                onClick={() => updateBlockStyle(DEFAULT_STYLE)}
-              >
-                {t("Reset")}
-              </button>
-            </div>
-          </div>
+          )}
         </div>,
         document.body
       )
@@ -421,9 +458,9 @@ const BlockPanel: React.FC<Props> = ({
         className={panelClass}
         style={mergedStyle}
         data-block-id={id}
-        data-settings-open={canStyleBlock && open ? "true" : "false"}
+        data-settings-open={canOpenMenu && open ? "true" : "false"}
       >
-        {canStyleBlock && (
+        {canOpenMenu && (
           <div className="block-settings">
             <button
               className="block-settings-button"

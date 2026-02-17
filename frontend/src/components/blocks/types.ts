@@ -39,11 +39,34 @@ export type TitleDescriptionBlockData = {
   actions?: React.ReactNode;
 };
 
+export type EditableTableToolbarColumn = {
+  key: string;
+  label: string;
+  visible: boolean;
+  disabled?: boolean;
+};
+
+export type EditableTableToolbarConfig = {
+  leading?: React.ReactNode;
+  trailing?: React.ReactNode;
+  search?: {
+    value: string;
+    onChange: (next: string) => void;
+    placeholder?: string;
+  };
+  columns?: {
+    items: EditableTableToolbarColumn[];
+    onToggle: (key: string) => void;
+    onShowAll?: () => void;
+  };
+};
+
 export type EditableTableBlockData = {
   title: string;
   description?: string;
   actions?: React.ReactNode;
   panelClassName?: string;
+  toolbar?: EditableTableToolbarConfig;
   content: React.ReactNode;
 };
 

@@ -7,6 +7,12 @@ export const TODO_STATUS_CLASS: Record<TodoStatus, string> = {
   Done: "done"
 };
 
+export const TODO_STATUS_PILL_COLORS: Record<TodoStatus, string> = {
+  "Not started": "#CBD5E1",
+  "In progress": "#FDE68A",
+  Done: "#86EFAC"
+};
+
 export const normalizeTodoStatus = (status?: string): TodoStatus => {
   if (status === "In progress" || status === "Done") {
     return status;

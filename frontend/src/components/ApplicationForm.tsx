@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import ContactsEditor from "./ContactsEditor";
 import DocumentsDropzone from "./DocumentsDropzone";
 import StarRating from "./StarRating";
+import { DateCell, SelectCell, type SelectOption, TextCell } from "./TableCells";
 import { documentDownloadUrl, openExternal } from "../api";
 import { useI18n } from "../i18n";
 import { Application, ApplicationInput, DocumentFile, Settings, TodoItem } from "../types";
-import { normalizeTodoStatus, TODO_STATUSES, TODO_STATUS_CLASS } from "../constants";
+import { normalizeTodoStatus, TODO_STATUSES, TODO_STATUS_CLASS, TODO_STATUS_PILL_COLORS } from "../constants";
 import { formatFileSize, generateId } from "../utils";
 
 type ApplicationFormProps = {
@@ -43,6 +44,11 @@ const defaultForm: ApplicationInput = {
   favorite: false,
   properties: {}
 };
+
+const TODO_STATUS_SELECT_OPTIONS: SelectOption[] = TODO_STATUSES.map((status) => ({
+  label: status,
+  color: TODO_STATUS_PILL_COLORS[status]
+}));
 
 function toNullableNumber(value: string): number | undefined {
   if (value === "" || value === undefined) return undefined;
@@ -465,40 +471,25 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
                         className={status === "Done" ? "todo-completed" : undefined}
                       >
                         <td>
-                          <input
-                            className="cell-input"
+                          <TextCell
                             value={item.task || ""}
-                            onChange={(event) =>
-                              updateTodoItem(item.id, { task: event.target.value })
-                            }
+                            onCommit={(next) => updateTodoItem(item.id, { task: next })}
                           />
                         </td>
                         <td>
-                          <input
-                            type="date"
-                            className="cell-date"
+                          <DateCell
                             value={item.due_date || ""}
-                            onChange={(event) =>
-                              updateTodoItem(item.id, { due_date: event.target.value })
-                            }
+                            onCommit={(next) => updateTodoItem(item.id, { due_date: next })}
                           />
                         </td>
                         <td>
-                          <select
-                            className={`cell-select todo-status ${TODO_STATUS_CLASS[status]}`}
+                          <SelectCell
                             value={status}
-                            onChange={(event) =>
-                              updateTodoItem(item.id, {
-                                status: normalizeTodoStatus(event.target.value)
-                              })
+                            options={TODO_STATUS_SELECT_OPTIONS}
+                            onCommit={(next) =>
+                              updateTodoItem(item.id, { status: normalizeTodoStatus(next) })
                             }
-                          >
-                            {TODO_STATUSES.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </td>
                         <td>
                           <button

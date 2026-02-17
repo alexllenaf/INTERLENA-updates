@@ -1,16 +1,13 @@
-import React, { Suspense, useEffect, useRef, useState } from "react";
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getUpdateInfo, openExternal } from "./api";
 import { useI18n } from "./i18n";
+import { CORE_PAGE_PLUGINS } from "./pagePlugins";
 import { AppProvider, useAppData } from "./state";
 import BlockPanel from "./components/BlockPanel";
-import AnalyticsPage from "./pages/AnalyticsPage";
-import DashboardPage from "./pages/DashboardPage";
+import CustomSheetPage from "./pages/CustomSheetPage";
 import { BrandProfile, UpdateInfo } from "./types";
 
-const TrackerPage = React.lazy(() => import("./pages/TrackerPage"));
-const PipelinePage = React.lazy(() => import("./pages/PipelinePage"));
-const CalendarPage = React.lazy(() => import("./pages/CalendarPage"));
 const SettingsPage = React.lazy(() => import("./pages/SettingsPage"));
 
 const DEFAULT_PROFILE: BrandProfile = {
@@ -24,6 +21,12 @@ const PencilIcon: React.FC = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" />
     <path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.82 3.75 3.75 1.83-1.82z" />
+  </svg>
+);
+
+const TrashIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-1 6h2v9H8V9zm6 0h2v9h-2V9zM6 9h2v9H6V9z" />
   </svg>
 );
 
@@ -61,11 +64,83 @@ const isNewerVersion = (latest: string | null | undefined, current: string | nul
   return false;
 };
 
+type CustomSheet = {
+  id: string;
+  name: string;
+};
+
+const NAV_LABELS_STORAGE_KEY = "sidebar_nav_labels_v1";
+const CUSTOM_SHEETS_STORAGE_KEY = "sidebar_custom_sheets_v1";
+
+const readNavLabelOverrides = (): Record<string, string> => {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(NAV_LABELS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+    const next: Record<string, string> = {};
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (typeof value !== "string") return;
+      const trimmed = value.trim();
+      if (trimmed) next[key] = trimmed;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+};
+
+const writeNavLabelOverrides = (labels: Record<string, string>) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NAV_LABELS_STORAGE_KEY, JSON.stringify(labels));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const readCustomSheets = (): CustomSheet[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_SHEETS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const rec = item as Record<string, unknown>;
+        const id = typeof rec.id === "string" ? rec.id.trim() : "";
+        const name = typeof rec.name === "string" ? rec.name.trim() : "";
+        if (!id || !name) return null;
+        return { id, name };
+      })
+      .filter((item): item is CustomSheet => Boolean(item));
+  } catch {
+    return [];
+  }
+};
+
+const writeCustomSheets = (sheets: CustomSheet[]) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CUSTOM_SHEETS_STORAGE_KEY, JSON.stringify(sheets));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const createSheetId = () => `sheet-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 const AppShell: React.FC = () => {
   const { t } = useI18n();
   const { loading, error, settings, saveSettings } = useAppData();
+  const navigate = useNavigate();
   const location = useLocation();
-  const isDashboard = location.pathname === "/" || location.pathname === "/analytics";
+  const isDashboard = CORE_PAGE_PLUGINS.some(
+    (plugin) => plugin.showTopbar && plugin.path === location.pathname
+  );
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -76,6 +151,11 @@ const AppShell: React.FC = () => {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [navLabelOverrides, setNavLabelOverrides] = useState<Record<string, string>>(() =>
+    readNavLabelOverrides()
+  );
+  const [customSheets, setCustomSheets] = useState<CustomSheet[]>(() => readCustomSheets());
+  const [sheetToDelete, setSheetToDelete] = useState<CustomSheet | null>(null);
   const hasLoadedProfileRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
@@ -153,10 +233,10 @@ const AppShell: React.FC = () => {
 
   useEffect(() => {
     const warmPages = () => {
-      import("./pages/TrackerPage");
-      import("./pages/PipelinePage");
-      import("./pages/CalendarPage");
-      import("./pages/SettingsPage");
+      CORE_PAGE_PLUGINS.forEach((plugin) => {
+        void plugin.preload();
+      });
+      void import("./pages/SettingsPage");
     };
     if ("requestIdleCallback" in window) {
       const handle = window.requestIdleCallback(warmPages);
@@ -203,6 +283,14 @@ const AppShell: React.FC = () => {
       }
     };
   }, [profile, saveSettings, settings]);
+
+  useEffect(() => {
+    writeNavLabelOverrides(navLabelOverrides);
+  }, [navLabelOverrides]);
+
+  useEffect(() => {
+    writeCustomSheets(customSheets);
+  }, [customSheets]);
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -332,6 +420,96 @@ const AppShell: React.FC = () => {
       setEditingField(null);
     }
   };
+
+  const baseNavItems = useMemo(
+    () =>
+      CORE_PAGE_PLUGINS
+        .filter((plugin) => plugin.showInSidebar !== false)
+        .map((plugin) => ({
+          path: plugin.path,
+          label: t(plugin.labelKey),
+          end: plugin.end
+        })),
+    [t]
+  );
+
+  const resolveNavLabel = useCallback(
+    (path: string, fallback: string) => navLabelOverrides[path] || fallback,
+    [navLabelOverrides]
+  );
+
+  const renameBaseNavItem = (path: string, fallback: string) => {
+    const currentLabel = resolveNavLabel(path, fallback);
+    const nextLabel = window.prompt(t("Rename page"), currentLabel);
+    if (nextLabel === null) return;
+    const trimmed = nextLabel.trim();
+    if (!trimmed || trimmed === fallback) {
+      setNavLabelOverrides((prev) => {
+        const { [path]: _, ...rest } = prev;
+        return rest;
+      });
+      return;
+    }
+    setNavLabelOverrides((prev) => ({ ...prev, [path]: trimmed }));
+  };
+
+  const renameCustomSheet = (sheetId: string, currentName: string) => {
+    const nextLabel = window.prompt(t("Rename page"), currentName);
+    if (nextLabel === null) return;
+    const trimmed = nextLabel.trim();
+    if (!trimmed) return;
+    setCustomSheets((prev) =>
+      prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: trimmed } : sheet))
+    );
+  };
+
+  const addCustomSheet = () => {
+    const id = createSheetId();
+    const name = t("New Sheet");
+    const next: CustomSheet = { id, name };
+    setCustomSheets((prev) => [...prev, next]);
+    navigate(`/sheet/${id}`);
+  };
+
+  const deleteCustomSheetConfigData = useCallback(
+    async (sheetId: string) => {
+      const pageId = `sheet:${sheetId}`;
+      if (typeof window !== "undefined") {
+        try {
+          const localKey = "page_configs_local_v1";
+          const raw = window.localStorage.getItem(localKey);
+          if (raw) {
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed[pageId]) {
+              delete parsed[pageId];
+              window.localStorage.setItem(localKey, JSON.stringify(parsed));
+            }
+          }
+        } catch {
+          // ignore storage failures
+        }
+      }
+      if (!settings?.page_configs || !(pageId in settings.page_configs)) return;
+      const nextPageConfigs = { ...settings.page_configs };
+      delete nextPageConfigs[pageId];
+      await saveSettings({
+        ...settings,
+        page_configs: nextPageConfigs
+      });
+    },
+    [saveSettings, settings]
+  );
+
+  const confirmDeleteCustomSheet = useCallback(async () => {
+    if (!sheetToDelete) return;
+    const deleting = sheetToDelete;
+    setSheetToDelete(null);
+    setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== deleting.id));
+    if (location.pathname === `/sheet/${deleting.id}`) {
+      navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
+    }
+    await deleteCustomSheetConfigData(deleting.id);
+  }, [deleteCustomSheetConfigData, location.pathname, navigate, sheetToDelete]);
 
   const hasTauri = typeof window !== "undefined" && !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
   const resolvedVersion = hasTauri ? appVersion || updateInfo?.current_version || null : "DEV";
@@ -463,18 +641,74 @@ const AppShell: React.FC = () => {
           </div>
         </div>
         <nav className="nav">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            {t("Dashboard")}
-          </NavLink>
-          <NavLink to="/tracker" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            {t("Tracker Table")}
-          </NavLink>
-          <NavLink to="/pipeline" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            {t("Pipeline")}
-          </NavLink>
-          <NavLink to="/calendar" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            {t("Calendar")}
-          </NavLink>
+          {baseNavItems.map((item) => (
+            <div className="nav-item" key={item.path}>
+              <NavLink
+                to={item.path}
+                end={item.end}
+                className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+              >
+                {resolveNavLabel(item.path, item.label)}
+              </NavLink>
+              <div className="nav-item-actions">
+                <button
+                  className="icon-button nav-link-action nav-link-edit"
+                  type="button"
+                  aria-label={t("Rename page")}
+                  title={t("Rename page")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    renameBaseNavItem(item.path, item.label);
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+              </div>
+            </div>
+          ))}
+          {customSheets.map((sheet) => (
+            <div className="nav-item" key={sheet.id}>
+              <NavLink
+                to={`/sheet/${sheet.id}`}
+                className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+              >
+                {sheet.name}
+              </NavLink>
+              <div className="nav-item-actions">
+                <button
+                  className="icon-button nav-link-action nav-link-delete"
+                  type="button"
+                  aria-label={t("Delete sheet")}
+                  title={t("Delete sheet")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSheetToDelete(sheet);
+                  }}
+                >
+                  <TrashIcon />
+                </button>
+                <button
+                  className="icon-button nav-link-action nav-link-edit"
+                  type="button"
+                  aria-label={t("Rename page")}
+                  title={t("Rename page")}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    renameCustomSheet(sheet.id, sheet.name);
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+              </div>
+            </div>
+          ))}
+          <button className="nav-add-sheet" type="button" onClick={addCustomSheet}>
+            <span className="nav-add-sheet-icon">+</span>
+            <span>{t("Add new sheet")}</span>
+          </button>
         </nav>
         <div className="sidebar-footer">
           <button
@@ -526,11 +760,11 @@ const AppShell: React.FC = () => {
         <div className="page">
           <Suspense fallback={<div className="empty">{t("Loading page...")}</div>}>
             <Routes>
-              <Route path="/" element={<DashboardPage />} />
-              <Route path="/tracker" element={<TrackerPage />} />
-              <Route path="/pipeline" element={<PipelinePage />} />
-              <Route path="/calendar" element={<CalendarPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
+              {CORE_PAGE_PLUGINS.map((plugin) => {
+                const PluginComponent = plugin.component;
+                return <Route key={plugin.id} path={plugin.path} element={<PluginComponent />} />;
+              })}
+              <Route path="/sheet/:sheetId" element={<CustomSheetPage sheets={customSheets} />} />
             </Routes>
           </Suspense>
         </div>
@@ -607,6 +841,30 @@ const AppShell: React.FC = () => {
               </button>
             </div>
             <canvas ref={canvasRef} className="camera-canvas" />
+          </div>
+        </div>
+      )}
+      {sheetToDelete && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("Delete sheet")}
+          onClick={() => setSheetToDelete(null)}
+        >
+          <div className="modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="confirm-modal-body">
+              <h3>{t("Delete sheet")}</h3>
+              <p>{t('Are you sure you want to delete "{name}"?', { name: sheetToDelete.name })}</p>
+            </div>
+            <div className="confirm-modal-actions">
+              <button className="ghost" type="button" onClick={() => setSheetToDelete(null)}>
+                {t("Cancel")}
+              </button>
+              <button className="danger" type="button" onClick={() => void confirmDeleteCustomSheet()}>
+                {t("Delete")}
+              </button>
+            </div>
           </div>
         </div>
       )}

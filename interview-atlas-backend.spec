@@ -6,7 +6,7 @@ hiddenimports += collect_submodules('app')
 
 
 a = Analysis(
-    ['/Users/alexllenafernandez/Desktop/02_Proyectos/01_Proceso_Selección/Procesos Seleccion/backend/desktop_entry.py'],
+    ['/Users/alexllenafernandez/Desktop/02_Proyectos/01_Proceso_Selección/Procesos Seleccion/backend/desktop_entry.py'],
     pathex=[],
     binaries=[],
     datas=[],

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -10,17 +10,18 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import GridPageLayout from "../components/layout/GridPageLayout";
-import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
+import { BlockSlotResolver, PageBuilderPage } from "../components/pageBuilder";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { averageOfferScore, followupStatus, formatDate, successRate } from "../utils";
 
+type ChartKey = "outcomes" | "stages" | "timeline" | "score";
+
 const DashboardPage: React.FC = () => {
   const { t } = useI18n();
   const { applications, settings } = useAppData();
-  type ChartKey = "outcomes" | "stages" | "timeline" | "score";
   const [expandedChart, setExpandedChart] = useState<ChartKey | null>(null);
+
   const truncateLabel = (value: string, max = 14) =>
     value.length > max ? `${value.slice(0, max)}...` : value;
 
@@ -208,148 +209,155 @@ const DashboardPage: React.FC = () => {
     ? chartPanels.find((panel) => panel.key === expandedChart) ?? null
     : null;
 
-  const blocks: AppBlockConfig[] = [
-    {
-      id: "dashboard:kpi:total",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Total Applications"), value: metrics.total }
-    },
-    {
-      id: "dashboard:kpi:offers",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Total Offers"), value: metrics.offers }
-    },
-    {
-      id: "dashboard:kpi:rejected",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Total Rejections"), value: metrics.rejected }
-    },
-    {
-      id: "dashboard:kpi:active",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Active Processes"), value: metrics.active }
-    },
-    {
-      id: "dashboard:kpi:favorites",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Favorites"), value: metrics.favorites }
-    },
-    {
-      id: "dashboard:kpi:success",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Offer Success Rate"), value: metrics.successRate }
-    },
-    {
-      id: "dashboard:kpi:avgscore",
-      type: "kpiCard",
-      layout: { colSpan: GRID_SPAN.kpi },
-      data: { label: t("Avg Score (Offers)"), value: metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A") }
-    },
-    ...chartPanels.map((panel) => ({
-      id: `dashboard:chart:${panel.key}`,
-      type: "chart" as const,
-      layout: { colSpan: GRID_SPAN.chartSmall },
-      data: {
-        title: t(panel.title),
-        size: "small" as const,
-        action: (
+  const resolveDashboardSlot = useCallback<BlockSlotResolver>(
+    (slotId) => {
+      if (slotId === "dashboard:kpi:total:value") return metrics.total;
+      if (slotId === "dashboard:kpi:offers:value") return metrics.offers;
+      if (slotId === "dashboard:kpi:rejected:value") return metrics.rejected;
+      if (slotId === "dashboard:kpi:active:value") return metrics.active;
+      if (slotId === "dashboard:kpi:favorites:value") return metrics.favorites;
+      if (slotId === "dashboard:kpi:success:value") return metrics.successRate;
+      if (slotId === "dashboard:kpi:avgscore:value") return metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A");
+
+      if (slotId === "dashboard:chart:outcomes:action") {
+        return (
           <button
             className="icon-button chart-expand"
             type="button"
-            onClick={() => setExpandedChart(panel.key)}
-            aria-label={t("Expand {title}", { title: t(panel.title) })}
+            onClick={() => setExpandedChart("outcomes")}
+            aria-label={t("Expand {title}", { title: t("Outcomes Distribution") })}
           >
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
             </svg>
           </button>
-        ),
-        content: renderChartShell(panel.render())
+        );
       }
-    })),
-    {
-      id: "dashboard:alerts",
-      type: "informationalTable",
-      layout: { colSpan: GRID_SPAN.standardTable },
-      data: {
-        title: t("Event Alerts"),
-        description: t("Upcoming or overdue follow-ups and to-do items."),
-        content:
-          alerts.length === 0 ? (
-            <div className="empty">{t("No event alerts.")}</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("Type")}</th>
-                  <th>{t("Company")}</th>
-                  <th>{t("Detail")}</th>
-                  <th>{t("Date")}</th>
-                  <th>{t("Status")}</th>
+      if (slotId === "dashboard:chart:stages:action") {
+        return (
+          <button
+            className="icon-button chart-expand"
+            type="button"
+            onClick={() => setExpandedChart("stages")}
+            aria-label={t("Expand {title}", { title: t("Applications per Stage") })}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+            </svg>
+          </button>
+        );
+      }
+      if (slotId === "dashboard:chart:timeline:action") {
+        return (
+          <button
+            className="icon-button chart-expand"
+            type="button"
+            onClick={() => setExpandedChart("timeline")}
+            aria-label={t("Expand {title}", { title: t("Timeline Applications") })}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+            </svg>
+          </button>
+        );
+      }
+      if (slotId === "dashboard:chart:score:action") {
+        return (
+          <button
+            className="icon-button chart-expand"
+            type="button"
+            onClick={() => setExpandedChart("score")}
+            aria-label={t("Expand {title}", { title: t("Score Distribution") })}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+            </svg>
+          </button>
+        );
+      }
+
+      if (slotId === "dashboard:chart:outcomes:content") return renderChartShell(renderOutcomeChart());
+      if (slotId === "dashboard:chart:stages:content") return renderChartShell(renderStageChart());
+      if (slotId === "dashboard:chart:timeline:content") return renderChartShell(renderTimelineChart());
+      if (slotId === "dashboard:chart:score:content") return renderChartShell(renderScoreChart());
+
+      if (slotId === "dashboard:table:alerts:content") {
+        return alerts.length === 0 ? (
+          <div className="empty">{t("No event alerts.")}</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("Type")}</th>
+                <th>{t("Company")}</th>
+                <th>{t("Detail")}</th>
+                <th>{t("Date")}</th>
+                <th>{t("Status")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {alerts.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.type}</td>
+                  <td>{item.company}</td>
+                  <td>{item.detail}</td>
+                  <td>{formatDate(item.date)}</td>
+                  <td>
+                    <span className={`tag tag-${item.status}`}>{item.status}</span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {alerts.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.type}</td>
-                    <td>{item.company}</td>
-                    <td>{item.detail}</td>
-                    <td>{formatDate(item.date)}</td>
-                    <td>
-                      <span className={`tag tag-${item.status}`}>{item.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )
+              ))}
+            </tbody>
+          </table>
+        );
       }
+
+      if (slotId === "dashboard:table:active:content") {
+        return active.length === 0 ? (
+          <div className="empty">{t("No active processes.")}</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t("Company")}</th>
+                <th>{t("Position")}</th>
+                <th>{t("Stage")}</th>
+                <th>{t("Application Date")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((app) => (
+                <tr key={app.id}>
+                  <td>{app.company_name}</td>
+                  <td>{app.position}</td>
+                  <td>{app.stage}</td>
+                  <td>{formatDate(app.application_date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+      }
+
+      return null;
     },
-    {
-      id: "dashboard:active",
-      type: "informationalTable",
-      layout: { colSpan: GRID_SPAN.standardTable },
-      data: {
-        title: t("Active Processes"),
-        description: t("Applications currently in progress."),
-        content:
-          active.length === 0 ? (
-            <div className="empty">{t("No active processes.")}</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("Company")}</th>
-                  <th>{t("Position")}</th>
-                  <th>{t("Stage")}</th>
-                  <th>{t("Application Date")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {active.map((app) => (
-                  <tr key={app.id}>
-                    <td>{app.company_name}</td>
-                    <td>{app.position}</td>
-                    <td>{app.stage}</td>
-                    <td>{formatDate(app.application_date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )
-      }
-    }
-  ];
+    [
+      active,
+      alerts,
+      metrics.active,
+      metrics.avgScore,
+      metrics.favorites,
+      metrics.offers,
+      metrics.rejected,
+      metrics.successRate,
+      metrics.total,
+      t
+    ]
+  );
 
   return (
     <>
-      <GridPageLayout blocks={blocks} className="dashboard" />
+      <PageBuilderPage pageId="dashboard" className="dashboard" resolveSlot={resolveDashboardSlot} />
 
       {!settings && <div className="empty">{t("Loading settings...")}</div>}
 

@@ -1,7 +1,6 @@
 import React, { useRef, useState } from "react";
 import StarRating from "../components/StarRating";
-import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
-import GridPageLayout from "../components/layout/GridPageLayout";
+import { BlockSlotResolver, PageBuilderPage } from "../components/pageBuilder";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { Application, ApplicationInput } from "../types";
@@ -130,15 +129,9 @@ const PipelinePage: React.FC = () => {
     resetAppDrag();
   };
 
-  const blocks: AppBlockConfig[] = [
-    {
-      id: "pipeline:board",
-      type: "pipeline",
-      layout: { colSpan: GRID_SPAN.standardPipeline },
-      data: {
-        title: t("Pipeline"),
-        description: t("Drag or push opportunities across stages as you progress."),
-        content: (
+  const resolvePipelineSlot: BlockSlotResolver = (slotId) => {
+    if (slotId !== "pipeline:board:content") return null;
+    return (
           <div className="pipeline-grid">
             {stages.map((stage, index) => {
               const items = getStageItems(stage);
@@ -303,12 +296,10 @@ const PipelinePage: React.FC = () => {
               );
             })}
           </div>
-        )
-      }
-    }
-  ];
+    );
+  };
 
-  return <GridPageLayout blocks={blocks} className="pipeline" />;
+  return <PageBuilderPage pageId="pipeline" className="pipeline" resolveSlot={resolvePipelineSlot} />;
 };
 
 export default PipelinePage;

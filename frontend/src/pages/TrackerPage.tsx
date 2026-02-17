@@ -1,12 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
-import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
-import GridPageLayout from "../components/layout/GridPageLayout";
+import {
+  PageBuilderPage,
+  createDefaultPageBlock,
+  type BlockSlotResolver,
+  type PageBlockConfig,
+  type PageBlockType
+} from "../components/pageBuilder";
 import StarRating from "../components/StarRating";
-import { DateCell, DateTimeCell, TextCell } from "../components/TableCells";
+import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
 import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
 import { deleteDocument, documentDownloadUrl, downloadExcel, openExternal, uploadDocuments } from "../api";
 import { matchesSearchQuery, matchesStageOutcome } from "../features/tracker/filtering";
@@ -151,275 +156,7 @@ type ColumnCalcOp =
   | "checked"
   | "unchecked";
 
-type SelectOption = {
-  label: string;
-  display?: string;
-  color?: string;
-  editable?: boolean;
-};
-
-type SelectCellProps = {
-  value?: string | null;
-  options: SelectOption[];
-  placeholder?: string;
-  onCommit: (next: string) => void;
-  onCreateOption?: (label: string) => Promise<string | null> | string | null;
-  onUpdateOptionColor?: (label: string, color: string) => Promise<void> | void;
-  onDeleteOption?: (label: string) => Promise<void> | void;
-  onReorderOption?: (fromLabel: string, toLabel: string) => Promise<void> | void;
-};
-
-function getContrastColor(hex?: string): string {
-  if (!hex) return "var(--text)";
-  const cleaned = hex.replace("#", "");
-  if (cleaned.length !== 6) return "var(--text)";
-  const r = parseInt(cleaned.slice(0, 2), 16);
-  const g = parseInt(cleaned.slice(2, 4), 16);
-  const b = parseInt(cleaned.slice(4, 6), 16);
-  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-  return lum > 160 ? "#1b1f24" : "#ffffff";
-}
-
 const DEFAULT_OPTION_COLOR = "#E2E8F0";
-
-const SelectCell: React.FC<SelectCellProps> = ({
-  value,
-  options,
-  placeholder = "—",
-  onCommit,
-  onCreateOption,
-  onUpdateOptionColor,
-  onDeleteOption,
-  onReorderOption
-}) => {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [dragOption, setDragOption] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
-  // Keep drag source in a ref so drop handlers still work if React doesn't re-render during drag.
-  const dragOptionRef = React.useRef<string | null>(null);
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const resolved = value ?? "";
-  const currentOption = options.find((opt) => opt.label === resolved);
-  const displayValue = resolved ? currentOption?.display ?? resolved : placeholder;
-  const color = currentOption?.color;
-
-  React.useEffect(() => {
-    if (!open) return;
-    const handleClick = (event: MouseEvent) => {
-      if (!containerRef.current) return;
-      if (event.target instanceof Node && !containerRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-    };
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
-
-  React.useEffect(() => {
-    if (!open) {
-      setQuery("");
-      setMenuFor(null);
-      setDragOption(null);
-      setDragOver(null);
-      dragOptionRef.current = null;
-    }
-  }, [open]);
-
-  const normalizedQuery = query.trim();
-  const queryLower = normalizedQuery.toLowerCase();
-  const exactMatch = normalizedQuery
-    ? options.find((opt) => opt.label.toLowerCase() === queryLower)
-    : undefined;
-  const filteredOptions = normalizedQuery
-    ? options.filter((opt) => {
-        const label = (opt.display ?? opt.label).toLowerCase();
-        return label.includes(queryLower);
-      })
-    : options;
-  const canManage = Boolean(onUpdateOptionColor || onDeleteOption);
-
-  const handleSelect = (label: string) => {
-    onCommit(label);
-    setOpen(false);
-    setMenuFor(null);
-  };
-
-  const handleCreate = async () => {
-    if (!normalizedQuery) return;
-    if (exactMatch) {
-      handleSelect(exactMatch.label);
-      return;
-    }
-    if (!onCreateOption) return;
-    const created = await Promise.resolve(onCreateOption(normalizedQuery));
-    if (created) {
-      handleSelect(created);
-    }
-  };
-
-  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      handleCreate();
-    }
-    if (event.key === "Escape") {
-      setOpen(false);
-    }
-  };
-
-  return (
-    <div className="select-cell" ref={containerRef}>
-      <button
-        className={`select-trigger ${open ? "open" : ""}`}
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-      >
-        <span
-          className="select-pill"
-          style={color ? { backgroundColor: color, color: getContrastColor(color) } : undefined}
-        >
-          {displayValue}
-        </span>
-        <span className="select-caret">▾</span>
-      </button>
-      {open && (
-        <div className="select-menu">
-          {onCreateOption && (
-            <div className="select-search">
-              <input
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={handleInputKeyDown}
-                placeholder="Search or create..."
-              />
-            </div>
-          )}
-          <div className="select-options">
-            {onCreateOption && normalizedQuery && !exactMatch && (
-              <div className="select-option select-create" onClick={handleCreate}>
-                <span className="select-swatch" />
-                <span className="select-label">Create "{normalizedQuery}"</span>
-              </div>
-            )}
-            {filteredOptions.length === 0 && (!normalizedQuery || exactMatch) && (
-              <div className="select-empty">No options</div>
-            )}
-            {filteredOptions.map((option) => {
-              const isSelected = option.label === resolved;
-              const showMenu = canManage && option.editable !== false;
-              const optionColor = option.color;
-              const optionDisplay = (option.display ?? option.label) || placeholder;
-              const draggable = Boolean(onReorderOption && option.editable !== false);
-              const isDragOver = dragOver === option.label;
-              return (
-                <React.Fragment key={option.label || "empty"}>
-                  <div
-                    className={`select-option ${isSelected ? "selected" : ""} ${
-                      draggable ? "draggable" : ""
-                    } ${isDragOver ? "drag-over" : ""}`}
-                    onClick={() => handleSelect(option.label)}
-                    draggable={draggable}
-                    onDragStart={(event) => {
-                      if (!draggable) return;
-                      event.dataTransfer.setData("text/plain", option.label);
-                      event.dataTransfer.effectAllowed = "move";
-                      dragOptionRef.current = option.label;
-                      setDragOption(option.label);
-                    }}
-                    onDragOver={(event) => {
-                      if (!draggable || !dragOptionRef.current) return;
-                      event.preventDefault();
-                      setDragOver(option.label);
-                    }}
-                    onDragLeave={() => {
-                      if (dragOver === option.label) setDragOver(null);
-                    }}
-                    onDrop={(event) => {
-                      const fromLabel = dragOptionRef.current;
-                      if (!fromLabel || !draggable || fromLabel === option.label) return;
-                      event.preventDefault();
-                      onReorderOption?.(fromLabel, option.label);
-                      dragOptionRef.current = null;
-                      setDragOption(null);
-                      setDragOver(null);
-                    }}
-                    onDragEnd={() => {
-                      dragOptionRef.current = null;
-                      setDragOption(null);
-                      setDragOver(null);
-                    }}
-                  >
-                    {draggable && <span className="select-drag">||</span>}
-                    <span
-                      className="select-swatch"
-                      style={{ backgroundColor: optionColor || DEFAULT_OPTION_COLOR }}
-                    />
-                    <span className="select-label">{optionDisplay}</span>
-                    {isSelected && <span className="select-check">✓</span>}
-                    {showMenu && (
-                      <button
-                        className="select-more"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setMenuFor((prev) => (prev === option.label ? null : option.label));
-                        }}
-                        aria-label="Option actions"
-                      >
-                        ⋯
-                      </button>
-                    )}
-                  </div>
-                  {showMenu && menuFor === option.label && (
-                    <div
-                      className="select-option-actions"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {onUpdateOptionColor && (
-                        <label className="select-color-row">
-                          <span>Color</span>
-                          <input
-                            type="color"
-                            value={optionColor || DEFAULT_OPTION_COLOR}
-                            onChange={(event) => onUpdateOptionColor(option.label, event.target.value)}
-                          />
-                        </label>
-                      )}
-                      {onDeleteOption && (
-                        <button
-                          className="danger"
-                          type="button"
-                          onClick={() => {
-                            onDeleteOption(option.label);
-                            setMenuFor(null);
-                          }}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 type CheckboxCellProps = {
   checked: boolean;
@@ -1020,6 +757,8 @@ const ColumnMenuChevronRight = () => (
   </ColumnMenuIcon>
 );
 
+const TRACKER_PRIMARY_TABLE_ID = "tracker:table";
+
 const TrackerPage: React.FC = () => {
   const { t } = useI18n();
   const {
@@ -1031,10 +770,11 @@ const TrackerPage: React.FC = () => {
     saveSettings,
     refresh
   } = useAppData();
+  const updateApplicationRemote = updateApplication;
+  const deleteApplicationRemote = deleteApplication;
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
-  const [showColumns, setShowColumns] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [isTableExpanded, setIsTableExpanded] = useState(false);
   const [editing, setEditing] = useState<Application | null>(null);
@@ -1112,8 +852,8 @@ const TrackerPage: React.FC = () => {
     return map;
   }, [settings]);
 
-  const filtered = useMemo(() => {
-    return applications.filter((app) => {
+  const filterApplicationsList = useCallback((source: Application[]) => {
+    return source.filter((app) => {
       const matchesQuery = matchesSearchQuery(app, query);
       const matchesAdvanced = matchesStageOutcome(app, stageFilter, outcomeFilter);
       const matchesColumnFilters = Object.entries(columnFilters).every(([col, raw]) => {
@@ -1153,9 +893,10 @@ const TrackerPage: React.FC = () => {
       });
       return matchesQuery && matchesAdvanced && matchesColumnFilters;
     });
-  }, [applications, query, stageFilter, outcomeFilter, columnFilters, customPropByKey]);
+  }, [query, stageFilter, outcomeFilter, columnFilters, customPropByKey]);
 
-  const sorted = useMemo(() => {
+  const sortApplicationsList = useCallback((source: Application[]) => {
+    const filtered = filterApplicationsList(source);
     if (!sortConfig) return filtered;
     const { column, direction } = sortConfig;
     const dir = direction === "asc" ? 1 : -1;
@@ -1213,7 +954,10 @@ const TrackerPage: React.FC = () => {
       if (aVal > bVal) return 1 * dir;
       return 0;
     });
-  }, [filtered, sortConfig, customPropByKey]);
+  }, [filterApplicationsList, sortConfig, customPropByKey]);
+
+  const filtered = useMemo(() => filterApplicationsList(applications), [applications, filterApplicationsList]);
+  const sorted = useMemo(() => sortApplicationsList(applications), [applications, sortApplicationsList]);
 
   const visibleIds = useMemo(() => sorted.map((app) => app.id), [sorted]);
   const allVisibleSelected =
@@ -1698,125 +1442,30 @@ const TrackerPage: React.FC = () => {
   const labelForColumn = (col: string) =>
     columnLabelOverrides[col] || customColumnLabels[col] || COLUMN_LABELS[col] || col;
 
-  const saveColumnsDraft = useCallback(() => {
-  const nextHidden = columnOrderDraft.filter((col) => !visibleDraft.includes(col));
-  saveSettings({
-    ...settings,
-    table_columns: columnOrderDraft,
-    hidden_columns: nextHidden
-  });
-}, [columnOrderDraft, visibleDraft, saveSettings, settings]);
-
-const prevShowColumnsRef = useRef(showColumns);
-const columnsAccordionRef = useRef<HTMLDivElement | null>(null);
-
-const columnsAnchorRef = useRef<HTMLButtonElement | null>(null);
-const [columnsMenuPos, setColumnsMenuPos] = useState<{ top: number; left: number } | null>(null);
-const [columnsMenuVisible, setColumnsMenuVisible] = useState(false);
-
-const computeColumnsMenuPos = useCallback((anchor: HTMLElement) => {
-  const rect = anchor.getBoundingClientRect();
-  const menuWidth = COLUMN_MENU_WIDTH;
-  const menuHeight = COLUMN_MENU_HEIGHT_ESTIMATE;
-
-  const maxLeft = Math.max(COLUMN_MENU_GUTTER, window.innerWidth - menuWidth - COLUMN_MENU_GUTTER);
-  const left = clamp(rect.left + COLUMN_MENU_X_OFFSET, COLUMN_MENU_GUTTER, maxLeft);
-
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const spaceAbove = rect.top;
-  const shouldFlip = spaceBelow < menuHeight + COLUMN_MENU_OFFSET && spaceAbove > spaceBelow;
-
-  const maxTop = Math.max(
-    COLUMN_MENU_GUTTER,
-    window.innerHeight - menuHeight - COLUMN_MENU_GUTTER
+  const toggleColumnVisibility = useCallback(
+    (col: string) => {
+      setVisibleDraft((prev) => {
+        let nextVisible: string[];
+        if (prev.includes(col)) {
+          nextVisible = prev.filter((item) => item !== col);
+          if (nextVisible.length === 0) {
+            return prev;
+          }
+        } else {
+          nextVisible = [...prev, col];
+        }
+        const nextHidden = columnOrderDraft.filter((item) => !nextVisible.includes(item));
+        saveSettings({ ...settings, hidden_columns: nextHidden });
+        return nextVisible;
+      });
+    },
+    [columnOrderDraft, saveSettings, settings]
   );
 
-  const rawTop = shouldFlip
-    ? rect.top - menuHeight - COLUMN_MENU_OFFSET
-    : rect.bottom + COLUMN_MENU_OFFSET;
-
-  const top = clamp(rawTop, COLUMN_MENU_GUTTER, maxTop);
-
-  return { top, left };
-}, [clamp]);
-
-const openColumnsMenu = () => {
-  const anchor = columnsAnchorRef.current;
-  if (!anchor) return;
-  setColumnsMenuVisible(false);
-  setColumnsMenuPos(computeColumnsMenuPos(anchor));
-  setShowColumns(true);
-};
-
-const closeColumnsMenu = () => {
-  setColumnsMenuVisible(false);
-  setShowColumns(false);
-};
-
-const toggleColumnVisibility = (col: string) => {
-  setVisibleDraft((prev) => {
-    if (prev.includes(col)) return prev.filter((item) => item !== col);
-    return [...prev, col];
-  });
-};
-
-useEffect(() => {
-  const prev = prevShowColumnsRef.current;
-  if (prev && !showColumns) {
-    saveColumnsDraft(); // autosave al cerrar
-  }
-  prevShowColumnsRef.current = showColumns;
-}, [showColumns, saveColumnsDraft]);
-
-useEffect(() => {
-  if (!showColumns) {
-    setColumnsMenuPos(null);
-    return;
-  }
-  const anchor = columnsAnchorRef.current;
-  if (!anchor) return;
-
-  const update = () => setColumnsMenuPos(computeColumnsMenuPos(anchor));
-  update();
-
-  window.addEventListener("scroll", update, true);
-  window.addEventListener("resize", update);
-
-  const raf = window.requestAnimationFrame(() => setColumnsMenuVisible(true));
-  return () => {
-    window.removeEventListener("scroll", update, true);
-    window.removeEventListener("resize", update);
-    window.cancelAnimationFrame(raf);
-  };
-}, [showColumns, computeColumnsMenuPos]);
-
-useEffect(() => {
-  if (!showColumns) return;
-
-  const onMouseDown = (event: MouseEvent) => {
-    const menuEl = columnsAccordionRef.current;
-    const anchorEl = columnsAnchorRef.current;
-    if (!menuEl && !anchorEl) return;
-    if (event.target instanceof Node) {
-      const insideMenu = menuEl ? menuEl.contains(event.target) : false;
-      const insideAnchor = anchorEl ? anchorEl.contains(event.target) : false;
-      if (!insideMenu && !insideAnchor) {
-        closeColumnsMenu();
-      }
-    }
-  };
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") closeColumnsMenu();
-  };
-
-  document.addEventListener("mousedown", onMouseDown);
-  document.addEventListener("keydown", onKeyDown);
-  return () => {
-    document.removeEventListener("mousedown", onMouseDown);
-    document.removeEventListener("keydown", onKeyDown);
-  };
-}, [showColumns]);
+  const showAllColumns = useCallback(() => {
+    setVisibleDraft(columnOrderDraft);
+    saveSettings({ ...settings, hidden_columns: [] });
+  }, [columnOrderDraft, saveSettings, settings]);
 
   const density = settings.table_density || "comfortable";
   const rowHeight = density === "compact" ? 36 : 44;
@@ -2124,6 +1773,11 @@ useEffect(() => {
 
   const handleBulkDelete = async () => {
     const targets = [...selectedIds];
+    if (targets.length === 0) return;
+    const confirmed = window.confirm(
+      `Delete ${targets.length} selected row${targets.length === 1 ? "" : "s"}? This action cannot be undone.`
+    );
+    if (!confirmed) return;
     await Promise.all(targets.map((id) => deleteApplication(id)));
     setSelectedIds(new Set());
   };
@@ -2959,9 +2613,28 @@ useEffect(() => {
     </div>
   );
 
-  const trackerTableContent = (
+  const renderTrackerTableContent = (block: PageBlockConfig) => {
+    const isPrimaryTable = block.id === TRACKER_PRIMARY_TABLE_ID;
+    const updateApplication = async (id: number, payload: Partial<Application>) => {
+      await updateApplicationRemote(id, payload);
+    };
+    const deleteApplication = async (id: number) => {
+      await deleteApplicationRemote(id);
+    };
+    const requestDeleteApplication = async (id: number) => {
+      const confirmed = window.confirm("Delete this row? This action cannot be undone.");
+      if (!confirmed) return;
+      await deleteApplication(id);
+    };
+    const sortedForBlock: Application[] = sorted;
+    const visibleRowsForBlock: Application[] = visibleRows;
+    const visibleIdsForBlock = sortedForBlock.map((app) => app.id);
+    const allVisibleSelected =
+      visibleIdsForBlock.length > 0 && visibleIdsForBlock.every((id) => selectedIds.has(id));
+
+    return (
     <>
-      {selectedIds.size > 0 && (
+      {isPrimaryTable && selectedIds.size > 0 && (
 		        <div className="bulk-bar">
 		          <div className="bulk-count">{t("{count} selected", { count: selectedIds.size })}</div>
 	          <div className="bulk-actions">
@@ -3020,101 +2693,6 @@ useEffect(() => {
               </svg>
             )}
           </button>
-	        <div className="table-toolbar">
-
-  {showColumns && columnsMenuPos &&
-    createPortal(
-      <div
-        className={`select-menu columns-dropdown ${columnsMenuVisible ? "open" : ""}`}
-        ref={columnsAccordionRef}
-        style={{
-          position: "fixed",
-          top: columnsMenuPos.top,
-          left: columnsMenuPos.left,
-          width: COLUMN_MENU_WIDTH,
-          zIndex: 60
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="select-options" role="menu" aria-label="Columns menu">
-          {columnOrderDraft.map((col) => {
-            const label = labelForColumn(col);
-            const checked = visibleDraft.includes(col);
-            return (
-              <button
-                key={col}
-                type="button"
-                className={`select-option ${checked ? "selected" : ""}`}
-                onClick={() => toggleColumnVisibility(col)}
-              >
-                <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
-                <span className="select-label">{label}</span>
-                <span className="select-check">{checked ? "✓" : ""}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>,
-      document.body
-    )}
-  
-
-  <div className="toolbar-actions-box table-toolbar-box">
-    <div className="table-toolbar-main">
-      <TrackerSearchBar
-        value={query}
-        onChange={setQuery}
-        stageFilter={stageFilter}
-        onStageFilterChange={setStageFilter}
-        stages={settings.stages}
-        outcomeFilter={outcomeFilter}
-        onOutcomeFilterChange={setOutcomeFilter}
-        outcomes={settings.outcomes}
-        placeholder={t("Company, role, location...")}
-        allLabel={t("All")}
-        stageLabel={t("Stage")}
-        outcomeLabel={t("Outcome")}
-        filterAriaLabel={t("Filter")}
-        clearAriaLabel={t("Clear search")}
-      />
-      <div className="columns-dropdown-trigger">
-      <button
-        ref={columnsAnchorRef}
-        className={`select-trigger ${showColumns ? "open" : ""}`}
-        type="button"
-        onClick={() => (showColumns ? closeColumnsMenu() : openColumnsMenu())}
-        aria-label="Columns"
-      >
-        <span className="select-pill" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <svg
-            viewBox="0 0 20 20"
-            aria-hidden="true"
-            style={{ width: 14, height: 14, flex: "0 0 auto" }}
-          >
-            <path d="M10 4.5c-4.2 0-7.7 3-9 5.5 1.3 2.5 4.8 5.5 9 5.5s7.7-3 9-5.5c-1.3-2.5-4.8-5.5-9-5.5Zm0 9c-2 0-3.6-1.6-3.6-3.6S8 6.3 10 6.3s3.6 1.6 3.6 3.6S12 13.5 10 13.5Zm0-5.7c-1.2 0-2.1 1-2.1 2.1S8.8 12 10 12s2.1-1 2.1-2.1S11.2 7.8 10 7.8Z" />
-          </svg>
-          Columns
-        </span>
-        <span className="select-caret">▾</span>
-      </button>
-    </div>
-    </div>
-    <div className="toolbar-actions-right">
-      <button className="ghost" onClick={() => downloadExcel("all")}>
-        {t("Export All")}
-      </button>
-      <button className="ghost" onClick={() => downloadExcel("favorites")}>
-        {t("Export Favorites")}
-      </button>
-      <button className="ghost" onClick={() => downloadExcel("active")}>
-        {t("Export Active")}
-      </button>
-      <button className="primary" onClick={() => setShowForm(true)}>
-        {t("New Application")}
-      </button>
-    </div>
-  </div>
-</div>
 	        <div
 	          className="table-scroll"
 	          ref={tableScrollRef}
@@ -3134,11 +2712,11 @@ useEffect(() => {
                     onChange={(event) => {
                       const checked = event.target.checked;
                       if (checked) {
-                        setSelectedIds((prev) => new Set([...prev, ...visibleIds]));
+                        setSelectedIds((prev) => new Set([...prev, ...visibleIdsForBlock]));
                       } else {
                         setSelectedIds((prev) => {
                           const next = new Set(prev);
-                          visibleIds.forEach((id) => next.delete(id));
+                          visibleIdsForBlock.forEach((id) => next.delete(id));
                           return next;
                         });
                       }
@@ -3242,7 +2820,7 @@ useEffect(() => {
                   <td colSpan={orderedVisible.length + 2} style={{ height: topSpacer }} />
                 </tr>
               )}
-              {visibleRows.map((app, index) => {
+              {visibleRowsForBlock.map((app, index) => {
                 const stageOptions = buildSelectOptions(app.stage, settings.stages, settings.stage_colors);
                 const outcomeOptions = buildSelectOptions(app.outcome, settings.outcomes, settings.outcome_colors);
                 const jobTypeOptions = buildSelectOptions(
@@ -3255,7 +2833,7 @@ useEffect(() => {
                 const groupKey = groupBy ? cellToString(app, groupBy).trim() || "(Vacio)" : "";
                 const prevGroupKey =
                   groupBy && index > 0
-                    ? cellToString(visibleRows[index - 1], groupBy).trim() || "(Vacio)"
+                    ? cellToString(visibleRowsForBlock[index - 1], groupBy).trim() || "(Vacio)"
                     : "";
                 const firstInGroup = Boolean(groupBy && groupKey !== prevGroupKey);
                 const collapsed = Boolean(groupBy && collapsedGroups.has(groupKey));
@@ -3555,7 +3133,10 @@ useEffect(() => {
                                   key={`${app.id}-file-${file.id}`}
                                   className="doc-chip doc-button"
                                   type="button"
-                                  onClick={() => setDocumentModal({ appId: app.id, file })}
+                                  onClick={() => {
+                                    if (!isPrimaryTable) return;
+                                    setDocumentModal({ appId: app.id, file });
+                                  }}
                                   aria-label={`Document ${file.name}`}
                                 >
                                   <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -3687,9 +3268,13 @@ useEffect(() => {
 	                            onCommit={(nextIds) =>
 	                              commitProp(nextIds.length === 0 ? "" : JSON.stringify(nextIds))
 	                            }
-	                            onOpenFile={(file) => setDocumentModal({ appId: app.id, file })}
+	                            onOpenFile={(file) => {
+	                              if (!isPrimaryTable) return;
+	                              setDocumentModal({ appId: app.id, file });
+	                            }}
 	                            onUploadAndAttach={async (filesToUpload, signal) => {
 	                              if (!filesToUpload || filesToUpload.length === 0) return;
+	                              if (!isPrimaryTable) return;
 	                              const before = new Set((app.documents_files || []).map((f) => f.id));
 	                              const uploaded = await uploadDocuments(app.id, filesToUpload, signal);
 	                              const afterFiles = uploaded.documents_files || [];
@@ -3755,8 +3340,12 @@ useEffect(() => {
                       <button
                         className="icon-button"
                         type="button"
-                        onClick={() => setDetailApp(app)}
+                        onClick={() => {
+                          if (!isPrimaryTable) return;
+                          setDetailApp(app);
+                        }}
                         aria-label="Details"
+                        disabled={!isPrimaryTable}
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
                           <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
@@ -3765,8 +3354,12 @@ useEffect(() => {
                       <button
                         className="icon-button"
                         type="button"
-                        onClick={() => setEditing(app)}
+                        onClick={() => {
+                          if (!isPrimaryTable) return;
+                          setEditing(app);
+                        }}
                         aria-label="Edit"
+                        disabled={!isPrimaryTable}
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
                           <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
@@ -3775,7 +3368,9 @@ useEffect(() => {
                       <button
                         className="icon-button danger"
                         type="button"
-                        onClick={() => deleteApplication(app.id)}
+                        onClick={() => {
+                          void requestDeleteApplication(app.id);
+                        }}
                         aria-label="Delete"
                       >
                         <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -3861,29 +3456,139 @@ useEffect(() => {
 	            )}
 	          </table>
 	        </div>
-        {sorted.length === 0 && <div className="empty">No applications match your filters.</div>}
+        {sortedForBlock.length === 0 && <div className="empty">No applications match your filters.</div>}
       </section>
     </>
+    );
+  };
+
+  const renderTrackerToolbarContent = () => (
+    <div className="table-toolbar">
+      <div className="toolbar-actions-box table-toolbar-box">
+        <div className="table-toolbar-main">
+          <TrackerSearchBar
+            value={query}
+            onChange={setQuery}
+            stageFilter={stageFilter}
+            onStageFilterChange={setStageFilter}
+            stages={settings.stages}
+            outcomeFilter={outcomeFilter}
+            onOutcomeFilterChange={setOutcomeFilter}
+            outcomes={settings.outcomes}
+            placeholder={t("Company, role, location...")}
+            allLabel={t("All")}
+            stageLabel={t("Stage")}
+            outcomeLabel={t("Outcome")}
+            filterAriaLabel={t("Filter")}
+            clearAriaLabel={t("Clear search")}
+          />
+          <details className="page-editor-columns-dropdown columns-dropdown-trigger">
+            <summary className="columns-dropdown-summary" aria-label={t("Columns")}>
+              <span className="columns-dropdown-eye" aria-hidden="true">
+                <svg viewBox="0 0 20 20">
+                  <path d="M10 4.25c4.22 0 7.6 2.9 8.83 5.18a1.2 1.2 0 0 1 0 1.14c-1.23 2.28-4.61 5.18-8.83 5.18s-7.6-2.9-8.83-5.18a1.2 1.2 0 0 1 0-1.14C2.4 7.15 5.78 4.25 10 4.25m0 1.25c-3.7 0-6.7 2.54-7.77 4.5 1.07 1.96 4.07 4.5 7.77 4.5s6.7-2.54 7.77-4.5c-1.07-1.96-4.07-4.5-7.77-4.5m0 1.75a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5m0 1.25a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3" />
+                </svg>
+              </span>
+              <span className="columns-dropdown-label">{t("Columns")}</span>
+              <span className="columns-dropdown-count">{visibleDraft.length}/{columnOrderDraft.length}</span>
+              <span className="select-caret">▾</span>
+            </summary>
+            <div className="page-editor-columns-menu">
+              {columnOrderDraft.map((col) => (
+                <label key={`tracker-col-${col}`} className="page-editor-columns-option">
+                  <input
+                    type="checkbox"
+                    checked={visibleDraft.includes(col)}
+                    onChange={() => toggleColumnVisibility(col)}
+                  />
+                  <span>{labelForColumn(col)}</span>
+                </label>
+              ))}
+              {columnOrderDraft.some((col) => !visibleDraft.includes(col)) && (
+                <button className="ghost small" type="button" onClick={showAllColumns}>
+                  {t("Show all columns")}
+                </button>
+              )}
+            </div>
+          </details>
+        </div>
+        <div className="toolbar-actions-right">
+          <button className="ghost" onClick={() => downloadExcel("all")}>
+            {t("Export All")}
+          </button>
+          <button className="ghost" onClick={() => downloadExcel("favorites")}>
+            {t("Export Favorites")}
+          </button>
+          <button className="ghost" onClick={() => downloadExcel("active")}>
+            {t("Export Active")}
+          </button>
+          <button className="primary" onClick={() => setShowForm(true)}>
+            {t("New Application")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 
-  const blocks: AppBlockConfig[] = [
-    {
-      id: "tracker:table",
-      type: "editableTable",
-      layout: { colSpan: GRID_SPAN.full },
-      data: {
-        title: t("Tracker Table"),
-        description: t("Search, edit, and manage every application."),
-        actions: densityActions,
-        panelClassName: isTableExpanded ? "table-panel-expanded" : "",
-        content: trackerTableContent
+  const resolveTrackerSlot = useCallback<BlockSlotResolver>(
+    (slotId, block) => {
+      const isPrimaryTable = block.id === TRACKER_PRIMARY_TABLE_ID;
+      if (!isPrimaryTable) return null;
+      const keyBase = `${block.id}:${slotId}`;
+      const cloneNode = (node: React.ReactNode, key: string) =>
+        React.isValidElement(node) ? React.cloneElement(node as React.ReactElement, { key }) : <React.Fragment key={key}>{node}</React.Fragment>;
+      if (slotId.startsWith("tracker:actions")) {
+        return cloneNode(densityActions, `${keyBase}:actions`);
       }
-    }
-  ];
+      if (slotId.startsWith("tracker:toolbar")) {
+        return cloneNode(renderTrackerToolbarContent(), `${keyBase}:toolbar`);
+      }
+      if (slotId.startsWith("tracker:content")) {
+        return cloneNode(renderTrackerTableContent(block), `${keyBase}:content`);
+      }
+      return null;
+    },
+    [densityActions, renderTrackerTableContent, renderTrackerToolbarContent]
+  );
+
+  const resolveTrackerBlockProps = useCallback((block: PageBlockConfig) => {
+    if (block.type !== "editableTable") return null;
+    if (block.id !== TRACKER_PRIMARY_TABLE_ID) return null;
+    return {
+      panelClassName: isTableExpanded ? "table-panel-expanded" : ""
+    };
+  }, [isTableExpanded]);
+
+  const createTrackerBlockForType = useCallback(
+    (type: PageBlockType, id: string): PageBlockConfig | null => {
+      if (type !== "editableTable") return null;
+      const fallback = createDefaultPageBlock(type, id);
+      return {
+        ...fallback,
+        layout: {
+          ...fallback.layout,
+          colSpan: 60
+        },
+        props: {
+          ...fallback.props,
+          variant: "tracker",
+          title: "Editable Table",
+          description: "Shared editable table module."
+        }
+      };
+    },
+    []
+  );
 
   return (
     <>
-      <GridPageLayout blocks={blocks} className={`tracker density-${density}`} />
+      <PageBuilderPage
+        pageId="tracker"
+        className={`tracker density-${density}`}
+        resolveSlot={resolveTrackerSlot}
+        resolveBlockProps={resolveTrackerBlockProps}
+        createBlockForType={createTrackerBlockForType}
+      />
       {isTableExpanded && (
         <div
           className="modal-backdrop table-expand-backdrop"

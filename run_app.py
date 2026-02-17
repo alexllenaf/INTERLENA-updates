@@ -83,6 +83,55 @@ def _run_pip_install(requirements_path: Path) -> None:
         raise SystemExit("Failed to install Python dependencies.")
 
 
+def _newest_mtime(paths: Iterable[Path]) -> float:
+    newest = 0.0
+    for path in paths:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest:
+            newest = mtime
+    return newest
+
+
+def _backend_source_files(backend_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    candidates = [
+        backend_dir / "desktop_entry.py",
+        backend_dir / "build_backend.py",
+    ]
+    files.extend([path for path in candidates if path.exists()])
+    app_dir = backend_dir / "app"
+    if app_dir.exists():
+        files.extend(app_dir.rglob("*.py"))
+    return files
+
+
+def _ensure_backend_sidecar_current(backend_dir: Path, backend_bin: Path) -> None:
+    source_files = _backend_source_files(backend_dir)
+    if not source_files:
+        raise SystemExit("Backend source files not found.")
+    newest_source = _newest_mtime(source_files)
+    try:
+        bin_mtime = backend_bin.stat().st_mtime
+    except OSError:
+        bin_mtime = 0.0
+
+    if backend_bin.exists() and bin_mtime >= newest_source:
+        return
+
+    print("Rebuilding desktop backend sidecar...")
+    build_script = backend_dir / "build_backend.py"
+    if not build_script.exists():
+        raise SystemExit("backend/build_backend.py not found.")
+    result = subprocess.call([sys.executable, str(build_script)], cwd=backend_dir.parent)
+    if result != 0:
+        raise SystemExit("Failed to rebuild desktop backend sidecar.")
+    if not backend_bin.exists():
+        raise SystemExit("Backend sidecar was not produced at backend/dist/interview-atlas-backend.")
+
+
 def _ensure_backend_deps(backend_dir: Path, allow_install: bool) -> None:
     if importlib.util.find_spec("uvicorn") is not None:
         return
@@ -185,8 +234,7 @@ def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
         "Install Rust (cargo) and retry. On macOS: https://www.rust-lang.org/tools/install",
     )
 
-    if not backend_bin.exists():
-        raise SystemExit("backend/dist/interview-atlas-backend not found. Build the backend binary first.")
+    _ensure_backend_sidecar_current(root / "backend", backend_bin)
 
     env = os.environ.copy()
     env["APP_PORT"] = str(backend_port)

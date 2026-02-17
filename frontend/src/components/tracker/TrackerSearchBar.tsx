@@ -15,6 +15,7 @@ type Props = {
   outcomeLabel: string;
   filterAriaLabel: string;
   clearAriaLabel: string;
+  alwaysShowClearButton?: boolean;
 };
 
 const TrackerSearchBar: React.FC<Props> = ({
@@ -31,7 +32,8 @@ const TrackerSearchBar: React.FC<Props> = ({
   stageLabel,
   outcomeLabel,
   filterAriaLabel,
-  clearAriaLabel
+  clearAriaLabel,
+  alwaysShowClearButton
 }) => {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -63,6 +65,8 @@ const TrackerSearchBar: React.FC<Props> = ({
     [stageFilter, outcomeFilter]
   );
 
+  const showClearButton = Boolean(alwaysShowClearButton || value.trim());
+
   return (
     <div className="tracker-search" ref={popoverRef}>
       <div className="tracker-search-input-wrap">
@@ -78,7 +82,7 @@ const TrackerSearchBar: React.FC<Props> = ({
           className="tracker-search-input"
         />
         <div className="tracker-search-actions">
-          {value.trim() && (
+          {showClearButton && (
             <button
               type="button"
               className="tracker-search-clear"
