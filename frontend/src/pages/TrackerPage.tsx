@@ -1310,13 +1310,21 @@ const TrackerPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!columnMenu) return;
-    const raf = window.requestAnimationFrame(() => {
-      setColumnMenuVisible(true);
+  if (!columnMenu) return;
+  // Don't steal focus from inputs while the user is typing; only autofocus when opening the menu.
+  if (columnMenuView === "filter") return;
+
+  const raf = window.requestAnimationFrame(() => {
+    setColumnMenuVisible(true);
+    // Only focus the list if focus isn't already inside the menu.
+    const active = document.activeElement;
+    const insideMenu = active && columnMenuRef.current ? columnMenuRef.current.contains(active) : false;
+    if (!insideMenu) {
       columnMenuListRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(raf);
-  }, [columnMenu]);
+        }
+  });
+  return () => window.cancelAnimationFrame(raf);
+}, [columnMenu?.col, columnMenuView]);
 
   useEffect(() => {
     if (!columnMenu || columnMenuView !== "filter") return;
@@ -1682,14 +1690,125 @@ const TrackerPage: React.FC = () => {
   const labelForColumn = (col: string) =>
     columnLabelOverrides[col] || customColumnLabels[col] || COLUMN_LABELS[col] || col;
 
-  const handleSaveColumns = () => {
-    const nextHidden = columnOrderDraft.filter((col) => !visibleDraft.includes(col));
-    saveSettings({
-      ...settings,
-      table_columns: columnOrderDraft,
-      hidden_columns: nextHidden
-    });
+  const saveColumnsDraft = useCallback(() => {
+  const nextHidden = columnOrderDraft.filter((col) => !visibleDraft.includes(col));
+  saveSettings({
+    ...settings,
+    table_columns: columnOrderDraft,
+    hidden_columns: nextHidden
+  });
+}, [columnOrderDraft, visibleDraft, saveSettings, settings]);
+
+const prevShowColumnsRef = useRef(showColumns);
+const columnsAccordionRef = useRef<HTMLDivElement | null>(null);
+
+const columnsAnchorRef = useRef<HTMLButtonElement | null>(null);
+const [columnsMenuPos, setColumnsMenuPos] = useState<{ top: number; left: number } | null>(null);
+const [columnsMenuVisible, setColumnsMenuVisible] = useState(false);
+
+const computeColumnsMenuPos = useCallback((anchor: HTMLElement) => {
+  const rect = anchor.getBoundingClientRect();
+  const menuWidth = COLUMN_MENU_WIDTH;
+  const menuHeight = COLUMN_MENU_HEIGHT_ESTIMATE;
+
+  const maxLeft = Math.max(COLUMN_MENU_GUTTER, window.innerWidth - menuWidth - COLUMN_MENU_GUTTER);
+  const left = clamp(rect.left + COLUMN_MENU_X_OFFSET, COLUMN_MENU_GUTTER, maxLeft);
+
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const shouldFlip = spaceBelow < menuHeight + COLUMN_MENU_OFFSET && spaceAbove > spaceBelow;
+
+  const maxTop = Math.max(
+    COLUMN_MENU_GUTTER,
+    window.innerHeight - menuHeight - COLUMN_MENU_GUTTER
+  );
+
+  const rawTop = shouldFlip
+    ? rect.top - menuHeight - COLUMN_MENU_OFFSET
+    : rect.bottom + COLUMN_MENU_OFFSET;
+
+  const top = clamp(rawTop, COLUMN_MENU_GUTTER, maxTop);
+
+  return { top, left };
+}, [clamp]);
+
+const openColumnsMenu = () => {
+  const anchor = columnsAnchorRef.current;
+  if (!anchor) return;
+  setColumnsMenuVisible(false);
+  setColumnsMenuPos(computeColumnsMenuPos(anchor));
+  setShowColumns(true);
+};
+
+const closeColumnsMenu = () => {
+  setColumnsMenuVisible(false);
+  setShowColumns(false);
+};
+
+const toggleColumnVisibility = (col: string) => {
+  setVisibleDraft((prev) => {
+    if (prev.includes(col)) return prev.filter((item) => item !== col);
+    return [...prev, col];
+  });
+};
+
+useEffect(() => {
+  const prev = prevShowColumnsRef.current;
+  if (prev && !showColumns) {
+    saveColumnsDraft(); // autosave al cerrar
+  }
+  prevShowColumnsRef.current = showColumns;
+}, [showColumns, saveColumnsDraft]);
+
+useEffect(() => {
+  if (!showColumns) {
+    setColumnsMenuPos(null);
+    return;
+  }
+  const anchor = columnsAnchorRef.current;
+  if (!anchor) return;
+
+  const update = () => setColumnsMenuPos(computeColumnsMenuPos(anchor));
+  update();
+
+  window.addEventListener("scroll", update, true);
+  window.addEventListener("resize", update);
+
+  const raf = window.requestAnimationFrame(() => setColumnsMenuVisible(true));
+  return () => {
+    window.removeEventListener("scroll", update, true);
+    window.removeEventListener("resize", update);
+    window.cancelAnimationFrame(raf);
   };
+}, [showColumns, computeColumnsMenuPos]);
+
+useEffect(() => {
+  if (!showColumns) return;
+
+  const onMouseDown = (event: MouseEvent) => {
+    const menuEl = columnsAccordionRef.current;
+    const anchorEl = columnsAnchorRef.current;
+    if (!menuEl && !anchorEl) return;
+    if (event.target instanceof Node) {
+      const insideMenu = menuEl ? menuEl.contains(event.target) : false;
+      const insideAnchor = anchorEl ? anchorEl.contains(event.target) : false;
+      if (!insideMenu && !insideAnchor) {
+        closeColumnsMenu();
+      }
+    }
+  };
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") closeColumnsMenu();
+  };
+
+  document.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("keydown", onKeyDown);
+  return () => {
+    document.removeEventListener("mousedown", onMouseDown);
+    document.removeEventListener("keydown", onKeyDown);
+  };
+}, [showColumns]);
 
   const density = settings.table_density || "comfortable";
   const rowHeight = density === "compact" ? 36 : 44;
@@ -2875,54 +2994,7 @@ const TrackerPage: React.FC = () => {
 	        </div>
 	      </BlockPanel>
 	
-	      <BlockPanel id="tracker:columns" as="section" className="columns-panel">
-	        <div className="columns-header">
-	          <div>
-	            <h3>{t("Columns")}</h3>
-	            <p>{t("Choose which columns are visible in the table.")}</p>
-	          </div>
-	          <div className="columns-actions">
-	            <button
-	              className="icon-button columns-toggle"
-	              type="button"
-	              aria-expanded={showColumns}
-	              aria-controls="columns-grid"
-	              onClick={() => setShowColumns((prev) => !prev)}
-	              title={showColumns ? t("Hide columns") : t("Show columns")}
-	            >
-	              {showColumns ? "▾" : "▸"}
-	            </button>
-	            <button className="ghost" onClick={() => setVisibleDraft([...columnOrderDraft])}>
-	              {t("Show all")}
-	            </button>
-	            <button className="ghost" onClick={() => setVisibleDraft([...visibleFromSettings])}>
-	              {t("Reset")}
-	            </button>
-	            <button className="primary" onClick={handleSaveColumns}>
-	              {t("Save columns")}
-	            </button>
-	          </div>
-	        </div>
-        {showColumns && (
-          <div className="columns-grid" id="columns-grid">
-            {columnOrderDraft.map((col) => (
-              <label key={col} className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={visibleDraft.includes(col)}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setVisibleDraft((prev) =>
-                      checked ? [...prev, col] : prev.filter((item) => item !== col)
-                    );
-                  }}
-                />
-                <span>{labelForColumn(col)}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </BlockPanel>
+	      
 
 		      {selectedIds.size > 0 && (
 		        <div className="bulk-bar">
@@ -2967,20 +3039,89 @@ const TrackerPage: React.FC = () => {
 	      )}
 
 	      <BlockPanel id="tracker:table" as="section" className="table-panel">
-	        <div className="toolbar-actions-box">
-	          <button className="ghost" onClick={() => downloadExcel("all")}>
-	            {t("Export All")}
-	          </button>
-	          <button className="ghost" onClick={() => downloadExcel("favorites")}>
-	            {t("Export Favorites")}
-	          </button>
-	          <button className="ghost" onClick={() => downloadExcel("active")}>
-	            {t("Export Active")}
-	          </button>
-	          <button className="primary" onClick={() => setShowForm(true)}>
-	            {t("New Application")}
-	          </button>
-	        </div>
+	        <div
+  className="table-toolbar"
+  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+>
+
+  {showColumns && columnsMenuPos &&
+    createPortal(
+      <div
+        className={`select-menu columns-dropdown ${columnsMenuVisible ? "open" : ""}`}
+        ref={columnsAccordionRef}
+        style={{
+          position: "fixed",
+          top: columnsMenuPos.top,
+          left: columnsMenuPos.left,
+          width: COLUMN_MENU_WIDTH,
+          zIndex: 60
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="select-options" role="menu" aria-label="Columns menu">
+          {columnOrderDraft.map((col) => {
+            const label = labelForColumn(col);
+            const checked = visibleDraft.includes(col);
+            return (
+              <button
+                key={col}
+                type="button"
+                className={`select-option ${checked ? "selected" : ""}`}
+                onClick={() => toggleColumnVisibility(col)}
+              >
+                <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
+                <span className="select-label">{label}</span>
+                <span className="select-check">{checked ? "✓" : ""}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>,
+      document.body
+    )}
+  
+
+  <div
+    className="toolbar-actions-box"
+    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}
+  >
+    <div className="columns-dropdown-trigger">
+      <button
+        ref={columnsAnchorRef}
+        className={`select-trigger ${showColumns ? "open" : ""}`}
+        type="button"
+        onClick={() => (showColumns ? closeColumnsMenu() : openColumnsMenu())}
+        aria-label="Columns"
+      >
+        <span className="select-pill" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <svg
+            viewBox="0 0 20 20"
+            aria-hidden="true"
+            style={{ width: 14, height: 14, flex: "0 0 auto" }}
+          >
+            <path d="M10 4.5c-4.2 0-7.7 3-9 5.5 1.3 2.5 4.8 5.5 9 5.5s7.7-3 9-5.5c-1.3-2.5-4.8-5.5-9-5.5Zm0 9c-2 0-3.6-1.6-3.6-3.6S8 6.3 10 6.3s3.6 1.6 3.6 3.6S12 13.5 10 13.5Zm0-5.7c-1.2 0-2.1 1-2.1 2.1S8.8 12 10 12s2.1-1 2.1-2.1S11.2 7.8 10 7.8Z" />
+          </svg>
+          Columns
+        </span>
+        <span className="select-caret">▾</span>
+      </button>
+    </div>
+    <div className="toolbar-actions-right" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <button className="ghost" onClick={() => downloadExcel("all")}>
+        {t("Export All")}
+      </button>
+      <button className="ghost" onClick={() => downloadExcel("favorites")}>
+        {t("Export Favorites")}
+      </button>
+      <button className="ghost" onClick={() => downloadExcel("active")}>
+        {t("Export Active")}
+      </button>
+      <button className="primary" onClick={() => setShowForm(true)}>
+        {t("New Application")}
+      </button>
+    </div>
+  </div>
+</div>
 	        <div
 	          className="table-scroll"
 	          ref={tableScrollRef}
