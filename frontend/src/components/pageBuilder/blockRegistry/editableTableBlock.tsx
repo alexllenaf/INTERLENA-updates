@@ -5,6 +5,7 @@ import BlockPanel from "../../BlockPanel";
 import StarRating from "../../StarRating";
 import { DateCell, SelectCell, type SelectOption, TextCell } from "../../TableCells";
 import TrackerSearchBar from "../../tracker/TrackerSearchBar";
+import { EditableTableToolbar } from "../../blocks/BlockRenderer";
 import {
   type EditableTableColumnKind,
   type PageBlockConfig,
@@ -1361,9 +1362,9 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
 
   return (
     <div ref={rootRef}>
-      <div className="table-toolbar">
-        <div className="toolbar-actions-box table-toolbar-box">
-          <div className="table-toolbar-main">
+      <EditableTableToolbar
+        toolbar={{
+          leading: (
             <TrackerSearchBar
               value={query}
               onChange={setQuery}
@@ -1381,60 +1382,41 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
               clearAriaLabel="Clear search"
               alwaysShowClearButton
             />
-            <details className="page-editor-columns-dropdown columns-dropdown-trigger">
-              <summary className="columns-dropdown-summary" aria-label="Columns">
-                <span className="columns-dropdown-eye" aria-hidden="true">
-                  <svg viewBox="0 0 20 20">
-                    <path d="M10 4.25c4.22 0 7.6 2.9 8.83 5.18a1.2 1.2 0 0 1 0 1.14c-1.23 2.28-4.61 5.18-8.83 5.18s-7.6-2.9-8.83-5.18a1.2 1.2 0 0 1 0-1.14C2.4 7.15 5.78 4.25 10 4.25m0 1.25c-3.7 0-6.7 2.54-7.77 4.5 1.07 1.96 4.07 4.5 7.77 4.5s6.7-2.54 7.77-4.5c-1.07-1.96-4.07-4.5-7.77-4.5m0 1.75a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5m0 1.25a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3" />
-                  </svg>
-                </span>
-                <span className="columns-dropdown-label">Columns</span>
-                <span className="columns-dropdown-count">{columns.length - hiddenColumns.length}/{columns.length}</span>
-                <span className="select-caret">▾</span>
-              </summary>
-              <div className="page-editor-columns-menu">
-                {columns.map((column, index) => (
-                  <label key={`${block.id}-column-visibility-${index}`} className="page-editor-columns-option">
-                    <input
-                      type="checkbox"
-                      checked={!hiddenColumns.includes(column)}
-                      onChange={() =>
-                        setHiddenColumns((prev) =>
-                          prev.includes(column) ? prev.filter((item) => item !== column) : [...prev, column]
-                        )
-                      }
-                    />
-                    <span>{column || `Column ${index + 1}`}</span>
-                  </label>
-                ))}
-                {hasHiddenColumns && (
-                  <button className="ghost small" type="button" onClick={() => setHiddenColumns([])}>
-                    Show all columns
-                  </button>
-                )}
-              </div>
-            </details>
-          </div>
-          <div className="toolbar-actions-right">
-            {extraActions}
-            <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("all")}>
-              Export All
-            </button>
-            <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("favorites")}>
-              Export Favorites
-            </button>
-            <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("active")}>
-              Export Active
-            </button>
-            <button className="ghost" type="button" onClick={handleAddColumn} disabled={!canEdit}>
-              Add Column
-            </button>
+          ),
+          columns: {
+            items: columns.map((column, index) => ({
+              key: column,
+              label: column || `Column ${index + 1}`,
+              visible: !hiddenColumns.includes(column)
+            })),
+            onToggle: (key) =>
+              setHiddenColumns((prev) =>
+                prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
+              ),
+            onShowAll: hasHiddenColumns ? () => setHiddenColumns([]) : undefined
+          },
+          trailing: (
+            <>
+              {extraActions}
+              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("all")}>
+                Export All
+              </button>
+              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("favorites")}>
+                Export Favorites
+              </button>
+              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("active")}>
+                Export Active
+              </button>
+              <button className="ghost" type="button" onClick={handleAddColumn} disabled={!canEdit}>
+                Add Column
+              </button>
               <button className="primary" type="button" onClick={handleAddRow} disabled={!canEdit}>
                 {block.props.addActionLabel || "Add Row"}
               </button>
-          </div>
-        </div>
-      </div>
+            </>
+          )
+        }}
+      />
       <section className="table-panel">
         <button
           className="icon-button table-panel-expand"

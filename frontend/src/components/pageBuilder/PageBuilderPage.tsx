@@ -20,6 +20,7 @@ type Props = {
   fallbackConfig?: PageConfig;
   resolveSlot?: BlockSlotResolver;
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
+  resolveDuplicateProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
 };
 
@@ -35,6 +36,7 @@ const PageBuilderPage: React.FC<Props> = ({
   fallbackConfig,
   resolveSlot,
   resolveBlockProps,
+  resolveDuplicateProps,
   createBlockForType
 }) => {
   const { settings, saveSettings } = useAppData();
@@ -253,6 +255,7 @@ const PageBuilderPage: React.FC<Props> = ({
       className={className}
       resolveSlot={resolveSlot}
       resolveBlockProps={resolveBlockProps}
+      resolveDuplicateProps={resolveDuplicateProps}
       createBlockForType={createBlockForType}
     />
   );

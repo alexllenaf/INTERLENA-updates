@@ -650,7 +650,7 @@ const AppShell: React.FC = () => {
               >
                 {resolveNavLabel(item.path, item.label)}
               </NavLink>
-              <div className="nav-item-actions">
+              <div className="nav-item-actions nav-item-actions-base">
                 <button
                   className="icon-button nav-link-action nav-link-edit"
                   type="button"
@@ -675,7 +675,7 @@ const AppShell: React.FC = () => {
               >
                 {sheet.name}
               </NavLink>
-              <div className="nav-item-actions">
+              <div className="nav-item-actions nav-item-actions-sheet">
                 <button
                   className="icon-button nav-link-action nav-link-delete"
                   type="button"

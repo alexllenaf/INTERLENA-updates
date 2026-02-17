@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
+import { EditableTableToolbar } from "../components/blocks/BlockRenderer";
 import {
   PageBuilderPage,
   createDefaultPageBlock,
@@ -3463,9 +3464,9 @@ const TrackerPage: React.FC = () => {
   };
 
   const renderTrackerToolbarContent = () => (
-    <div className="table-toolbar">
-      <div className="toolbar-actions-box table-toolbar-box">
-        <div className="table-toolbar-main">
+    <EditableTableToolbar
+      toolbar={{
+        leading: (
           <TrackerSearchBar
             value={query}
             onChange={setQuery}
@@ -3482,52 +3483,34 @@ const TrackerPage: React.FC = () => {
             filterAriaLabel={t("Filter")}
             clearAriaLabel={t("Clear search")}
           />
-          <details className="page-editor-columns-dropdown columns-dropdown-trigger">
-            <summary className="columns-dropdown-summary" aria-label={t("Columns")}>
-              <span className="columns-dropdown-eye" aria-hidden="true">
-                <svg viewBox="0 0 20 20">
-                  <path d="M10 4.25c4.22 0 7.6 2.9 8.83 5.18a1.2 1.2 0 0 1 0 1.14c-1.23 2.28-4.61 5.18-8.83 5.18s-7.6-2.9-8.83-5.18a1.2 1.2 0 0 1 0-1.14C2.4 7.15 5.78 4.25 10 4.25m0 1.25c-3.7 0-6.7 2.54-7.77 4.5 1.07 1.96 4.07 4.5 7.77 4.5s6.7-2.54 7.77-4.5c-1.07-1.96-4.07-4.5-7.77-4.5m0 1.75a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5m0 1.25a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3" />
-                </svg>
-              </span>
-              <span className="columns-dropdown-label">{t("Columns")}</span>
-              <span className="columns-dropdown-count">{visibleDraft.length}/{columnOrderDraft.length}</span>
-              <span className="select-caret">▾</span>
-            </summary>
-            <div className="page-editor-columns-menu">
-              {columnOrderDraft.map((col) => (
-                <label key={`tracker-col-${col}`} className="page-editor-columns-option">
-                  <input
-                    type="checkbox"
-                    checked={visibleDraft.includes(col)}
-                    onChange={() => toggleColumnVisibility(col)}
-                  />
-                  <span>{labelForColumn(col)}</span>
-                </label>
-              ))}
-              {columnOrderDraft.some((col) => !visibleDraft.includes(col)) && (
-                <button className="ghost small" type="button" onClick={showAllColumns}>
-                  {t("Show all columns")}
-                </button>
-              )}
-            </div>
-          </details>
-        </div>
-        <div className="toolbar-actions-right">
-          <button className="ghost" onClick={() => downloadExcel("all")}>
-            {t("Export All")}
-          </button>
-          <button className="ghost" onClick={() => downloadExcel("favorites")}>
-            {t("Export Favorites")}
-          </button>
-          <button className="ghost" onClick={() => downloadExcel("active")}>
-            {t("Export Active")}
-          </button>
-          <button className="primary" onClick={() => setShowForm(true)}>
-            {t("New Application")}
-          </button>
-        </div>
-      </div>
-    </div>
+        ),
+        columns: {
+          items: columnOrderDraft.map((col) => ({
+            key: col,
+            label: labelForColumn(col),
+            visible: visibleDraft.includes(col)
+          })),
+          onToggle: (key) => toggleColumnVisibility(key),
+          onShowAll: columnOrderDraft.some((col) => !visibleDraft.includes(col)) ? showAllColumns : undefined
+        },
+        trailing: (
+          <>
+            <button className="ghost" onClick={() => downloadExcel("all")}>
+              {t("Export All")}
+            </button>
+            <button className="ghost" onClick={() => downloadExcel("favorites")}>
+              {t("Export Favorites")}
+            </button>
+            <button className="ghost" onClick={() => downloadExcel("active")}>
+              {t("Export Active")}
+            </button>
+            <button className="primary" onClick={() => setShowForm(true)}>
+              {t("New Application")}
+            </button>
+          </>
+        )
+      }}
+    />
   );
 
   const resolveTrackerSlot = useCallback<BlockSlotResolver>(
@@ -3559,6 +3542,45 @@ const TrackerPage: React.FC = () => {
     };
   }, [isTableExpanded]);
 
+  const resolveTrackerDuplicateProps = useCallback((block: PageBlockConfig) => {
+    if (block.type !== "editableTable") return null;
+    if (block.id !== TRACKER_PRIMARY_TABLE_ID) return null;
+    const tableBlock = block as PageBlockConfig<"editableTable">;
+
+    const usedNames = new Set<string>();
+    const snapshotColumns = orderedVisible.map((col, index) => {
+      const base = (labelForColumn(col) || "").trim() || `Column ${index + 1}`;
+      let next = base;
+      let attempt = 2;
+      while (usedNames.has(next)) {
+        next = `${base} ${attempt}`;
+        attempt += 1;
+      }
+      usedNames.add(next);
+      return next;
+    });
+
+    const snapshotTypes = Object.fromEntries(
+      orderedVisible.map((col, index) => [snapshotColumns[index], getColumnKind(col)])
+    );
+    const snapshotRows = rowsForDisplay.map((app) => orderedVisible.map((col) => cellToString(app, col)));
+
+    return {
+      variant: tableBlock.props.variant || "tracker",
+      title: tableBlock.props.title || "Editable Table",
+      description: tableBlock.props.description || "",
+      searchPlaceholder: tableBlock.props.searchPlaceholder || t("Company, role, location..."),
+      addActionLabel: tableBlock.props.addActionLabel || t("Add Row"),
+      customColumns: snapshotColumns,
+      customColumnTypes: snapshotTypes,
+      customRows: snapshotRows,
+      actionsSlotId: undefined,
+      toolbarSlotId: undefined,
+      contentSlotId: undefined,
+      toolbarActionsSlotId: undefined
+    };
+  }, [cellToString, getColumnKind, labelForColumn, orderedVisible, rowsForDisplay, t]);
+
   const createTrackerBlockForType = useCallback(
     (type: PageBlockType, id: string): PageBlockConfig | null => {
       if (type !== "editableTable") return null;
@@ -3587,6 +3609,7 @@ const TrackerPage: React.FC = () => {
         className={`tracker density-${density}`}
         resolveSlot={resolveTrackerSlot}
         resolveBlockProps={resolveTrackerBlockProps}
+        resolveDuplicateProps={resolveTrackerDuplicateProps}
         createBlockForType={createTrackerBlockForType}
       />
       {isTableExpanded && (

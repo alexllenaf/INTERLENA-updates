@@ -2454,6 +2454,50 @@ const CalendarPage: React.FC = () => {
     [hasApplications, t]
   );
 
+  const resolveCalendarDuplicateProps = useCallback(
+    (block: PageBlockConfig) => {
+      if (block.id !== "calendar:todo" || block.type !== "editableTable") return null;
+      const tableBlock = block as PageBlockConfig<"editableTable">;
+
+      const sourceColumns = visibleTodoColumns.filter((col) => col !== "actions");
+      const usedNames = new Set<string>();
+      const snapshotColumns = sourceColumns.map((col, index) => {
+        const base = (todoColumnLabels[col] || "").trim() || `Column ${index + 1}`;
+        let next = base;
+        let attempt = 2;
+        while (usedNames.has(next)) {
+          next = `${base} ${attempt}`;
+          attempt += 1;
+        }
+        usedNames.add(next);
+        return next;
+      });
+
+      const snapshotTypes = Object.fromEntries(
+        sourceColumns.map((col, index) => [snapshotColumns[index], getTodoColumnKind(col)])
+      );
+      const snapshotRows = rowsForDisplay.map((row) =>
+        sourceColumns.map((col) => todoCellToString(row, col))
+      );
+
+      return {
+        variant: tableBlock.props.variant || "todo",
+        title: tableBlock.props.title || "To-Do List",
+        description: tableBlock.props.description || "",
+        searchPlaceholder: tableBlock.props.searchPlaceholder || t("Search to-dos..."),
+        addActionLabel: tableBlock.props.addActionLabel || t("Add Row"),
+        customColumns: snapshotColumns,
+        customColumnTypes: snapshotTypes,
+        customRows: snapshotRows,
+        toolbarSlotId: undefined,
+        contentSlotId: undefined,
+        actionsSlotId: undefined,
+        toolbarActionsSlotId: undefined
+      };
+    },
+    [getTodoColumnKind, rowsForDisplay, t, todoCellToString, todoColumnLabels, visibleTodoColumns]
+  );
+
   return (
     <div className="calendar">
       <PageBuilderPage
@@ -2461,6 +2505,7 @@ const CalendarPage: React.FC = () => {
         className="calendar-grid-page"
         resolveSlot={resolveCalendarSlot}
         resolveBlockProps={resolveCalendarBlockProps}
+        resolveDuplicateProps={resolveCalendarDuplicateProps}
       />
 
       {todoColumnMenu &&

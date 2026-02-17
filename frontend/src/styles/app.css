@@ -301,12 +301,12 @@ h2 {
   position: absolute;
   top: 50%;
   right: 8px;
-  transform: translateY(-50%);
+  transform: translateY(-50%) scale(0.95);
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  opacity: 0.72;
-  pointer-events: auto;
+  opacity: 0;
+  pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -323,7 +323,8 @@ h2 {
 .nav-item:hover .nav-item-actions,
 .nav-item:focus-within .nav-item-actions {
   opacity: 1;
-  transform: translateY(-50%);
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
 }
 
 .nav-add-sheet {
@@ -4024,6 +4025,12 @@ button:disabled {
     opacity: 1;
     pointer-events: auto;
     transform: none;
+  }
+
+  .nav-item-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%);
   }
 
   .nav-add-sheet {

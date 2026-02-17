@@ -65,6 +65,7 @@ type Props = {
   registry?: BlockRegistry;
   resolveSlot?: BlockSlotResolver;
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
+  resolveDuplicateProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
 };
 
@@ -327,6 +328,7 @@ const PageEditor: React.FC<Props> = ({
   registry = PAGE_BLOCK_REGISTRY,
   resolveSlot,
   resolveBlockProps,
+  resolveDuplicateProps,
   createBlockForType
 }) => {
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -489,11 +491,16 @@ const PageEditor: React.FC<Props> = ({
     const existingIds = new Set(pageConfig.blocks.map((item) => item.id));
     const nextId = createUniqueBlockId(block.type, existingIds);
     const suffix = nextId.replace(/[^a-zA-Z0-9_-]/g, "");
+    const duplicateOverrides = resolveDuplicateProps?.(block) || null;
+    const sourceProps = {
+      ...(block.props as Record<string, unknown>),
+      ...(duplicateOverrides || {})
+    };
     const clone: PageBlockConfig = {
       ...block,
       id: nextId,
       layout: { ...block.layout },
-      props: cloneBlockPropsForDuplicate(block.props as Record<string, unknown>, suffix) as any
+      props: cloneBlockPropsForDuplicate(sourceProps, suffix) as any
     };
     const next = [...pageConfig.blocks];
     next.splice(sourceIndex + 1, 0, clone);
