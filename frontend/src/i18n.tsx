@@ -203,6 +203,8 @@ const ES: Record<string, string> = {
   "Comfortable": "Comoda",
   "Compact": "Compacta",
   "Search": "Buscar",
+  "Filter": "Filtrar",
+  "Clear search": "Limpiar busqueda",
   "Company, role, location...": "Empresa, puesto, ubicacion...",
   "All": "Todos",
   "Columns": "Columnas",

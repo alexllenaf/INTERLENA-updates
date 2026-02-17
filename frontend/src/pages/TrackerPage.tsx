@@ -6,7 +6,9 @@ import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
 import StarRating from "../components/StarRating";
 import { DateCell, DateTimeCell, TextCell } from "../components/TableCells";
+import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
 import { deleteDocument, documentDownloadUrl, downloadExcel, openExternal, uploadDocuments } from "../api";
+import { matchesSearchQuery, matchesStageOutcome } from "../features/tracker/filtering";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { Application, Contact, CustomProperty, DocumentFile } from "../types";
@@ -1033,6 +1035,7 @@ const TrackerPage: React.FC = () => {
   const [outcomeFilter, setOutcomeFilter] = useState("all");
   const [showColumns, setShowColumns] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [isTableExpanded, setIsTableExpanded] = useState(false);
   const [editing, setEditing] = useState<Application | null>(null);
 	  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 	  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
@@ -1110,13 +1113,8 @@ const TrackerPage: React.FC = () => {
 
   const filtered = useMemo(() => {
     return applications.filter((app) => {
-      const matchesQuery =
-        !query ||
-        app.company_name.toLowerCase().includes(query.toLowerCase()) ||
-        app.position.toLowerCase().includes(query.toLowerCase()) ||
-        (app.location || "").toLowerCase().includes(query.toLowerCase());
-      const matchesStage = stageFilter === "all" || app.stage === stageFilter;
-      const matchesOutcome = outcomeFilter === "all" || app.outcome === outcomeFilter;
+      const matchesQuery = matchesSearchQuery(app, query);
+      const matchesAdvanced = matchesStageOutcome(app, stageFilter, outcomeFilter);
       const matchesColumnFilters = Object.entries(columnFilters).every(([col, raw]) => {
         const needle = raw.trim().toLowerCase();
         if (!needle) return true;
@@ -1152,7 +1150,7 @@ const TrackerPage: React.FC = () => {
         if (value === null || value === undefined) return false;
         return String(value).toLowerCase().includes(needle);
       });
-      return matchesQuery && matchesStage && matchesOutcome && matchesColumnFilters;
+      return matchesQuery && matchesAdvanced && matchesColumnFilters;
     });
   }, [applications, query, stageFilter, outcomeFilter, columnFilters, customPropByKey]);
 
@@ -1383,6 +1381,15 @@ const TrackerPage: React.FC = () => {
     tableScrollRef.current.scrollTop = 0;
     setScrollTop(0);
   }, [query, stageFilter, outcomeFilter, columnFilters, sortConfig]);
+
+  useEffect(() => {
+    if (!isTableExpanded) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsTableExpanded(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isTableExpanded]);
 
   if (!settings) {
     return <div className="empty">Loading settings...</div>;
@@ -2961,41 +2968,6 @@ useEffect(() => {
 	        </div>
 	      </BlockPanel>
 	
-	      <BlockPanel id="tracker:filters" as="section" className="filters">
-	        <div className="field">
-	          <label>{t("Search")}</label>
-	          <input
-	            value={query}
-	            onChange={(e) => setQuery(e.target.value)}
-	            placeholder={t("Company, role, location...")}
-	          />
-	        </div>
-	        <div className="field">
-	          <label>{t("Stage")}</label>
-	          <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-	            <option value="all">{t("All")}</option>
-	            {settings.stages.map((stage) => (
-	              <option key={stage} value={stage}>
-	                {stage}
-	              </option>
-	            ))}
-	          </select>
-	        </div>
-	        <div className="field">
-	          <label>{t("Outcome")}</label>
-	          <select value={outcomeFilter} onChange={(e) => setOutcomeFilter(e.target.value)}>
-	            <option value="all">{t("All")}</option>
-	            {settings.outcomes.map((outcome) => (
-	              <option key={outcome} value={outcome}>
-	                {outcome}
-	              </option>
-	            ))}
-	          </select>
-	        </div>
-	      </BlockPanel>
-	
-	      
-
 		      {selectedIds.size > 0 && (
 		        <div className="bulk-bar">
 		          <div className="bulk-count">{t("{count} selected", { count: selectedIds.size })}</div>
@@ -3038,11 +3010,28 @@ useEffect(() => {
 	        </div>
 	      )}
 
-	      <BlockPanel id="tracker:table" as="section" className="table-panel">
-	        <div
-  className="table-toolbar"
-  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
->
+	      <BlockPanel
+          id="tracker:table"
+          as="section"
+          className={`table-panel ${isTableExpanded ? "table-panel-expanded" : ""}`}
+        >
+          <button
+            className="icon-button table-panel-expand"
+            type="button"
+            onClick={() => setIsTableExpanded((prev) => !prev)}
+            aria-label={isTableExpanded ? "Close expanded table" : "Expand table"}
+          >
+            {isTableExpanded ? (
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M5.22 4.16a.75.75 0 0 1 1.06 0L10 7.88l3.72-3.72a.75.75 0 1 1 1.06 1.06L11.06 8.94l3.72 3.72a.75.75 0 1 1-1.06 1.06L10 10l-3.72 3.72a.75.75 0 0 1-1.06-1.06l3.72-3.72-3.72-3.72a.75.75 0 0 1 0-1.06Z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+              </svg>
+            )}
+          </button>
+	        <div className="table-toolbar">
 
   {showColumns && columnsMenuPos &&
     createPortal(
@@ -3081,11 +3070,25 @@ useEffect(() => {
     )}
   
 
-  <div
-    className="toolbar-actions-box"
-    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}
-  >
-    <div className="columns-dropdown-trigger">
+  <div className="toolbar-actions-box table-toolbar-box">
+    <div className="table-toolbar-main">
+      <TrackerSearchBar
+        value={query}
+        onChange={setQuery}
+        stageFilter={stageFilter}
+        onStageFilterChange={setStageFilter}
+        stages={settings.stages}
+        outcomeFilter={outcomeFilter}
+        onOutcomeFilterChange={setOutcomeFilter}
+        outcomes={settings.outcomes}
+        placeholder={t("Company, role, location...")}
+        allLabel={t("All")}
+        stageLabel={t("Stage")}
+        outcomeLabel={t("Outcome")}
+        filterAriaLabel={t("Filter")}
+        clearAriaLabel={t("Clear search")}
+      />
+      <div className="columns-dropdown-trigger">
       <button
         ref={columnsAnchorRef}
         className={`select-trigger ${showColumns ? "open" : ""}`}
@@ -3106,7 +3109,8 @@ useEffect(() => {
         <span className="select-caret">▾</span>
       </button>
     </div>
-    <div className="toolbar-actions-right" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    </div>
+    <div className="toolbar-actions-right">
       <button className="ghost" onClick={() => downloadExcel("all")}>
         {t("Export All")}
       </button>
@@ -3298,6 +3302,7 @@ useEffect(() => {
                       return (
                         <TextCell
                           value={app.company_name}
+                          highlightQuery={query}
                           onCommit={(next) => {
                             if (next === app.company_name) return;
                             updateApplication(app.id, { company_name: next });
@@ -3309,6 +3314,7 @@ useEffect(() => {
                       return (
                         <TextCell
                           value={app.position}
+                          highlightQuery={query}
                           onCommit={(next) => {
                             if (next === app.position) return;
                             updateApplication(app.id, { position: next });
@@ -3336,6 +3342,7 @@ useEffect(() => {
                       return (
                         <TextCell
                           value={app.location || ""}
+                          highlightQuery={query}
                           onCommit={(next) => {
                             if (next === (app.location || "")) return;
                             updateApplication(app.id, { location: next });
@@ -3867,6 +3874,13 @@ useEffect(() => {
 	        </div>
         {sorted.length === 0 && <div className="empty">No applications match your filters.</div>}
       </BlockPanel>
+      {isTableExpanded && (
+        <div
+          className="modal-backdrop table-expand-backdrop"
+          role="presentation"
+          onClick={() => setIsTableExpanded(false)}
+        />
+      )}
 
       {showForm && (
         <ApplicationForm

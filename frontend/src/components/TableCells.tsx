@@ -1,16 +1,24 @@
 import React, { useEffect, useState } from "react";
 
+import { buildHighlightChunks } from "../features/tracker/highlight";
 import { toDateInputValue, toDateTimeLocalValue } from "../utils";
 
 type TextCellProps = {
   value?: string | null;
   placeholder?: string;
+  highlightQuery?: string;
   onCommit: (next: string) => void;
 };
 
-export const TextCell: React.FC<TextCellProps> = ({ value, placeholder, onCommit }) => {
+export const TextCell: React.FC<TextCellProps> = ({
+  value,
+  placeholder,
+  highlightQuery = "",
+  onCommit
+}) => {
   const [draft, setDraft] = useState(value ?? "");
   const [dirty, setDirty] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
     setDraft(value ?? "");
@@ -28,26 +36,46 @@ export const TextCell: React.FC<TextCellProps> = ({ value, placeholder, onCommit
     setDirty(false);
   };
 
+  const chunks = buildHighlightChunks(draft, highlightQuery);
+  const hasMatch = chunks.some((chunk) => chunk.match);
+
   return (
-    <input
-      className="cell-input"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        setDirty(true);
-      }}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          setDraft(value ?? "");
-          setDirty(false);
-        }
-      }}
-      placeholder={placeholder}
-    />
+    <div className="cell-input-wrap">
+      {!isFocused && highlightQuery.trim() && hasMatch ? (
+        <div className="cell-input-highlight">
+          {chunks.map((chunk, index) =>
+            chunk.match ? (
+              <mark key={`${chunk.text}-${index}`}>{chunk.text}</mark>
+            ) : (
+              <span key={`${chunk.text}-${index}`}>{chunk.text}</span>
+            )
+          )}
+        </div>
+      ) : null}
+      <input
+        className={`cell-input ${!isFocused && hasMatch ? "cell-input-transparent" : ""}`}
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setDirty(true);
+        }}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => {
+          setIsFocused(false);
+          commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+          if (event.key === "Escape") {
+            setDraft(value ?? "");
+            setDirty(false);
+          }
+        }}
+        placeholder={placeholder}
+      />
+    </div>
   );
 };
 
