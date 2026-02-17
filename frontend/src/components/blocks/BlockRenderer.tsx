@@ -158,11 +158,16 @@ const BlockRenderer: React.FC<{ block: AppBlockConfig }> = ({ block }) => {
 
     case "editableTable": {
       return (
-        <BlockPanel id={block.id} as="section" className="table-panel-standard">
+        <BlockPanel
+          id={block.id}
+          as="section"
+          className={["table-panel-standard", block.data.panelClassName || ""].filter(Boolean).join(" ")}
+        >
           <HeaderEditor
             id={`${block.id}:header`}
             title={block.data.title}
             description={block.data.description || ""}
+            actions={block.data.actions}
           />
           {block.data.content}
         </BlockPanel>

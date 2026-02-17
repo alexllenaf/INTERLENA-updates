@@ -155,6 +155,8 @@ const BlockPanel: React.FC<Props> = ({
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const forceDefaultStyle = className.includes("table-panel-expanded");
+  const canStyleBlock = !forceDefaultStyle;
 
   useEffect(() => {
     setBlockStyle(readStyle(id));
@@ -249,6 +251,12 @@ const BlockPanel: React.FC<Props> = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (!canStyleBlock && open) {
+      closeMenuImmediate();
+    }
+  }, [canStyleBlock, open]);
+
   const updateBlockStyle = (patch: Partial<BlockStyle>) => {
     setBlockStyle((prev) => {
       const next = { ...prev, ...patch };
@@ -258,8 +266,9 @@ const BlockPanel: React.FC<Props> = ({
   };
 
   const derived = useMemo(() => {
-    const texture = blockStyle.texture;
-    const color = blockStyle.color;
+    const activeStyle = forceDefaultStyle ? DEFAULT_STYLE : blockStyle;
+    const texture = activeStyle.texture;
+    const color = activeStyle.color;
     const vars: Record<string, string> = {};
     let dark = false;
     if (color) {
@@ -301,12 +310,14 @@ const BlockPanel: React.FC<Props> = ({
     }
 
     return { vars, dark };
-  }, [blockStyle]);
+  }, [blockStyle, forceDefaultStyle]);
 
   const panelClass = [
     variant === "panel" ? "panel" : "",
     "block-panel",
-    blockStyle.texture === "glass" ? "block-glass" : "block-flat",
+    (forceDefaultStyle ? DEFAULT_STYLE.texture : blockStyle.texture) === "glass"
+      ? "block-glass"
+      : "block-flat",
     className
   ]
     .filter(Boolean)
@@ -321,7 +332,7 @@ const BlockPanel: React.FC<Props> = ({
   }, [style, derived.vars]);
 
   const Tag = as;
-  const menu = open && pos && typeof document !== "undefined"
+  const menu = canStyleBlock && open && pos && typeof document !== "undefined"
     ? createPortal(
         <div
           className={`block-style-menu ${visible ? "open" : ""}`}
@@ -410,22 +421,24 @@ const BlockPanel: React.FC<Props> = ({
         className={panelClass}
         style={mergedStyle}
         data-block-id={id}
-        data-settings-open={open ? "true" : "false"}
+        data-settings-open={canStyleBlock && open ? "true" : "false"}
       >
-        <div className="block-settings">
-          <button
-            className="block-settings-button"
-            type="button"
-            aria-label={t("Block settings")}
-            ref={buttonRef}
-            onClick={() => {
-              if (open) closeMenuImmediate();
-              else setOpen(true);
-            }}
-          >
-            ...
-          </button>
-        </div>
+        {canStyleBlock && (
+          <div className="block-settings">
+            <button
+              className="block-settings-button"
+              type="button"
+              aria-label={t("Block settings")}
+              ref={buttonRef}
+              onClick={() => {
+                if (open) closeMenuImmediate();
+                else setOpen(true);
+              }}
+            >
+              ...
+            </button>
+          </div>
+        )}
         {children}
       </Tag>
       {menu}

@@ -42,6 +42,8 @@ export type TitleDescriptionBlockData = {
 export type EditableTableBlockData = {
   title: string;
   description?: string;
+  actions?: React.ReactNode;
+  panelClassName?: string;
   content: React.ReactNode;
 };
 

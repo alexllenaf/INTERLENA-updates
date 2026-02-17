@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
-import BlockPanel from "../components/BlockPanel";
+import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
+import GridPageLayout from "../components/layout/GridPageLayout";
 import StarRating from "../components/StarRating";
 import { DateCell, DateTimeCell, TextCell } from "../components/TableCells";
 import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
@@ -2942,33 +2943,25 @@ useEffect(() => {
     return "";
   };
 
-	  return (
-	    <div className={`tracker density-${density}`}>
-	      <BlockPanel id="tracker:toolbar" as="section" className="toolbar">
-	        <div className="toolbar-left">
-	          <div>
-	            <h2>{t("Tracker Table")}</h2>
-	            <p>{t("Search, edit, and manage every application.")}</p>
-	          </div>
-	        </div>
-	        <div className="toolbar-right">
-	          <div className="density-toggle">
-	            <label htmlFor="density">{t("Density")}</label>
-	            <select
-	              id="density"
-	              value={density}
-	              onChange={(event) =>
-	                saveSettings({ ...settings, table_density: event.target.value as "compact" | "comfortable" })
-	              }
-	            >
-	              <option value="comfortable">{t("Comfortable")}</option>
-	              <option value="compact">{t("Compact")}</option>
-	            </select>
-	          </div>
-	        </div>
-	      </BlockPanel>
-	
-		      {selectedIds.size > 0 && (
+  const densityActions = (
+    <div className="density-toggle">
+      <label htmlFor="density">{t("Density")}</label>
+      <select
+        id="density"
+        value={density}
+        onChange={(event) =>
+          saveSettings({ ...settings, table_density: event.target.value as "compact" | "comfortable" })
+        }
+      >
+        <option value="comfortable">{t("Comfortable")}</option>
+        <option value="compact">{t("Compact")}</option>
+      </select>
+    </div>
+  );
+
+  const trackerTableContent = (
+    <>
+      {selectedIds.size > 0 && (
 		        <div className="bulk-bar">
 		          <div className="bulk-count">{t("{count} selected", { count: selectedIds.size })}</div>
 	          <div className="bulk-actions">
@@ -3010,11 +3003,7 @@ useEffect(() => {
 	        </div>
 	      )}
 
-	      <BlockPanel
-          id="tracker:table"
-          as="section"
-          className={`table-panel ${isTableExpanded ? "table-panel-expanded" : ""}`}
-        >
+      <section className="table-panel">
           <button
             className="icon-button table-panel-expand"
             type="button"
@@ -3873,7 +3862,28 @@ useEffect(() => {
 	          </table>
 	        </div>
         {sorted.length === 0 && <div className="empty">No applications match your filters.</div>}
-      </BlockPanel>
+      </section>
+    </>
+  );
+
+  const blocks: AppBlockConfig[] = [
+    {
+      id: "tracker:table",
+      type: "editableTable",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("Tracker Table"),
+        description: t("Search, edit, and manage every application."),
+        actions: densityActions,
+        panelClassName: isTableExpanded ? "table-panel-expanded" : "",
+        content: trackerTableContent
+      }
+    }
+  ];
+
+  return (
+    <>
+      <GridPageLayout blocks={blocks} className={`tracker density-${density}`} />
       {isTableExpanded && (
         <div
           className="modal-backdrop table-expand-backdrop"
@@ -4202,7 +4212,7 @@ useEffect(() => {
           </div>,
           document.body
         )}
-    </div>
+    </>
   );
 };
 
