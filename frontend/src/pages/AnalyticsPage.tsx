@@ -1,6 +1,4 @@
 import React, { useMemo } from "react";
-import BlockPanel from "../components/BlockPanel";
-import { useI18n } from "../i18n";
 import {
   Bar,
   BarChart,
@@ -10,6 +8,9 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
+import GridPageLayout from "../components/layout/GridPageLayout";
+import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { formatDate } from "../utils";
 
@@ -45,81 +46,119 @@ const AnalyticsPage: React.FC = () => {
 
   const active = applications.filter((app) => app.outcome === "In Progress");
 
-  return (
-    <div className="analytics">
-      <BlockPanel id="analytics:intro" as="section">
-        <h2>{t("Analytics")}</h2>
-        <p>{t("Break down outcomes, stages, and score distribution.")}</p>
-      </BlockPanel>
-
-      <section className="grid charts">
-        <BlockPanel id="analytics:chart:outcomes" as="div">
-          <h3>{t("Outcomes")}</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={outcomes}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#2B6CB0" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </BlockPanel>
-        <BlockPanel id="analytics:chart:stages" as="div">
-          <h3>{t("Stages")}</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={stages}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#D69E2E" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </BlockPanel>
-        <BlockPanel id="analytics:chart:score" as="div">
-          <h3>{t("Score Distribution")}</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={scoreData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="score" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#2F855A" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </BlockPanel>
-      </section>
-
-      <BlockPanel id="analytics:active" as="section">
-        <h3>{t("Active Processes")}</h3>
-        {active.length === 0 ? (
-          <div className="empty">{t("No active processes.")}</div>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("Company")}</th>
-                <th>{t("Position")}</th>
-                <th>{t("Stage")}</th>
-                <th>{t("Application Date")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((app) => (
-                <tr key={app.id}>
-                  <td>{app.company_name}</td>
-                  <td>{app.position}</td>
-                  <td>{app.stage}</td>
-                  <td>{formatDate(app.application_date)}</td>
+  const blocks: AppBlockConfig[] = [
+    {
+      id: "analytics:intro",
+      type: "titleDescription",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("Analytics"),
+        description: t("Break down outcomes, stages, and score distribution.")
+      }
+    },
+    {
+      id: "analytics:chart:outcomes",
+      type: "chart",
+      layout: { colSpan: GRID_SPAN.chartMedium },
+      data: {
+        title: t("Outcomes"),
+        size: "medium",
+        content: (
+          <div className="chart-shell">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={outcomes}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="value" fill="#2B6CB0" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+    },
+    {
+      id: "analytics:chart:stages",
+      type: "chart",
+      layout: { colSpan: GRID_SPAN.chartMedium },
+      data: {
+        title: t("Stages"),
+        size: "medium",
+        content: (
+          <div className="chart-shell">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stages}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="value" fill="#D69E2E" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+    },
+    {
+      id: "analytics:chart:score",
+      type: "chart",
+      layout: { colSpan: GRID_SPAN.chartMedium },
+      data: {
+        title: t("Score Distribution"),
+        size: "medium",
+        content: (
+          <div className="chart-shell">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={scoreData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="score" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="value" fill="#2F855A" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      }
+    },
+    {
+      id: "analytics:active",
+      type: "informationalTable",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("Active Processes"),
+        description: t("Applications currently in progress."),
+        content:
+          active.length === 0 ? (
+            <div className="empty">{t("No active processes.")}</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t("Company")}</th>
+                  <th>{t("Position")}</th>
+                  <th>{t("Stage")}</th>
+                  <th>{t("Application Date")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </BlockPanel>
-    </div>
-  );
+              </thead>
+              <tbody>
+                {active.map((app) => (
+                  <tr key={app.id}>
+                    <td>{app.company_name}</td>
+                    <td>{app.position}</td>
+                    <td>{app.stage}</td>
+                    <td>{formatDate(app.application_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+      }
+    }
+  ];
+
+  return <GridPageLayout blocks={blocks} className="analytics" />;
 };
 
 export default AnalyticsPage;

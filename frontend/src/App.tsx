@@ -4,6 +4,7 @@ import { getUpdateInfo, openExternal } from "./api";
 import { useI18n } from "./i18n";
 import { AppProvider, useAppData } from "./state";
 import BlockPanel from "./components/BlockPanel";
+import AnalyticsPage from "./pages/AnalyticsPage";
 import DashboardPage from "./pages/DashboardPage";
 import { BrandProfile, UpdateInfo } from "./types";
 
@@ -29,6 +30,12 @@ const PencilIcon: React.FC = () => (
 const CameraIcon: React.FC = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <path d="M9 4a2 2 0 0 0-1.6.8L6.7 6H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.7l-.7-1.2A2 2 0 0 0 14 4H9zm3 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" />
+  </svg>
+);
+
+const GearIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.27 7.27 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.23-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.23 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.2A3.2 3.2 0 1 1 12 8.8a3.2 3.2 0 0 1 0 6.4Z" />
   </svg>
 );
 
@@ -67,6 +74,7 @@ const AppShell: React.FC = () => {
   const [editingField, setEditingField] = useState<"name" | "role" | null>(null);
   const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const hasLoadedProfileRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
@@ -207,6 +215,7 @@ const AppShell: React.FC = () => {
       if (event.key === "Escape") {
         setIsAvatarMenuOpen(false);
         setIsCameraOpen(false);
+        setIsSettingsOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClick);
@@ -466,11 +475,17 @@ const AppShell: React.FC = () => {
           <NavLink to="/calendar" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
             {t("Calendar")}
           </NavLink>
-          <NavLink to="/settings" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            {t("Settings")}
-          </NavLink>
         </nav>
         <div className="sidebar-footer">
+          <button
+            className="sidebar-settings-button"
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label={t("Settings")}
+            title={t("Settings")}
+          >
+            <GearIcon />
+          </button>
           <p>{t("Local-first · SQLite/Postgres")}</p>
         </div>
       </BlockPanel>
@@ -515,12 +530,39 @@ const AppShell: React.FC = () => {
               <Route path="/tracker" element={<TrackerPage />} />
               <Route path="/pipeline" element={<PipelinePage />} />
               <Route path="/calendar" element={<CalendarPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/analytics" element={<DashboardPage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
             </Routes>
           </Suspense>
         </div>
       </main>
+      {isSettingsOpen && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("Settings")}
+          onClick={() => setIsSettingsOpen(false)}
+        >
+          <div className="modal settings-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>{t("Settings")}</h3>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setIsSettingsOpen(false)}
+                aria-label={t("Close")}
+              >
+                X
+              </button>
+            </div>
+            <Suspense fallback={<div className="empty">{t("Loading settings...")}</div>}>
+              <SettingsPage />
+            </Suspense>
+          </div>
+        </div>
+      )}
       {isCameraOpen && (
         <div
           className="modal-backdrop"

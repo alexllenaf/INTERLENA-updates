@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ApplicationForm from "../components/ApplicationForm";
-import BlockPanel from "../components/BlockPanel";
+import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
+import GridPageLayout from "../components/layout/GridPageLayout";
 import StarRating from "../components/StarRating";
 import { DateCell, TextCell } from "../components/TableCells";
 import { useI18n } from "../i18n";
@@ -719,243 +720,248 @@ const CalendarPage: React.FC = () => {
   const detailDocuments = detailApp?.documents_files || [];
   const detailContacts = detailApp?.contacts || [];
 
-  return (
-    <div className="calendar">
-      <BlockPanel id="calendar:intro" as="section">
-        <h2>{t("Calendar")}</h2>
-        <p>{t("Track interviews and follow-ups with a consolidated event list.")}</p>
-      </BlockPanel>
-
-      <BlockPanel id="calendar:alerts" as="section">
-        <div className="panel-header">
-          <h3>{t("Calendar Alerts")}</h3>
-          <p>{t("Upcoming or overdue follow-ups and to-do items.")}</p>
-        </div>
-        {alerts.length === 0 ? (
-          <div className="empty">{t("No event alerts.")}</div>
-        ) : (
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("Type")}</th>
-                  <th>{t("Company")}</th>
-                  <th>{t("Detail")}</th>
-                  <th>{t("Date")}</th>
-                  <th>{t("Status")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {alerts.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.type}</td>
-                    <td>{item.company}</td>
-                    <td>{item.detail}</td>
-                    <td>{formatDate(item.date)}</td>
-                    <td>
-                      <span className={`tag tag-${item.status}`}>{item.status}</span>
-                    </td>
+  const blocks: AppBlockConfig[] = [
+    {
+      id: "calendar:alerts",
+      type: "informationalTable",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("Calendar Alerts"),
+        description: t("Upcoming or overdue follow-ups and to-do items."),
+        content:
+          alerts.length === 0 ? (
+            <div className="empty">{t("No event alerts.")}</div>
+          ) : (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("Type")}</th>
+                    <th>{t("Company")}</th>
+                    <th>{t("Detail")}</th>
+                    <th>{t("Date")}</th>
+                    <th>{t("Status")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </BlockPanel>
-
-      <BlockPanel id="calendar:month" as="section">
-        <div className="calendar-header">
-          <div>
-            <h3>{monthLabel}</h3>
-            <p>{t("{count} events scheduled this month.", { count: eventsThisMonth })}</p>
-          </div>
-          <div className="calendar-header-actions">
-            <div className="calendar-actions">
-              <button className="ghost" onClick={() => downloadIcs()}>
-                {t("Download All (ICS)")}
-              </button>
-              <button className="primary" onClick={() => downloadIcs(selected)} disabled={!selected}>
-                {t("Download Selected")}
-              </button>
+                </thead>
+                <tbody>
+                  {alerts.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.type}</td>
+                      <td>{item.company}</td>
+                      <td>{item.detail}</td>
+                      <td>{formatDate(item.date)}</td>
+                      <td>
+                        <span className={`tag tag-${item.status}`}>{item.status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="calendar-nav">
-              <button className="ghost small" onClick={() => shiftMonth(-1)}>
-                {t("Previous")}
-              </button>
-              <button className="ghost small" onClick={handleToday}>
-                {t("Today")}
-              </button>
-              <button className="ghost small" onClick={() => shiftMonth(1)}>
-                {t("Next")}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="calendar-layout">
-          <div className="calendar-grid">
-            {weekdayLabels.map((label) => (
-              <div key={label} className="calendar-weekday">
-                {label}
-              </div>
-            ))}
-            {calendarDays.map((date) => {
-              const key = toDateKey(date);
-              const dayEvents = eventsByDay.get(key) ?? [];
-              const isCurrentMonth = date.getMonth() === cursor.getMonth();
-              const isToday = key === toDateKey(today);
-              const isSelected = key === selectedDay;
-              const visibleEvents = dayEvents.slice(0, 2);
-              const remainingEvents = dayEvents.length - visibleEvents.length;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  className={[
-                    "calendar-cell",
-                    isCurrentMonth ? "current" : "muted",
-                    isToday ? "today" : "",
-                    isSelected ? "selected" : ""
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  onClick={() => setSelectedDay(key)}
-                >
-                  <div className="calendar-day-header">
-                    <span className="calendar-day-number">{date.getDate()}</span>
-                    {dayEvents.length > 0 ? (
-                      <span className="calendar-day-count">{dayEvents.length}</span>
-                    ) : null}
-                  </div>
-                  <div className="calendar-day-events">
-                    {visibleEvents.map((event) => {
-                      const chipClass =
-                        event.type === "Follow-Up"
-                          ? "followup"
-                          : event.type === "To-Do"
-                          ? "todo"
-                          : "interview";
-                      return (
-                        <span key={event.id} className={`calendar-event-chip ${chipClass}`}>
-                          {event.type}
-                        </span>
-                      );
-                    })}
-                    {remainingEvents > 0 ? (
-                      <span className="calendar-more">{t("+{count} more", { count: remainingEvents })}</span>
-                    ) : null}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="calendar-day-panel">
-            <h4>{selectedDateLabel}</h4>
-            {selectedEvents.length === 0 ? (
-              <div className="empty">{t("No events scheduled.")}</div>
-            ) : (
-              <div className="calendar-day-list">
-                {selectedEvents.map((event) => (
-                  <div key={event.id} className="calendar-day-event">
-                    <div className="calendar-day-event-body">
-                      <strong>{event.type}</strong>
-                      <span>
-                        {event.company} — {event.position}
-                      </span>
-                      <span>{event.timeLabel ? `${event.timeLabel}` : t("All-day")}</span>
-                    </div>
-                    <div className="row-actions">
-                      <button
-                        className="icon-button"
-                        type="button"
-                        onClick={() => handleEventDownload(event)}
-                        aria-label={t("Download")}
-                      >
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="M10 2.5a.75.75 0 0 1 .75.75v7.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V3.25A.75.75 0 0 1 10 2.5Zm-5 12.75c0-.41.34-.75.75-.75h8.5a.75.75 0 0 1 .75.75v1.5A1.75 1.75 0 0 1 13.25 18h-6.5A1.75 1.75 0 0 1 5 16.75v-1.5Z" />
-                        </svg>
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        onClick={() => handleEventDetail(event)}
-                        aria-label={t("Details")}
-                      >
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
-                        </svg>
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        onClick={() => handleEventEdit(event)}
-                        aria-label={t("Edit")}
-                      >
-                        <svg viewBox="0 0 20 20" aria-hidden="true">
-                          <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
-                        </svg>
-                      </button>
-                      {event.type === "To-Do" && event.todoId ? (
-                        <button
-                          className="icon-button danger"
-                          type="button"
-                          onClick={() => removeTodoItem(event.appId, event.todoId!)}
-                          aria-label={t("Delete")}
-                        >
-                          <svg viewBox="0 0 20 20" aria-hidden="true">
-                            <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
-                          </svg>
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </BlockPanel>
-
-      <BlockPanel id="calendar:todo" as="section">
-        <div className="todo-header">
-          <div>
-            <h3>{t("To-Do List")}</h3>
-            <p>
-              {hasApplications
-                ? t("Manage preparation tasks linked to each application.")
-                : t("Create an application to start a to-do list.")}
-            </p>
-          </div>
-          <div className="todo-controls">
-            <div className="todo-summary">
-              {hasApplications ? t("{count} pending", { count: pendingTodos }) : "—"}
-            </div>
-            <div className="field todo-select">
-              <label>{t("Application")}</label>
-              <select
-                value={selected}
-                onChange={(e) => setSelected(e.target.value)}
-                disabled={!hasApplications}
-              >
-                <option value="">{t("All applications")}</option>
-                {applicationOptions.map((app) => (
-                  <option key={app.value} value={app.value}>
-                    {app.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button className="primary" type="button" onClick={openTodoCreate} disabled={!hasApplications}>
-              {t("Add To-Do")}
-            </button>
-          </div>
-        </div>
-        {!hasApplications ? (
-          <div className="empty">{t("No applications yet. Add one to start tracking tasks.")}</div>
-        ) : (
+          )
+      }
+    },
+    {
+      id: "calendar:month",
+      type: "calendar",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("Calendar"),
+        description: t("Track interviews and follow-ups with a consolidated event list."),
+        content: (
           <>
-            {orderedTodos.length === 0 ? (
+            <div className="calendar-header">
+              <div>
+                <h3>{monthLabel}</h3>
+                <p>{t("{count} events scheduled this month.", { count: eventsThisMonth })}</p>
+              </div>
+              <div className="calendar-header-actions">
+                <div className="calendar-actions">
+                  <button className="ghost" onClick={() => downloadIcs()}>
+                    {t("Download All (ICS)")}
+                  </button>
+                  <button className="primary" onClick={() => downloadIcs(selected)} disabled={!selected}>
+                    {t("Download Selected")}
+                  </button>
+                </div>
+                <div className="calendar-nav">
+                  <button className="ghost small" onClick={() => shiftMonth(-1)}>
+                    {t("Previous")}
+                  </button>
+                  <button className="ghost small" onClick={handleToday}>
+                    {t("Today")}
+                  </button>
+                  <button className="ghost small" onClick={() => shiftMonth(1)}>
+                    {t("Next")}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="calendar-layout">
+              <div className="calendar-grid">
+                {weekdayLabels.map((label) => (
+                  <div key={label} className="calendar-weekday">
+                    {label}
+                  </div>
+                ))}
+                {calendarDays.map((date) => {
+                  const key = toDateKey(date);
+                  const dayEvents = eventsByDay.get(key) ?? [];
+                  const isCurrentMonth = date.getMonth() === cursor.getMonth();
+                  const isToday = key === toDateKey(today);
+                  const isSelected = key === selectedDay;
+                  const visibleEvents = dayEvents.slice(0, 2);
+                  const remainingEvents = dayEvents.length - visibleEvents.length;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={[
+                        "calendar-cell",
+                        isCurrentMonth ? "current" : "muted",
+                        isToday ? "today" : "",
+                        isSelected ? "selected" : ""
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      onClick={() => setSelectedDay(key)}
+                    >
+                      <div className="calendar-day-header">
+                        <span className="calendar-day-number">{date.getDate()}</span>
+                        {dayEvents.length > 0 ? (
+                          <span className="calendar-day-count">{dayEvents.length}</span>
+                        ) : null}
+                      </div>
+                      <div className="calendar-day-events">
+                        {visibleEvents.map((event) => {
+                          const chipClass =
+                            event.type === "Follow-Up"
+                              ? "followup"
+                              : event.type === "To-Do"
+                              ? "todo"
+                              : "interview";
+                          return (
+                            <span key={event.id} className={`calendar-event-chip ${chipClass}`}>
+                              {event.type}
+                            </span>
+                          );
+                        })}
+                        {remainingEvents > 0 ? (
+                          <span className="calendar-more">{t("+{count} more", { count: remainingEvents })}</span>
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="calendar-day-panel">
+                <h4>{selectedDateLabel}</h4>
+                {selectedEvents.length === 0 ? (
+                  <div className="empty">{t("No events scheduled.")}</div>
+                ) : (
+                  <div className="calendar-day-list">
+                    {selectedEvents.map((event) => (
+                      <div key={event.id} className="calendar-day-event">
+                        <div className="calendar-day-event-body">
+                          <strong>{event.type}</strong>
+                          <span>
+                            {event.company} — {event.position}
+                          </span>
+                          <span>{event.timeLabel ? `${event.timeLabel}` : t("All-day")}</span>
+                        </div>
+                        <div className="row-actions">
+                          <button
+                            className="icon-button"
+                            type="button"
+                            onClick={() => handleEventDownload(event)}
+                            aria-label={t("Download")}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true">
+                              <path d="M10 2.5a.75.75 0 0 1 .75.75v7.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V3.25A.75.75 0 0 1 10 2.5Zm-5 12.75c0-.41.34-.75.75-.75h8.5a.75.75 0 0 1 .75.75v1.5A1.75 1.75 0 0 1 13.25 18h-6.5A1.75 1.75 0 0 1 5 16.75v-1.5Z" />
+                            </svg>
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            onClick={() => handleEventDetail(event)}
+                            aria-label={t("Details")}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true">
+                              <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
+                            </svg>
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            onClick={() => handleEventEdit(event)}
+                            aria-label={t("Edit")}
+                          >
+                            <svg viewBox="0 0 20 20" aria-hidden="true">
+                              <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
+                            </svg>
+                          </button>
+                          {event.type === "To-Do" && event.todoId ? (
+                            <button
+                              className="icon-button danger"
+                              type="button"
+                              onClick={() => removeTodoItem(event.appId, event.todoId!)}
+                              aria-label={t("Delete")}
+                            >
+                              <svg viewBox="0 0 20 20" aria-hidden="true">
+                                <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                              </svg>
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )
+      }
+    },
+    {
+      id: "calendar:todo",
+      type: "editableTable",
+      layout: { colSpan: GRID_SPAN.full },
+      data: {
+        title: t("To-Do List"),
+        description: hasApplications
+          ? t("Manage preparation tasks linked to each application.")
+          : t("Create an application to start a to-do list."),
+        content: (
+          <>
+            <div className="todo-controls">
+              <div className="todo-summary">
+                {hasApplications ? t("{count} pending", { count: pendingTodos }) : "-"}
+              </div>
+              <div className="field todo-select">
+                <label>{t("Application")}</label>
+                <select
+                  value={selected}
+                  onChange={(e) => setSelected(e.target.value)}
+                  disabled={!hasApplications}
+                >
+                  <option value="">{t("All applications")}</option>
+                  {applicationOptions.map((app) => (
+                    <option key={app.value} value={app.value}>
+                      {app.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="primary" type="button" onClick={openTodoCreate} disabled={!hasApplications}>
+                {t("Add To-Do")}
+              </button>
+            </div>
+            {!hasApplications ? (
+              <div className="empty">{t("No applications yet. Add one to start tracking tasks.")}</div>
+            ) : orderedTodos.length === 0 ? (
               <div className="empty">
                 {selected ? t("No to-do items for this application.") : t("No to-do items yet.")}
               </div>
@@ -987,9 +993,7 @@ const CalendarPage: React.FC = () => {
                           <select
                             className="cell-select"
                             value={row.applicationId}
-                            onChange={(event) =>
-                              moveTodoItem(row.appId, row.todo.id, event.target.value)
-                            }
+                            onChange={(event) => moveTodoItem(row.appId, row.todo.id, event.target.value)}
                           >
                             {applicationOptions.map((app) => (
                               <option key={app.value} value={app.value}>
@@ -1001,36 +1005,28 @@ const CalendarPage: React.FC = () => {
                         <td>
                           <TextCell
                             value={row.todo.task}
-                            onCommit={(next) =>
-                              updateTodoItem(row.appId, row.todo.id, { task: next })
-                            }
+                            onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { task: next })}
                           />
                         </td>
                         <td>
                           <TextCell
                             value={row.todo.task_location || ""}
                             placeholder={t("Location")}
-                            onCommit={(next) =>
-                              updateTodoItem(row.appId, row.todo.id, { task_location: next })
-                            }
+                            onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { task_location: next })}
                           />
                         </td>
                         <td>
                           <TextCell
                             value={row.todo.notes || ""}
                             placeholder={t("Notes")}
-                            onCommit={(next) =>
-                              updateTodoItem(row.appId, row.todo.id, { notes: next })
-                            }
+                            onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { notes: next })}
                           />
                         </td>
                         <td>
                           <TextCell
                             value={row.todo.documents_links || ""}
                             placeholder={t("Links")}
-                            onCommit={(next) =>
-                              updateTodoItem(row.appId, row.todo.id, { documents_links: next })
-                            }
+                            onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { documents_links: next })}
                           />
                           {(docs.length > 0 || appFiles.length > 0) && (
                             <div className="todo-documents">
@@ -1080,9 +1076,7 @@ const CalendarPage: React.FC = () => {
                         <td>
                           <DateCell
                             value={row.todo.due_date || ""}
-                            onCommit={(next) =>
-                              updateTodoItem(row.appId, row.todo.id, { due_date: next })
-                            }
+                            onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { due_date: next })}
                           />
                         </td>
                         <td>
@@ -1090,9 +1084,7 @@ const CalendarPage: React.FC = () => {
                             className={`cell-select todo-status ${TODO_STATUS_CLASS[status]}`}
                             value={status}
                             onChange={(event) =>
-                              updateTodoItem(row.appId, row.todo.id, {
-                                status: event.target.value
-                              })
+                              updateTodoItem(row.appId, row.todo.id, { status: event.target.value })
                             }
                           >
                             {TODO_STATUSES.map((option) => (
@@ -1104,42 +1096,42 @@ const CalendarPage: React.FC = () => {
                         </td>
                         <td className="row-actions-cell">
                           <div className="row-actions">
-                              <button
-                                className="icon-button"
-                                type="button"
-                                onClick={() => openTodoDetail(row.appId, row.todo.id)}
-                                aria-label={t("Details")}
-                              >
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() => openTodoDetail(row.appId, row.todo.id)}
+                              aria-label={t("Details")}
+                            >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
                               </svg>
                             </button>
-                              <button
-                                className="icon-button"
-                                type="button"
-                                onClick={() => openTodoEdit(row.appId, row.todo.id)}
-                                aria-label={t("Edit")}
-                              >
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() => openTodoEdit(row.appId, row.todo.id)}
+                              aria-label={t("Edit")}
+                            >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
                               </svg>
                             </button>
-                              <button
-                                className="icon-button"
-                                type="button"
-                                onClick={() => handleDownloadTodoIcs(row)}
-                                aria-label={t("Download")}
-                              >
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() => handleDownloadTodoIcs(row)}
+                              aria-label={t("Download")}
+                            >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M10 2a1 1 0 0 1 1 1v8.17l2.59-2.58a1 1 0 1 1 1.41 1.41l-4.3 4.3a1 1 0 0 1-1.41 0l-4.3-4.3a1 1 0 1 1 1.41-1.41L9 11.17V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1Z" />
                               </svg>
                             </button>
-                              <button
-                                className="icon-button danger"
-                                type="button"
-                                onClick={() => removeTodoItem(row.appId, row.todo.id)}
-                                aria-label={t("Delete")}
-                              >
+                            <button
+                              className="icon-button danger"
+                              type="button"
+                              onClick={() => removeTodoItem(row.appId, row.todo.id)}
+                              aria-label={t("Delete")}
+                            >
                               <svg viewBox="0 0 20 20" aria-hidden="true">
                                 <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
                               </svg>
@@ -1153,8 +1145,14 @@ const CalendarPage: React.FC = () => {
               </table>
             )}
           </>
-        )}
-      </BlockPanel>
+        )
+      }
+    }
+  ];
+
+  return (
+    <div className="calendar">
+      <GridPageLayout blocks={blocks} className="calendar-grid-page" />
 
       {todoCreateDraft && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

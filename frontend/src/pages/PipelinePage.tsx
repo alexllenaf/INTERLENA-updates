@@ -1,6 +1,7 @@
 import React, { useRef, useState } from "react";
-import BlockPanel from "../components/BlockPanel";
 import StarRating from "../components/StarRating";
+import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
+import GridPageLayout from "../components/layout/GridPageLayout";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { Application, ApplicationInput } from "../types";
@@ -14,7 +15,6 @@ const PipelinePage: React.FC = () => {
   const [draggedApp, setDraggedApp] = useState<{ id: number; stage: string } | null>(null);
   const [dragOverAppId, setDragOverAppId] = useState<number | null>(null);
   const [dragOverAppStage, setDragOverAppStage] = useState<string | null>(null);
-  // Keep drag source in a ref so drop handlers work reliably even if React doesn't re-render during drag.
   const draggedStageRef = useRef<string | null>(null);
   const draggedAppRef = useRef<{ id: number; stage: string } | null>(null);
 
@@ -130,178 +130,185 @@ const PipelinePage: React.FC = () => {
     resetAppDrag();
   };
 
-  return (
-    <div className="pipeline">
-      <BlockPanel id="pipeline:intro" as="section">
-        <h2>{t("Pipeline")}</h2>
-        <p>{t("Drag or push opportunities across stages as you progress.")}</p>
-      </BlockPanel>
-      <div className="pipeline-grid">
-        {stages.map((stage, index) => {
-          const items = getStageItems(stage);
-          const isStageDragOver = stageDragOver === stage;
-          const isAppDrop = Boolean(draggedApp && dragOverAppStage === stage);
-          return (
-            <div
-              key={stage}
-              className={`pipeline-column${isStageDragOver ? " stage-drag-over" : ""}${
-                isAppDrop ? " app-drop" : ""
-              }`}
-            >
-              <div
-                className="pipeline-header draggable"
-                draggable={!draggedApp}
-                onDragStart={(event) => {
-                  if (draggedAppRef.current) return;
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("text/plain", stage);
-                  draggedStageRef.current = stage;
-                  setDraggedStage(stage);
-                }}
-                onDragOver={(event) => {
-                  const currentDraggedStage = draggedStageRef.current;
-                  const currentDraggedApp = draggedAppRef.current;
-                  if (currentDraggedStage && currentDraggedStage !== stage) {
-                    event.preventDefault();
-                    setStageDragOver(stage);
-                    return;
-                  }
-                  if (currentDraggedApp) {
-                    event.preventDefault();
-                    setDragOverAppStage(stage);
-                    setDragOverAppId(null);
-                  }
-                }}
-                onDragLeave={() => {
-                  if (stageDragOver === stage) setStageDragOver(null);
-                }}
-                onDrop={(event) => {
-                  const currentDraggedStage = draggedStageRef.current;
-                  const currentDraggedApp = draggedAppRef.current;
-                  if (currentDraggedStage && currentDraggedStage !== stage) {
-                    event.preventDefault();
-                    handleStageDrop(stage);
-                    return;
-                  }
-                  if (currentDraggedApp) {
-                    event.preventDefault();
-                    handleAppDrop(stage, null);
-                  }
-                }}
-                onDragEnd={() => {
-                  resetStageDrag();
-                }}
-              >
-                <div className="pipeline-header-title">
-                  <span className="pipeline-drag-handle" aria-hidden="true" />
-                  <span className="tag" style={{ background: settings.stage_colors[stage] || "#E2E8F0" }}>
-                    {stage}
-                  </span>
-                </div>
-                <span>{items.length}</span>
-              </div>
-              <div
-                className="pipeline-cards"
-                onDragOver={(event) => {
-                  if (!draggedAppRef.current) return;
-                  event.preventDefault();
-                  setDragOverAppStage(stage);
-                  setDragOverAppId(null);
-                }}
-                onDrop={(event) => {
-                  if (!draggedAppRef.current) return;
-                  event.preventDefault();
-                  handleAppDrop(stage, null);
-                }}
-              >
-                {items.length === 0 && <div className="empty">{t("No items")}</div>}
-                {items.map((app) => {
-                  const leftStage = index > 0 ? stages[index - 1] : null;
-                  const rightStage = index < stages.length - 1 ? stages[index + 1] : null;
-                  const followupState = followupStatus(app.followup_date);
-                  return (
-                    <div
-                      key={app.id}
-                      className={`pipeline-card${draggedApp?.id === app.id ? " dragging" : ""}${
-                        dragOverAppId === app.id ? " drag-over" : ""
-                      }`}
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", String(app.id));
-                        draggedAppRef.current = { id: app.id, stage: app.stage };
-                        setDraggedApp({ id: app.id, stage: app.stage });
-                      }}
-                      onDragOver={(event) => {
-                        const currentDraggedApp = draggedAppRef.current;
-                        if (!currentDraggedApp || currentDraggedApp.id === app.id) return;
+  const blocks: AppBlockConfig[] = [
+    {
+      id: "pipeline:board",
+      type: "pipeline",
+      layout: { colSpan: GRID_SPAN.standardPipeline },
+      data: {
+        title: t("Pipeline"),
+        description: t("Drag or push opportunities across stages as you progress."),
+        content: (
+          <div className="pipeline-grid">
+            {stages.map((stage, index) => {
+              const items = getStageItems(stage);
+              const isStageDragOver = stageDragOver === stage;
+              const isAppDrop = Boolean(draggedApp && dragOverAppStage === stage);
+              return (
+                <div
+                  key={stage}
+                  className={`pipeline-column${isStageDragOver ? " stage-drag-over" : ""}${
+                    isAppDrop ? " app-drop" : ""
+                  }`}
+                >
+                  <div
+                    className="pipeline-header draggable"
+                    draggable={!draggedApp}
+                    onDragStart={(event) => {
+                      if (draggedAppRef.current) return;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", stage);
+                      draggedStageRef.current = stage;
+                      setDraggedStage(stage);
+                    }}
+                    onDragOver={(event) => {
+                      const currentDraggedStage = draggedStageRef.current;
+                      const currentDraggedApp = draggedAppRef.current;
+                      if (currentDraggedStage && currentDraggedStage !== stage) {
                         event.preventDefault();
-                        setDragOverAppId(app.id);
+                        setStageDragOver(stage);
+                        return;
+                      }
+                      if (currentDraggedApp) {
+                        event.preventDefault();
                         setDragOverAppStage(stage);
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverAppId === app.id) setDragOverAppId(null);
-                      }}
-                      onDrop={(event) => {
-                        if (!draggedAppRef.current) return;
+                        setDragOverAppId(null);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      if (stageDragOver === stage) setStageDragOver(null);
+                    }}
+                    onDrop={(event) => {
+                      const currentDraggedStage = draggedStageRef.current;
+                      const currentDraggedApp = draggedAppRef.current;
+                      if (currentDraggedStage && currentDraggedStage !== stage) {
                         event.preventDefault();
-                        handleAppDrop(stage, app.id);
-                      }}
-                      onDragEnd={() => {
-                        resetAppDrag();
-                      }}
-                    >
-                      <span className="pipeline-card-handle" aria-hidden="true" />
-                      <div className="pipeline-card-title">
-                        <h4>{app.company_name}</h4>
-                        <p>{app.position}</p>
-                      </div>
-                      <div className="pipeline-meta">
-                        <span>{app.outcome}</span>
-                        <span>{formatDateTime(app.interview_datetime)}</span>
-                        <span className="pipeline-score">
-                          <span>{t("Score")}</span>
-                          <StarRating
-                            value={app.my_interview_score ?? null}
-                            size="sm"
-                            step={0.5}
-                            readonly
-                          />
-                        </span>
-                        {followupState === "overdue" && (
-                          <span className="tag tag-overdue">{t("Follow-up overdue")}</span>
-                        )}
-                        {followupState === "soon" && (
-                          <span className="tag tag-soon">{t("Follow-up soon")}</span>
-                        )}
-                      </div>
-                      <div className="pipeline-actions">
-                        <button
-                          className="ghost"
-                          onClick={() => leftStage && updateApplication(app.id, { stage: leftStage })}
-                          disabled={!leftStage}
-                        >
-                          ←
-                        </button>
-                        <span>{app.stage}</span>
-                        <button
-                          className="ghost"
-                          onClick={() => rightStage && updateApplication(app.id, { stage: rightStage })}
-                          disabled={!rightStage}
-                        >
-                          →
-                        </button>
-                      </div>
+                        handleStageDrop(stage);
+                        return;
+                      }
+                      if (currentDraggedApp) {
+                        event.preventDefault();
+                        handleAppDrop(stage, null);
+                      }
+                    }}
+                    onDragEnd={() => {
+                      resetStageDrag();
+                    }}
+                  >
+                    <div className="pipeline-header-title">
+                      <span className="pipeline-drag-handle" aria-hidden="true" />
+                      <span className="tag" style={{ background: settings.stage_colors[stage] || "#E2E8F0" }}>
+                        {stage}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+                    <span>{items.length}</span>
+                  </div>
+                  <div
+                    className="pipeline-cards"
+                    onDragOver={(event) => {
+                      if (!draggedAppRef.current) return;
+                      event.preventDefault();
+                      setDragOverAppStage(stage);
+                      setDragOverAppId(null);
+                    }}
+                    onDrop={(event) => {
+                      if (!draggedAppRef.current) return;
+                      event.preventDefault();
+                      handleAppDrop(stage, null);
+                    }}
+                  >
+                    {items.length === 0 && <div className="empty">{t("No items")}</div>}
+                    {items.map((app) => {
+                      const leftStage = index > 0 ? stages[index - 1] : null;
+                      const rightStage = index < stages.length - 1 ? stages[index + 1] : null;
+                      const followupState = followupStatus(app.followup_date);
+                      return (
+                        <div
+                          key={app.id}
+                          className={`pipeline-card${draggedApp?.id === app.id ? " dragging" : ""}${
+                            dragOverAppId === app.id ? " drag-over" : ""
+                          }`}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", String(app.id));
+                            draggedAppRef.current = { id: app.id, stage: app.stage };
+                            setDraggedApp({ id: app.id, stage: app.stage });
+                          }}
+                          onDragOver={(event) => {
+                            const currentDraggedApp = draggedAppRef.current;
+                            if (!currentDraggedApp || currentDraggedApp.id === app.id) return;
+                            event.preventDefault();
+                            setDragOverAppId(app.id);
+                            setDragOverAppStage(stage);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverAppId === app.id) setDragOverAppId(null);
+                          }}
+                          onDrop={(event) => {
+                            if (!draggedAppRef.current) return;
+                            event.preventDefault();
+                            handleAppDrop(stage, app.id);
+                          }}
+                          onDragEnd={() => {
+                            resetAppDrag();
+                          }}
+                        >
+                          <span className="pipeline-card-handle" aria-hidden="true" />
+                          <div className="pipeline-card-title">
+                            <h4>{app.company_name}</h4>
+                            <p>{app.position}</p>
+                          </div>
+                          <div className="pipeline-meta">
+                            <span>{app.outcome}</span>
+                            <span>{formatDateTime(app.interview_datetime)}</span>
+                            <span className="pipeline-score">
+                              <span>{t("Score")}</span>
+                              <StarRating
+                                value={app.my_interview_score ?? null}
+                                size="sm"
+                                step={0.5}
+                                readonly
+                              />
+                            </span>
+                            {followupState === "overdue" && (
+                              <span className="tag tag-overdue">{t("Follow-up overdue")}</span>
+                            )}
+                            {followupState === "soon" && (
+                              <span className="tag tag-soon">{t("Follow-up soon")}</span>
+                            )}
+                          </div>
+                          <div className="pipeline-actions">
+                            <button
+                              className="ghost"
+                              onClick={() => leftStage && updateApplication(app.id, { stage: leftStage })}
+                              disabled={!leftStage}
+                            >
+                              &larr;
+                            </button>
+                            <span>{app.stage}</span>
+                            <button
+                              className="ghost"
+                              onClick={() => rightStage && updateApplication(app.id, { stage: rightStage })}
+                              disabled={!rightStage}
+                            >
+                              &rarr;
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      }
+    }
+  ];
+
+  return <GridPageLayout blocks={blocks} className="pipeline" />;
 };
 
 export default PipelinePage;

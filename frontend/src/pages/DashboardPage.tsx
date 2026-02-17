@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from "react";
-import BlockPanel from "../components/BlockPanel";
 import {
   Bar,
   BarChart,
@@ -11,6 +10,8 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import GridPageLayout from "../components/layout/GridPageLayout";
+import { AppBlockConfig, GRID_SPAN } from "../components/blocks/types";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { averageOfferScore, followupStatus, formatDate, successRate } from "../utils";
@@ -21,19 +22,19 @@ const DashboardPage: React.FC = () => {
   type ChartKey = "outcomes" | "stages" | "timeline" | "score";
   const [expandedChart, setExpandedChart] = useState<ChartKey | null>(null);
   const truncateLabel = (value: string, max = 14) =>
-    value.length > max ? `${value.slice(0, max)}…` : value;
+    value.length > max ? `${value.slice(0, max)}...` : value;
 
   const metrics = useMemo(() => {
     const total = applications.length;
     const offers = applications.filter((app) => app.outcome === "Offer").length;
     const rejected = applications.filter((app) => app.outcome === "Rejected").length;
-    const active = applications.filter((app) => app.outcome === "In Progress").length;
+    const activeCount = applications.filter((app) => app.outcome === "In Progress").length;
     const favorites = applications.filter((app) => app.favorite).length;
     return {
       total,
       offers,
       rejected,
-      active,
+      active: activeCount,
       favorites,
       successRate: successRate(applications),
       avgScore: averageOfferScore(applications)
@@ -207,123 +208,148 @@ const DashboardPage: React.FC = () => {
     ? chartPanels.find((panel) => panel.key === expandedChart) ?? null
     : null;
 
+  const blocks: AppBlockConfig[] = [
+    {
+      id: "dashboard:kpi:total",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Total Applications"), value: metrics.total }
+    },
+    {
+      id: "dashboard:kpi:offers",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Total Offers"), value: metrics.offers }
+    },
+    {
+      id: "dashboard:kpi:rejected",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Total Rejections"), value: metrics.rejected }
+    },
+    {
+      id: "dashboard:kpi:active",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Active Processes"), value: metrics.active }
+    },
+    {
+      id: "dashboard:kpi:favorites",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Favorites"), value: metrics.favorites }
+    },
+    {
+      id: "dashboard:kpi:success",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Offer Success Rate"), value: metrics.successRate }
+    },
+    {
+      id: "dashboard:kpi:avgscore",
+      type: "kpiCard",
+      layout: { colSpan: GRID_SPAN.kpi },
+      data: { label: t("Avg Score (Offers)"), value: metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A") }
+    },
+    ...chartPanels.map((panel) => ({
+      id: `dashboard:chart:${panel.key}`,
+      type: "chart" as const,
+      layout: { colSpan: GRID_SPAN.chartSmall },
+      data: {
+        title: t(panel.title),
+        size: "small" as const,
+        action: (
+          <button
+            className="icon-button chart-expand"
+            type="button"
+            onClick={() => setExpandedChart(panel.key)}
+            aria-label={t("Expand {title}", { title: t(panel.title) })}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+            </svg>
+          </button>
+        ),
+        content: renderChartShell(panel.render())
+      }
+    })),
+    {
+      id: "dashboard:alerts",
+      type: "informationalTable",
+      layout: { colSpan: GRID_SPAN.standardTable },
+      data: {
+        title: t("Event Alerts"),
+        description: t("Upcoming or overdue follow-ups and to-do items."),
+        content:
+          alerts.length === 0 ? (
+            <div className="empty">{t("No event alerts.")}</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t("Type")}</th>
+                  <th>{t("Company")}</th>
+                  <th>{t("Detail")}</th>
+                  <th>{t("Date")}</th>
+                  <th>{t("Status")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.type}</td>
+                    <td>{item.company}</td>
+                    <td>{item.detail}</td>
+                    <td>{formatDate(item.date)}</td>
+                    <td>
+                      <span className={`tag tag-${item.status}`}>{item.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+      }
+    },
+    {
+      id: "dashboard:active",
+      type: "informationalTable",
+      layout: { colSpan: GRID_SPAN.standardTable },
+      data: {
+        title: t("Active Processes"),
+        description: t("Applications currently in progress."),
+        content:
+          active.length === 0 ? (
+            <div className="empty">{t("No active processes.")}</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t("Company")}</th>
+                  <th>{t("Position")}</th>
+                  <th>{t("Stage")}</th>
+                  <th>{t("Application Date")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {active.map((app) => (
+                  <tr key={app.id}>
+                    <td>{app.company_name}</td>
+                    <td>{app.position}</td>
+                    <td>{app.stage}</td>
+                    <td>{formatDate(app.application_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+      }
+    }
+  ];
+
   return (
-    <div className="dashboard">
-      <section className="grid cards">
-        <div className="card">
-          <p>{t("Total Applications")}</p>
-          <h2>{metrics.total}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Total Offers")}</p>
-          <h2>{metrics.offers}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Total Rejections")}</p>
-          <h2>{metrics.rejected}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Active Processes")}</p>
-          <h2>{metrics.active}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Favorites")}</p>
-          <h2>{metrics.favorites}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Offer Success Rate")}</p>
-          <h2>{metrics.successRate}</h2>
-        </div>
-        <div className="card">
-          <p>{t("Avg Score (Offers)")}</p>
-          <h2>{metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A")}</h2>
-        </div>
-      </section>
-
-      <section className="grid charts">
-        {chartPanels.map((panel) => (
-          <BlockPanel key={panel.key} id={`dashboard:chart:${panel.key}`} as="div" className="chart-panel">
-            <h3>{t(panel.title)}</h3>
-            <button
-              className="icon-button chart-expand"
-              type="button"
-              onClick={() => setExpandedChart(panel.key)}
-              aria-label={t("Expand {title}", { title: t(panel.title) })}
-            >
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
-              </svg>
-            </button>
-            {renderChartShell(panel.render())}
-          </BlockPanel>
-        ))}
-      </section>
-
-      <BlockPanel id="dashboard:alerts" as="section">
-        <div className="panel-header">
-          <h3>{t("Event Alerts")}</h3>
-          <p>{t("Upcoming or overdue follow-ups and to-do items.")}</p>
-        </div>
-        {alerts.length === 0 ? (
-          <div className="empty">{t("No event alerts.")}</div>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("Type")}</th>
-                <th>{t("Company")}</th>
-                <th>{t("Detail")}</th>
-                <th>{t("Date")}</th>
-                <th>{t("Status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alerts.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.type}</td>
-                  <td>{item.company}</td>
-                  <td>{item.detail}</td>
-                  <td>{formatDate(item.date)}</td>
-                  <td>
-                    <span className={`tag tag-${item.status}`}>{item.status}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </BlockPanel>
-
-      <BlockPanel id="dashboard:active" as="section">
-        <div className="panel-header">
-          <h3>{t("Active Processes")}</h3>
-          <p>{t("Applications currently in progress.")}</p>
-        </div>
-        {active.length === 0 ? (
-          <div className="empty">{t("No active processes.")}</div>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t("Company")}</th>
-                <th>{t("Position")}</th>
-                <th>{t("Stage")}</th>
-                <th>{t("Application Date")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((app) => (
-                <tr key={app.id}>
-                  <td>{app.company_name}</td>
-                  <td>{app.position}</td>
-                  <td>{app.stage}</td>
-                  <td>{formatDate(app.application_date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </BlockPanel>
+    <>
+      <GridPageLayout blocks={blocks} className="dashboard" />
 
       {!settings && <div className="empty">{t("Loading settings...")}</div>}
 
@@ -345,14 +371,14 @@ const DashboardPage: React.FC = () => {
                 type="button"
                 aria-label={t("Close")}
               >
-                ×
+                x
               </button>
             </header>
             {renderChartShell(expandedConfig.render(), "chart-shell-lg")}
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 
