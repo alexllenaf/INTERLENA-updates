@@ -2559,23 +2559,39 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
     setIsTodoLinkModalOpen(false);
   };
 
+  const density = settings?.table_density || "comfortable";
   const blockMenuActions = useMemo(() => {
     const baseActions = menuActions || [];
-    if (mode !== "edit" || block.props.variant !== "todo") {
-      return baseActions;
-    }
-    const linkLabel = linkedTableTarget
-      ? `Tabla vinculada: ${linkedTableTarget.title}`
-      : "Vincular con tabla editable";
-    return [
+    const actions = [
       {
+        key: `table-density-comfortable-${block.id}`,
+        label: `${density === "comfortable" ? "[x]" : "[ ]"} Density: Comfortable`,
+        onClick: () => {
+          if (density === "comfortable") return;
+          saveSettings({ table_density: "comfortable" });
+        }
+      },
+      {
+        key: `table-density-compact-${block.id}`,
+        label: `${density === "compact" ? "[x]" : "[ ]"} Density: Compact`,
+        onClick: () => {
+          if (density === "compact") return;
+          saveSettings({ table_density: "compact" });
+        }
+      }
+    ];
+    if (mode === "edit" && block.props.variant === "todo") {
+      const linkLabel = linkedTableTarget
+        ? `Tabla vinculada: ${linkedTableTarget.title}`
+        : "Vincular con tabla editable";
+      actions.push({
         key: `todo-link-table-${block.id}`,
         label: linkLabel,
         onClick: openTodoLinkPicker
-      },
-      ...baseActions
-    ];
-  }, [block.id, block.props.variant, linkedTableTarget, menuActions, mode, openTodoLinkPicker]);
+      });
+    }
+    return [...actions, ...baseActions];
+  }, [block.id, block.props.variant, density, linkedTableTarget, menuActions, mode, openTodoLinkPicker, saveSettings]);
 
   const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
   const actions = block.props.actionsSlotId ? resolveSlot?.(block.props.actionsSlotId, block, slotContext) : null;
@@ -2587,6 +2603,7 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
   const usesFallbackTable = !toolbar && !content;
   const panelClassName = [
     "table-panel-standard",
+    `density-${density}`,
     block.props.panelClassName || "",
     usesFallbackTable && isTableExpanded ? "table-panel-expanded" : ""
   ]

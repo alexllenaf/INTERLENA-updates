@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { normalizeTodoStatus } from "../../../constants";
 import { useAppData } from "../../../state";
@@ -30,6 +30,13 @@ type KpiMetricOption = {
   needsTargetValue?: boolean;
   numericOnly?: boolean;
   supportsPercent?: boolean;
+};
+
+type FloatingMenuPosition = {
+  top: number;
+  left: number;
+  width: number;
+  openUp: boolean;
 };
 
 const KPI_METRIC_OPTIONS: KpiMetricOption[] = [
@@ -567,13 +574,13 @@ const computeMetricValue = ({
   snapshot,
   metricOp,
   column,
-  targetValue,
+  targetValues,
   asPercent
 }: {
   snapshot: KpiTableSnapshot;
   metricOp: KpiMetricOp;
   column: string;
-  targetValue: string;
+  targetValues: string[];
   asPercent: boolean;
 }): string => {
   const metricDef = KPI_METRIC_OPTIONS.find((option) => option.value === metricOp);
@@ -619,9 +626,13 @@ const computeMetricValue = ({
   }
 
   if (metricOp === "value_count") {
-    const needle = targetValue.trim().toLowerCase();
-    if (!needle) return "0";
-    const count = values.filter((value) => value.toLowerCase() === needle).length;
+    const needles = new Set(
+      targetValues
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+    );
+    if (!needles.size) return "0";
+    const count = values.filter((value) => needles.has(value.toLowerCase())).length;
     if (asPercent && metricDef.supportsPercent) {
       const pct = denominator > 0 ? (count / denominator) * 100 : 0;
       return `${formatMetricNumber(pct)}%`;
@@ -649,37 +660,49 @@ const buildMetricOptions = (columnKind: EditableTableColumnKind): KpiMetricOptio
 const buildAutoLabel = ({
   metricOp,
   column,
-  targetValue,
+  targetValues,
   asPercent
 }: {
   metricOp: KpiMetricOp;
   column: string;
-  targetValue: string;
+  targetValues: string[];
   asPercent: boolean;
 }): string => {
   const cleanColumn = column.trim();
-  const cleanTarget = targetValue.trim();
+  const cleanTargets = Array.from(
+    new Set(targetValues.map((value) => value.trim()).filter(Boolean))
+  );
+  const targetLabel =
+    cleanTargets.length === 0
+      ? ""
+      : cleanTargets.length === 1
+        ? cleanTargets[0]
+        : cleanTargets.length === 2
+          ? `${cleanTargets[0]} + ${cleanTargets[1]}`
+          : `${cleanTargets[0]} + ${cleanTargets[1]} + ${cleanTargets.length - 2} mas`;
   let base = "KPI";
   if (metricOp === "count_rows") {
-    base = "Total filas";
+    base = cleanColumn ? `Total filas ${cleanColumn}` : "Total filas";
   } else if (metricOp === "count_values") {
-    base = cleanColumn ? `Valores en ${cleanColumn}` : "Contar valores";
+    base = cleanColumn ? `Total valores ${cleanColumn}` : "Total valores";
   } else if (metricOp === "count_empty") {
-    base = cleanColumn ? `Vacios en ${cleanColumn}` : "Contar vacios";
+    base = cleanColumn ? `Total vacios ${cleanColumn}` : "Total vacios";
   } else if (metricOp === "unique_values") {
-    base = cleanColumn ? `Unicos en ${cleanColumn}` : "Valores unicos";
+    base = cleanColumn ? `Valores unicos ${cleanColumn}` : "Valores unicos";
   } else if (metricOp === "value_count") {
-    if (cleanColumn && cleanTarget) {
-      base = `${cleanTarget} en ${cleanColumn}`;
+    if (cleanColumn && targetLabel) {
+      base = `Total ${cleanColumn}: ${targetLabel}`;
     } else if (cleanColumn) {
-      base = `Contar valor en ${cleanColumn}`;
+      base = `Contar valor ${cleanColumn}`;
+    } else if (targetLabel) {
+      base = `Contar ${targetLabel}`;
     } else {
       base = "Contar un valor";
     }
   } else if (metricOp === "sum") {
-    base = cleanColumn ? `Suma de ${cleanColumn}` : "Suma";
+    base = cleanColumn ? `Suma ${cleanColumn}` : "Suma";
   } else if (metricOp === "avg") {
-    base = cleanColumn ? `Media de ${cleanColumn}` : "Media";
+    base = cleanColumn ? `Media ${cleanColumn}` : "Media";
   }
   return asPercent ? `${base} (%)` : base;
 };
@@ -691,6 +714,10 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
   component: ({ block, mode, updateBlockProps, patchBlockProps, resolveSlot, menuActions }) => {
     const { settings, applications } = useAppData();
     const [isConfigOpen, setIsConfigOpen] = useState(false);
+    const [isTargetMenuOpen, setIsTargetMenuOpen] = useState(false);
+    const [targetMenuPosition, setTargetMenuPosition] = useState<FloatingMenuPosition | null>(null);
+    const targetMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const targetMenuRef = useRef<HTMLDivElement | null>(null);
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const valueFromSlot = block.props.valueSlotId
       ? resolveSlot?.(block.props.valueSlotId, block, slotContext)
@@ -729,15 +756,39 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       : "count_rows";
     const metricDef = metricOptions.find((option) => option.value === metricOp) || metricOptions[0];
     const valueOptions = sourceColumn ? tableSnapshot?.valueOptionsByColumn[sourceColumn] || [] : [];
-    const metricTargetValue =
-      typeof block.props.metricTargetValue === "string" ? block.props.metricTargetValue : "";
+    const metricTargetValues = useMemo(() => {
+      const fromArray = Array.isArray(block.props.metricTargetValues)
+        ? block.props.metricTargetValues
+            .map((value) => normalizeString(value))
+            .filter(Boolean)
+        : [];
+      if (fromArray.length > 0) {
+        return Array.from(new Set(fromArray));
+      }
+      const legacyValue = normalizeString(block.props.metricTargetValue);
+      return legacyValue ? [legacyValue] : [];
+    }, [block.props.metricTargetValue, block.props.metricTargetValues]);
+    const targetOptionValues = useMemo(() => {
+      const merged = [...valueOptions];
+      metricTargetValues.forEach((value) => {
+        if (!merged.includes(value)) {
+          merged.push(value);
+        }
+      });
+      return merged;
+    }, [metricTargetValues, valueOptions]);
+    const targetSummaryLabel = metricTargetValues.length === 0
+      ? "Seleccionar valores"
+      : metricTargetValues.length === 1
+        ? metricTargetValues[0]
+        : `${metricTargetValues.length} valores seleccionados`;
     const allowPercent = Boolean(metricDef?.supportsPercent);
     const metricAsPercent = allowPercent && Boolean(block.props.metricAsPercent);
     const hasAutoLabelSource = Boolean(linkedTableId && tableSnapshot);
     const autoLabel = buildAutoLabel({
       metricOp,
       column: sourceColumn,
-      targetValue: metricTargetValue,
+      targetValues: metricTargetValues,
       asPercent: metricAsPercent
     });
     const isAutoLabelEnabled = hasAutoLabelSource && Boolean(block.props.labelAuto);
@@ -748,7 +799,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
           snapshot: tableSnapshot,
           metricOp,
           column: sourceColumn,
-          targetValue: metricTargetValue,
+          targetValues: metricTargetValues,
           asPercent: metricAsPercent
         })
       : null;
@@ -777,9 +828,74 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
         ) as Partial<PageBlockPropsMap["kpi"]>),
         labelAuto: Boolean(nextBlockId),
         sourceColumn: nextColumn,
-        metricTargetValue: undefined
+        metricTargetValue: undefined,
+        metricTargetValues: undefined
       });
     };
+    const setMetricTargetValues = (nextValues: string[]) => {
+      const deduped = Array.from(new Set(nextValues.map((value) => value.trim()).filter(Boolean)));
+      patchBlockProps({
+        metricTargetValues: deduped.length > 0 ? deduped : undefined,
+        metricTargetValue: deduped[0] || undefined
+      });
+    };
+
+    useEffect(() => {
+      if (!isConfigOpen || !metricDef?.needsTargetValue || targetOptionValues.length === 0) {
+        setIsTargetMenuOpen(false);
+      }
+    }, [isConfigOpen, metricDef?.needsTargetValue, targetOptionValues.length]);
+
+    useEffect(() => {
+      if (!isTargetMenuOpen) return;
+      if (typeof window === "undefined") return;
+
+      const updatePosition = () => {
+        const trigger = targetMenuTriggerRef.current;
+        if (!trigger) {
+          setTargetMenuPosition(null);
+          return;
+        }
+        const rect = trigger.getBoundingClientRect();
+        const width = Math.max(rect.width, 260);
+        const viewportHeight = window.innerHeight || 0;
+        const spaceBelow = viewportHeight - rect.bottom;
+        const openUp = spaceBelow < 280 && rect.top > spaceBelow;
+        setTargetMenuPosition({
+          top: openUp ? rect.top - 6 : rect.bottom + 6,
+          left: rect.left,
+          width,
+          openUp
+        });
+      };
+
+      const handleDocumentMouseDown = (event: MouseEvent) => {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (targetMenuRef.current?.contains(target)) return;
+        if (targetMenuTriggerRef.current?.contains(target)) return;
+        setIsTargetMenuOpen(false);
+      };
+
+      const handleWindowKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setIsTargetMenuOpen(false);
+        }
+      };
+
+      updatePosition();
+      document.addEventListener("mousedown", handleDocumentMouseDown);
+      window.addEventListener("resize", updatePosition);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("keydown", handleWindowKeyDown);
+
+      return () => {
+        document.removeEventListener("mousedown", handleDocumentMouseDown);
+        window.removeEventListener("resize", updatePosition);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("keydown", handleWindowKeyDown);
+      };
+    }, [isTargetMenuOpen]);
 
     const blockMenuActions = mode === "edit"
       ? [
@@ -880,7 +996,8 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                       onChange={(event) =>
                         patchBlockProps({
                           sourceColumn: event.target.value,
-                          metricTargetValue: undefined
+                          metricTargetValue: undefined,
+                          metricTargetValues: undefined
                         })
                       }
                       disabled={!tableSnapshot}
@@ -904,6 +1021,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                         patchBlockProps({
                           metricOp: nextOp,
                           metricTargetValue: nextDef?.needsTargetValue ? block.props.metricTargetValue : undefined,
+                          metricTargetValues: nextDef?.needsTargetValue ? block.props.metricTargetValues : undefined,
                           metricAsPercent: nextDef?.supportsPercent ? block.props.metricAsPercent : false
                         });
                       }}
@@ -918,21 +1036,32 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                   </label>
 
                   {metricDef?.needsTargetValue && (
-                    <label className="field">
-                      Valor objetivo
-                      <input
-                        list={`${block.id}-kpi-target-values`}
-                        value={metricTargetValue}
-                        onChange={(event) => patchBlockProps({ metricTargetValue: event.target.value })}
-                        placeholder="Ej. In Progress"
-                        disabled={!tableSnapshot || !sourceColumn}
-                      />
-                      <datalist id={`${block.id}-kpi-target-values`}>
-                        {valueOptions.map((option) => (
-                          <option key={option} value={option} />
-                        ))}
-                      </datalist>
-                    </label>
+                    <div className="field kpi-target-field">
+                      <span>Valor objetivo</span>
+                      {targetOptionValues.length === 0 ? (
+                        <p className="kpi-target-empty">No hay valores disponibles en esta columna.</p>
+                      ) : (
+                        <>
+                          <button
+                            ref={targetMenuTriggerRef}
+                            type="button"
+                            className={`select-trigger ${isTargetMenuOpen ? "open" : ""}`}
+                            disabled={!tableSnapshot || !sourceColumn}
+                            onClick={() => setIsTargetMenuOpen((prev) => !prev)}
+                            aria-haspopup="listbox"
+                            aria-expanded={isTargetMenuOpen}
+                          >
+                            <span className="select-pill">{targetSummaryLabel}</span>
+                            <span className="select-caret">▾</span>
+                          </button>
+                          <p className="kpi-target-summary">
+                            {metricTargetValues.length > 0
+                              ? `${metricTargetValues.length} valor${metricTargetValues.length === 1 ? "" : "es"} seleccionado${metricTargetValues.length === 1 ? "" : "s"}`
+                              : "Selecciona uno o varios valores."}
+                          </p>
+                        </>
+                      )}
+                    </div>
                   )}
 
                   <label className="field">
@@ -1008,6 +1137,55 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                   <p className="kpi-edit-hint">La tabla vinculada ya no existe. Selecciona otra.</p>
                 )}
               </div>
+            </div>,
+            document.body
+          )}
+        {isConfigOpen &&
+          isTargetMenuOpen &&
+          targetMenuPosition &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={targetMenuRef}
+              className="select-menu kpi-target-floating-menu"
+              style={{
+                position: "fixed",
+                top: targetMenuPosition.top,
+                left: targetMenuPosition.left,
+                width: targetMenuPosition.width,
+                transform: targetMenuPosition.openUp ? "translateY(-100%)" : undefined,
+                zIndex: 45
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="select-options" role="listbox" aria-label="Valores objetivo" aria-multiselectable="true">
+                {targetOptionValues.map((option) => {
+                  const checked = metricTargetValues.includes(option);
+                  return (
+                    <button
+                      type="button"
+                      key={`${block.id}-target-window-${option}`}
+                      className={`select-option ${checked ? "selected" : ""}`}
+                      onClick={() => {
+                        if (checked) {
+                          setMetricTargetValues(metricTargetValues.filter((value) => value !== option));
+                        } else {
+                          setMetricTargetValues([...metricTargetValues, option]);
+                        }
+                      }}
+                    >
+                      <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
+                      <span className="select-label">{option}</span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="column-menu-separator" />
+              <button type="button" className="select-option" onClick={() => setMetricTargetValues([])}>
+                <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
+                <span className="select-label">Limpiar seleccion</span>
+              </button>
             </div>,
             document.body
           )}

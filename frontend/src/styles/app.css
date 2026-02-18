@@ -1307,6 +1307,25 @@ h2 {
   accent-color: var(--accent);
 }
 
+.kpi-target-field {
+  gap: 10px;
+}
+
+.kpi-target-floating-menu {
+  max-width: min(420px, calc(100vw - 24px));
+}
+
+.kpi-target-floating-menu .select-options {
+  margin-top: 0;
+}
+
+.kpi-target-summary,
+.kpi-target-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .chart-config-modal {
   width: min(980px, 100%);
   display: grid;
@@ -1326,6 +1345,58 @@ h2 {
   border-radius: 14px;
   background: var(--surface-alt);
   padding: 10px;
+}
+
+.chart-series-color-field {
+  gap: 10px;
+}
+
+.chart-series-color-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 10px;
+  background: var(--surface);
+}
+
+.chart-series-color-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  flex: 0 0 auto;
+}
+
+.chart-series-color-input {
+  width: 34px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.chart-series-color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.chart-series-color-input::-webkit-color-swatch,
+.chart-series-color-input::-moz-color-swatch {
+  border: none;
+  border-radius: 7px;
+}
+
+.chart-series-color-value {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
 }
 
 .kpi-card-block h2 {
@@ -1604,6 +1675,11 @@ h2 {
   text-align: left;
   padding: 12px 8px;
   border-bottom: 1px solid var(--border);
+}
+
+.table-panel-standard.density-compact .table th,
+.table-panel-standard.density-compact .table td {
+  padding: 6px 8px;
 }
 
 .table th {
@@ -3051,21 +3127,6 @@ button.small {
 .documents-empty {
   font-size: 12px;
   color: var(--muted);
-}
-
-.density-toggle {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.density-toggle select {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font: inherit;
 }
 
 .spacer-row td {

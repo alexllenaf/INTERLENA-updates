@@ -2859,22 +2859,6 @@ const TrackerPage: React.FC = () => {
     return "";
   };
 
-  const densityActions = (
-    <div className="density-toggle">
-      <label htmlFor="density">{t("Density")}</label>
-      <select
-        id="density"
-        value={density}
-        onChange={(event) =>
-          saveSettings({ table_density: event.target.value as "compact" | "comfortable" })
-        }
-      >
-        <option value="comfortable">{t("Comfortable")}</option>
-        <option value="compact">{t("Compact")}</option>
-      </select>
-    </div>
-  );
-
   const renderTrackerTableContent = (block: PageBlockConfig) => {
     const isPrimaryTable = block.id === TRACKER_PRIMARY_TABLE_ID;
     const updateApplication = async (id: number, payload: Partial<Application>) => {
@@ -3785,9 +3769,6 @@ const TrackerPage: React.FC = () => {
       const keyBase = `${block.id}:${slotId}`;
       const cloneNode = (node: React.ReactNode, key: string) =>
         React.isValidElement(node) ? React.cloneElement(node as React.ReactElement, { key }) : <React.Fragment key={key}>{node}</React.Fragment>;
-      if (slotId.startsWith("tracker:actions")) {
-        return cloneNode(densityActions, `${keyBase}:actions`);
-      }
       if (slotId.startsWith("tracker:toolbar")) {
         return cloneNode(renderTrackerToolbarContent(), `${keyBase}:toolbar`);
       }
@@ -3796,7 +3777,7 @@ const TrackerPage: React.FC = () => {
       }
       return null;
     },
-    [densityActions, renderTrackerTableContent, renderTrackerToolbarContent]
+    [renderTrackerTableContent, renderTrackerToolbarContent]
   );
 
   const resolveTrackerBlockProps = useCallback((block: PageBlockConfig) => {

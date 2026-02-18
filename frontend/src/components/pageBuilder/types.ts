@@ -140,6 +140,7 @@ export type KpiBlockProps = LinkableBlockProps & {
   sourceColumn?: string;
   metricOp?: KpiMetricOp;
   metricTargetValue?: string;
+  metricTargetValues?: string[];
   metricAsPercent?: boolean;
 };
 

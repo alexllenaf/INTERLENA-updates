@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Area,
@@ -861,6 +861,7 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
   component: ({ block, mode, patchBlockProps, updateBlockProps, resolveSlot, menuActions }) => {
     const { settings, applications } = useAppData();
     const [isConfigOpen, setIsConfigOpen] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const action = block.props.actionSlotId ? resolveSlot?.(block.props.actionSlotId, block, slotContext) : null;
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
@@ -992,6 +993,44 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
         )
       : (slot || <div className="empty">Chart data is not connected yet.</div>);
 
+    useEffect(() => {
+      if (!isExpanded) return;
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setIsExpanded(false);
+        }
+      };
+      document.addEventListener("keydown", handleKeyDown);
+      return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [isExpanded]);
+
+    const slotClassName = React.isValidElement(slot) && typeof slot.props.className === "string"
+      ? slot.props.className
+      : null;
+    const expandedChartContent = showLinkedChart
+      ? (
+        <div className="chart-shell chart-linked-shell chart-shell-lg">
+          {chartPreview || <div className="empty">Sin datos suficientes para este grafico.</div>}
+        </div>
+        )
+      : React.isValidElement(slot) && slotClassName !== null
+        ? React.cloneElement(
+            slot as React.ReactElement<{ className?: string }>,
+            {
+              className: (() => {
+                const base = slotClassName;
+                if (base.includes("chart-shell-lg")) return base;
+                if (base.includes("chart-shell")) return `${base} chart-shell-lg`.trim();
+                return `${base} chart-shell chart-shell-lg`.trim();
+              })()
+            }
+          )
+        : (
+          <div className="chart-shell chart-shell-lg">
+            {slot || <div className="empty">Chart data is not connected yet.</div>}
+          </div>
+          );
+
     return (
       <>
         <BlockPanel
@@ -1003,9 +1042,43 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
           <div className="panel-header panel-header-inline">
             <h3>{block.props.title || "Chart"}</h3>
             {action}
+            <button
+              className="icon-button chart-expand"
+              type="button"
+              aria-label="Expand chart"
+              onClick={() => setIsExpanded(true)}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
+              </svg>
+            </button>
           </div>
           {chartOrSlot}
         </BlockPanel>
+
+        {isExpanded &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              className="modal-backdrop"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setIsExpanded(false)}
+            >
+              <div className="modal chart-modal" onClick={(event) => event.stopPropagation()}>
+                <header className="modal-header">
+                  <div>
+                    <h2>{block.props.title || "Chart"}</h2>
+                  </div>
+                  <button className="ghost" type="button" onClick={() => setIsExpanded(false)} aria-label="Close">
+                    ×
+                  </button>
+                </header>
+                {expandedChartContent}
+              </div>
+            </div>,
+            document.body
+          )}
 
         {isConfigOpen &&
           typeof document !== "undefined" &&
@@ -1080,13 +1153,23 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
                   </label>
 
                   {chartType !== "pie" && (
-                    <label className="field">
+                    <label className="field chart-series-color-field">
                       Color de serie
-                      <input
-                        type="color"
-                        value={seriesColor}
-                        onChange={(event) => patchBlockProps({ seriesColor: event.target.value })}
-                      />
+                      <div className="chart-series-color-control">
+                        <span
+                          className="chart-series-color-icon"
+                          style={{ backgroundColor: seriesColor }}
+                          aria-hidden="true"
+                        />
+                        <input
+                          className="chart-series-color-input"
+                          type="color"
+                          value={seriesColor}
+                          onChange={(event) => patchBlockProps({ seriesColor: event.target.value })}
+                          aria-label="Elegir color de serie"
+                        />
+                        <span className="chart-series-color-value">{seriesColor.toUpperCase()}</span>
+                      </div>
                     </label>
                   )}
 

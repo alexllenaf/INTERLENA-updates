@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   Bar,
   BarChart,
@@ -15,12 +15,9 @@ import { useI18n } from "../i18n";
 import { useAppData } from "../state";
 import { averageOfferScore, followupStatus, formatDate, successRate } from "../utils";
 
-type ChartKey = "outcomes" | "stages" | "timeline" | "score";
-
 const DashboardPage: React.FC = () => {
   const { t } = useI18n();
   const { applications, settings } = useAppData();
-  const [expandedChart, setExpandedChart] = useState<ChartKey | null>(null);
 
   const truncateLabel = (value: string, max = 14) =>
     value.length > max ? `${value.slice(0, max)}...` : value;
@@ -194,21 +191,6 @@ const DashboardPage: React.FC = () => {
     </BarChart>
   );
 
-  const chartPanels: Array<{
-    key: ChartKey;
-    title: string;
-    render: () => React.ReactElement;
-  }> = [
-    { key: "outcomes", title: "Outcomes Distribution", render: renderOutcomeChart },
-    { key: "stages", title: "Applications per Stage", render: renderStageChart },
-    { key: "timeline", title: "Timeline Applications", render: renderTimelineChart },
-    { key: "score", title: "Score Distribution", render: renderScoreChart }
-  ];
-
-  const expandedConfig = expandedChart
-    ? chartPanels.find((panel) => panel.key === expandedChart) ?? null
-    : null;
-
   const resolveDashboardSlot = useCallback<BlockSlotResolver>(
     (slotId) => {
       if (slotId === "dashboard:kpi:total:value") return metrics.total;
@@ -218,63 +200,6 @@ const DashboardPage: React.FC = () => {
       if (slotId === "dashboard:kpi:favorites:value") return metrics.favorites;
       if (slotId === "dashboard:kpi:success:value") return metrics.successRate;
       if (slotId === "dashboard:kpi:avgscore:value") return metrics.avgScore ? metrics.avgScore.toFixed(2) : t("N/A");
-
-      if (slotId === "dashboard:chart:outcomes:action") {
-        return (
-          <button
-            className="icon-button chart-expand"
-            type="button"
-            onClick={() => setExpandedChart("outcomes")}
-            aria-label={t("Expand {title}", { title: t("Outcomes Distribution") })}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
-            </svg>
-          </button>
-        );
-      }
-      if (slotId === "dashboard:chart:stages:action") {
-        return (
-          <button
-            className="icon-button chart-expand"
-            type="button"
-            onClick={() => setExpandedChart("stages")}
-            aria-label={t("Expand {title}", { title: t("Applications per Stage") })}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
-            </svg>
-          </button>
-        );
-      }
-      if (slotId === "dashboard:chart:timeline:action") {
-        return (
-          <button
-            className="icon-button chart-expand"
-            type="button"
-            onClick={() => setExpandedChart("timeline")}
-            aria-label={t("Expand {title}", { title: t("Timeline Applications") })}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
-            </svg>
-          </button>
-        );
-      }
-      if (slotId === "dashboard:chart:score:action") {
-        return (
-          <button
-            className="icon-button chart-expand"
-            type="button"
-            onClick={() => setExpandedChart("score")}
-            aria-label={t("Expand {title}", { title: t("Score Distribution") })}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M11 3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V4.41l-4.29 4.3a1 1 0 0 1-1.42-1.42L14.59 3H12a1 1 0 0 1-1-1Zm-2 14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 1 1 2 0v3.59l4.29-4.3a1 1 0 1 1 1.42 1.42L5.41 16H8a1 1 0 0 1 1 1Z" />
-            </svg>
-          </button>
-        );
-      }
 
       if (slotId === "dashboard:chart:outcomes:content") return renderChartShell(renderOutcomeChart());
       if (slotId === "dashboard:chart:stages:content") return renderChartShell(renderStageChart());
@@ -360,32 +285,6 @@ const DashboardPage: React.FC = () => {
       <PageBuilderPage pageId="dashboard" className="dashboard" resolveSlot={resolveDashboardSlot} />
 
       {!settings && <div className="empty">{t("Loading settings...")}</div>}
-
-      {expandedConfig && (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setExpandedChart(null)}
-        >
-          <div className="modal chart-modal" onClick={(event) => event.stopPropagation()}>
-            <header className="modal-header">
-              <div>
-                <h2>{expandedConfig.title}</h2>
-              </div>
-              <button
-                className="ghost"
-                onClick={() => setExpandedChart(null)}
-                type="button"
-                aria-label={t("Close")}
-              >
-                x
-              </button>
-            </header>
-            {renderChartShell(expandedConfig.render(), "chart-shell-lg")}
-          </div>
-        </div>
-      )}
     </>
   );
 };
