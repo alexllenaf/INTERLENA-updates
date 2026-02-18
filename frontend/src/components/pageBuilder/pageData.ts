@@ -21,9 +21,11 @@ export type PageTemplateDefinition = {
 };
 
 export type PageBlockLibraryEntry = {
+  id: string;
   type: PageBlockType;
   label: string;
   description: string;
+  presetId?: string;
 };
 
 const preset = <TType extends PageBlockType>(definition: BlockPresetDefinition<TType>) => definition;
@@ -111,6 +113,7 @@ const BLOCK_PRESET_LIST = [
     type: "editableTable",
     props: {
       variant: "tracker",
+      schemaRef: "tracker.applications@1",
       title: "Tracker Table",
       description: "Search, edit, and manage every application.",
       actionsSlotId: "tracker:actions",
@@ -368,11 +371,21 @@ const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: 
   }
 };
 
-export const PAGE_BLOCK_LIBRARY: PageBlockLibraryEntry[] = PAGE_BLOCK_TYPES.map((type) => ({
-  type,
-  label: BLOCK_LIBRARY_LABELS[type].label,
-  description: BLOCK_LIBRARY_LABELS[type].description
-}));
+export const PAGE_BLOCK_LIBRARY: PageBlockLibraryEntry[] = [
+  ...PAGE_BLOCK_TYPES.map((type) => ({
+    id: `${type}.default`,
+    type,
+    label: BLOCK_LIBRARY_LABELS[type].label,
+    description: BLOCK_LIBRARY_LABELS[type].description
+  })),
+  {
+    id: "editableTable.todo",
+    type: "editableTable",
+    label: "To-Do List",
+    description: "Editable table preset for to-do management.",
+    presetId: "calendar.todo"
+  }
+];
 
 const PAGE_TEMPLATE_LIST: PageTemplateDefinition[] = [
   {

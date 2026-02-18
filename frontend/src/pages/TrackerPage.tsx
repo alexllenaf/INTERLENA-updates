@@ -18,7 +18,8 @@ import { deleteDocument, documentDownloadUrl, downloadExcel, openExternal, uploa
 import { matchesSearchQuery, matchesStageOutcome } from "../features/tracker/filtering";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
-import { Application, Contact, CustomProperty, DocumentFile } from "../types";
+import { normalizeTodoStatus, TODO_STATUSES, TODO_STATUS_CLASS, TODO_STATUS_PILL_COLORS } from "../constants";
+import { Application, Contact, CustomProperty, DocumentFile, TodoItem } from "../types";
 import {
   formatFileSize,
   formatUploadedAt,
@@ -50,6 +51,7 @@ const BASE_COLUMN_ORDER = [
   "skill_to_upgrade",
   "job_description",
   "notes",
+  "todo_items",
   "documents_links",
   "favorite"
 ];
@@ -76,6 +78,7 @@ const COLUMN_LABELS: Record<string, string> = {
   skill_to_upgrade: "Skill To Upgrade",
   job_description: "Job Description",
   notes: "Notes",
+  todo_items: "To-Do Items",
   documents_links: "Documents / Links",
   favorite: "Favorite"
 };
@@ -102,6 +105,7 @@ const COLUMN_TYPES: Record<string, string> = {
   skill_to_upgrade: "Long Text",
   job_description: "Long Text",
   notes: "Long Text",
+  todo_items: "To-Do Items",
   documents_links: "Text",
   favorite: "Checkbox"
 };
@@ -128,6 +132,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   skill_to_upgrade: 220,
   job_description: 240,
   notes: 240,
+  todo_items: 300,
   documents_links: 220,
   favorite: 100
 };
@@ -158,6 +163,10 @@ type ColumnCalcOp =
   | "unchecked";
 
 const DEFAULT_OPTION_COLOR = "#E2E8F0";
+const TODO_STATUS_SELECT_OPTIONS: SelectOption[] = TODO_STATUSES.map((status) => ({
+  label: status,
+  color: TODO_STATUS_PILL_COLORS[status]
+}));
 
 type CheckboxCellProps = {
   checked: boolean;
@@ -227,6 +236,152 @@ const NumberCell: React.FC<NumberCellProps> = ({ value, step, min, max, onCommit
   );
 };
 
+type TodoItemsCellProps = {
+  items?: TodoItem[] | null;
+  onCommit: (next: TodoItem[]) => void;
+};
+
+const TodoItemsCell: React.FC<TodoItemsCellProps> = ({ items, onCommit }) => {
+  const list = items ?? [];
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState({
+    task: "",
+    due_date: "",
+    status: "Not started"
+  });
+
+  const pendingCount = list.filter((item) => normalizeTodoStatus(item.status) !== "Done").length;
+
+  const updateTodo = (id: string, patch: Partial<TodoItem>) => {
+    const next = list.map((item) => {
+      if (item.id !== id) return item;
+      const merged = { ...item, ...patch };
+      return {
+        ...merged,
+        task: (merged.task || "").trim(),
+        due_date: merged.due_date ? toDateInputValue(merged.due_date) : undefined,
+        status: normalizeTodoStatus(merged.status)
+      };
+    });
+    onCommit(next);
+  };
+
+  const removeTodo = (id: string) => {
+    const next = list.filter((item) => item.id !== id);
+    if (next.length === list.length) return;
+    onCommit(next);
+  };
+
+  const addTodo = () => {
+    const task = draft.task.trim();
+    if (!task) return;
+    onCommit([
+      ...list,
+      {
+        id: generateId(),
+        task,
+        due_date: draft.due_date || undefined,
+        status: normalizeTodoStatus(draft.status)
+      }
+    ]);
+    setDraft({ task: "", due_date: "", status: "Not started" });
+  };
+
+  return (
+    <div className="todo-items-cell">
+      <div className="todo-items-summary">
+        {list.length === 0 ? (
+          <span className="todo-items-empty">No to-do items yet.</span>
+        ) : (
+          <span>{`${list.length} item${list.length === 1 ? "" : "s"} • ${pendingCount} pending`}</span>
+        )}
+      </div>
+      <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
+        {open ? "Close to-dos" : "Add to-do"}
+      </button>
+      {open && (
+        <div className="todo-items-popover">
+          {list.length === 0 ? (
+            <div className="todo-items-empty">No to-do items yet.</div>
+          ) : (
+            <table className="table todo-table todo-items-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Due Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((item) => {
+                  const status = normalizeTodoStatus(item.status);
+                  return (
+                    <tr key={item.id} className={status === "Done" ? "todo-completed" : undefined}>
+                      <td>
+                        <TextCell
+                          value={item.task || ""}
+                          onCommit={(next) => updateTodo(item.id, { task: next })}
+                        />
+                      </td>
+                      <td>
+                        <DateCell
+                          value={item.due_date || ""}
+                          onCommit={(next) => updateTodo(item.id, { due_date: next || undefined })}
+                        />
+                      </td>
+                      <td>
+                        <SelectCell
+                          value={status}
+                          options={TODO_STATUS_SELECT_OPTIONS}
+                          onCommit={(next) => updateTodo(item.id, { status: normalizeTodoStatus(next) })}
+                        />
+                      </td>
+                      <td>
+                        <button className="ghost small" type="button" onClick={() => removeTodo(item.id)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          <div className="todo-items-add-row">
+            <input
+              className="cell-input"
+              placeholder="New task"
+              value={draft.task}
+              onChange={(event) => setDraft((prev) => ({ ...prev, task: event.target.value }))}
+            />
+            <input
+              className="cell-date"
+              type="date"
+              value={draft.due_date}
+              onChange={(event) => setDraft((prev) => ({ ...prev, due_date: event.target.value }))}
+            />
+            <select
+              className={`cell-select todo-status ${TODO_STATUS_CLASS[normalizeTodoStatus(draft.status)]}`}
+              value={draft.status}
+              onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
+            >
+              {TODO_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+            <button className="primary small" type="button" onClick={addTodo}>
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 type ContactsCellProps = {
   contacts?: Contact[] | null;
   onCommit: (next: Contact[]) => void;
@@ -277,7 +432,7 @@ const ContactsCell: React.FC<ContactsCellProps> = ({ contacts, onCommit }) => {
   return (
     <div className="contacts-cell">
       <div className="contacts-list">
-        {list.length === 0 && <span className="contacts-empty">—</span>}
+        {list.length === 0 && <span className="contacts-empty">No contacts yet.</span>}
         {list.map((contact) => (
           <div className="contact-item" key={contact.id}>
             <div className="contact-name">{contact.name}</div>
@@ -298,7 +453,7 @@ const ContactsCell: React.FC<ContactsCellProps> = ({ contacts, onCommit }) => {
         ))}
       </div>
       <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-        + Add contact
+        Add contact
       </button>
       {open && (
         <div className="contacts-popover">
@@ -561,6 +716,7 @@ type DocumentsPropertyCellProps = {
   selectedIds: string[];
   onCommit: (nextIds: string[]) => void;
   onUploadAndAttach: (files: File[], signal: AbortSignal) => Promise<void>;
+  onDeleteFile: (file: DocumentFile) => Promise<boolean> | boolean;
   onOpenFile: (file: DocumentFile) => void;
 };
 
@@ -569,11 +725,14 @@ const DocumentsPropertyCell: React.FC<DocumentsPropertyCellProps> = ({
   selectedIds,
   onCommit,
   onUploadAndAttach,
+  onDeleteFile,
   onOpenFile
 }) => {
   const [open, setOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pendingDeleteFile, setPendingDeleteFile] = useState<DocumentFile | null>(null);
+  const [deletingFile, setDeletingFile] = useState(false);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const uploadTimeoutRef = useRef<number | null>(null);
 
@@ -654,7 +813,7 @@ const DocumentsPropertyCell: React.FC<DocumentsPropertyCellProps> = ({
                   <button
                     className="doc-chip doc-button"
                     type="button"
-                    onClick={() => onOpenFile(file)}
+                    onClick={() => setOpen(true)}
                     title={file.name}
                   >
                     <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -666,22 +825,13 @@ const DocumentsPropertyCell: React.FC<DocumentsPropertyCellProps> = ({
                     </span>
                   </button>
                 ) : (
-                  <span className="doc-chip" title={id}>
+                  <button className="doc-chip doc-button" type="button" onClick={() => setOpen(true)} title={id}>
                     <svg viewBox="0 0 20 20" aria-hidden="true">
                       <path d="M5 2.5h6l4 4V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Zm6 1.5H6v12h8V8h-3V4Z" />
                     </svg>
                     <span>{label}</span>
-                  </span>
+                  </button>
                 )}
-                <button
-                  className="docs-prop-remove"
-                  type="button"
-                  onClick={() => toggleId(id)}
-                  aria-label="Remove document"
-                  title="Remove"
-                >
-                  ×
-                </button>
               </div>
             );
           })}
@@ -716,17 +866,84 @@ const DocumentsPropertyCell: React.FC<DocumentsPropertyCellProps> = ({
           <div className="docs-prop-list">
             {files.length === 0 ? null : (
               files.map((file) => (
-                <button
+                <div
                   key={file.id}
                   className={`docs-prop-row ${selectedIds.includes(file.id) ? "selected" : ""}`}
-                  type="button"
-                  onClick={() => toggleId(file.id)}
                 >
-                  <span className="docs-prop-row-check">{selectedIds.includes(file.id) ? "✓" : ""}</span>
-                  <span className="docs-prop-row-name">{file.name}</span>
-                </button>
+                  <button className="docs-prop-row-main" type="button" onClick={() => toggleId(file.id)}>
+                    <span className="docs-prop-row-check">{selectedIds.includes(file.id) ? "✓" : ""}</span>
+                    <span className="docs-prop-row-name">
+                      {file.name}
+                      {file.size ? ` ${formatFileSize(file.size)}` : ""}
+                    </span>
+                  </button>
+                  <span className="docs-prop-row-actions">
+                    <button
+                      className="doc-icon-button info"
+                      type="button"
+                      aria-label="Document info"
+                      title="Document info"
+                      onClick={() => onOpenFile(file)}
+                    >
+                      i
+                    </button>
+                    <button
+                      className="doc-icon-button danger"
+                      type="button"
+                      aria-label="Delete document"
+                      title="Delete document"
+                      onClick={() => setPendingDeleteFile(file)}
+                    >
+                      <svg viewBox="0 0 20 20" aria-hidden="true">
+                        <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                      </svg>
+                    </button>
+                  </span>
+                </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+      {pendingDeleteFile && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setPendingDeleteFile(null)}>
+          <div className="modal confirm-delete-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="modal-header">
+              <div>
+                <h2>Delete Document</h2>
+                <p>{pendingDeleteFile.name}</p>
+              </div>
+              <button className="ghost" type="button" onClick={() => setPendingDeleteFile(null)} aria-label="Close">
+                ×
+              </button>
+            </header>
+            <p>Do you want to delete this document?</p>
+            <div className="confirm-delete-actions">
+              <button className="ghost" type="button" onClick={() => setPendingDeleteFile(null)} disabled={deletingFile}>
+                Cancel
+              </button>
+              <button
+                className="icon-button danger"
+                type="button"
+                aria-label="Delete document"
+                disabled={deletingFile}
+                onClick={async () => {
+                  const target = pendingDeleteFile;
+                  if (!target) return;
+                  setDeletingFile(true);
+                  const removed = await Promise.resolve(onDeleteFile(target));
+                  if (removed) {
+                    onCommit(selectedIds.filter((id) => id !== target.id));
+                    setPendingDeleteFile(null);
+                  }
+                  setDeletingFile(false);
+                }}
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -801,6 +1018,10 @@ const TrackerPage: React.FC = () => {
   const [documentModal, setDocumentModal] = useState<{ appId: number; file: DocumentFile } | null>(
     null
   );
+  const [documentDeleteConfirm, setDocumentDeleteConfirm] = useState<{ appId: number; file: DocumentFile } | null>(
+    null
+  );
+  const [documentDeleteBusy, setDocumentDeleteBusy] = useState(false);
   const [detailDraft, setDetailDraft] = useState({
     notes: "",
     job_description: "",
@@ -841,6 +1062,22 @@ const TrackerPage: React.FC = () => {
     (list || [])
       .map((file) => file?.name || "")
       .filter(Boolean)
+      .join(" | ");
+
+  const todoItemsToString = (list?: TodoItem[] | null) =>
+    (list || [])
+      .map((item) =>
+        [
+          item.task,
+          item.due_date,
+          normalizeTodoStatus(item.status),
+          item.task_location,
+          item.notes,
+          item.documents_links
+        ]
+          .filter(Boolean)
+          .join(" ")
+      )
       .join(" | ");
 
   const handleDownloadDocument = (appId: number, fileId: string) => {
@@ -884,6 +1121,9 @@ const TrackerPage: React.FC = () => {
         }
         if (col === "contacts") {
           return contactsToString(app.contacts).toLowerCase().includes(needle);
+        }
+        if (col === "todo_items") {
+          return todoItemsToString(app.todo_items).toLowerCase().includes(needle);
         }
         if (col === "documents_files") {
           return documentsToString(app.documents_files).toLowerCase().includes(needle);
@@ -934,6 +1174,9 @@ const TrackerPage: React.FC = () => {
       }
       if (column === "contacts") {
         return contactsToString(app.contacts).toLowerCase();
+      }
+      if (column === "todo_items") {
+        return todoItemsToString(app.todo_items).toLowerCase();
       }
       if (column === "documents_files") {
         return documentsToString(app.documents_files).toLowerCase();
@@ -1013,7 +1256,7 @@ const TrackerPage: React.FC = () => {
     };
     const handleUp = () => {
       setResizing(null);
-      saveSettings({ ...settings, column_widths: widthsRef.current });
+      saveSettings({ column_widths: widthsRef.current });
     };
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
@@ -1121,6 +1364,13 @@ const TrackerPage: React.FC = () => {
       setDetailApp(updated);
     }
   }, [applications, detailApp]);
+
+  useEffect(() => {
+    if (!documentModal) {
+      setDocumentDeleteConfirm(null);
+      setDocumentDeleteBusy(false);
+    }
+  }, [documentModal]);
 
   useEffect(() => {
     if (!tableScrollRef.current) return;
@@ -1237,25 +1487,25 @@ const TrackerPage: React.FC = () => {
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ ...settings, stages: nextStages, stage_colors: nextColors });
+    await saveSettings({ stages: nextStages, stage_colors: nextColors });
     return trimmed;
   };
 
   const updateStageColor = async (label: string, color: string) => {
     const nextColors = { ...settings.stage_colors, [label]: color };
-    await saveSettings({ ...settings, stage_colors: nextColors });
+    await saveSettings({ stage_colors: nextColors });
   };
 
   const deleteStageOption = async (label: string) => {
     const nextStages = settings.stages.filter((stage) => stage !== label);
     const { [label]: _, ...restColors } = settings.stage_colors;
-    await saveSettings({ ...settings, stages: nextStages, stage_colors: restColors });
+    await saveSettings({ stages: nextStages, stage_colors: restColors });
   };
 
   const reorderStageOption = async (fromLabel: string, toLabel: string) => {
     const nextStages = reorderList(settings.stages, fromLabel, toLabel);
     if (nextStages === settings.stages) return;
-    await saveSettings({ ...settings, stages: nextStages });
+    await saveSettings({ stages: nextStages });
   };
 
   const addOutcomeOption = async (label: string) => {
@@ -1268,25 +1518,25 @@ const TrackerPage: React.FC = () => {
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ ...settings, outcomes: nextOutcomes, outcome_colors: nextColors });
+    await saveSettings({ outcomes: nextOutcomes, outcome_colors: nextColors });
     return trimmed;
   };
 
   const updateOutcomeColor = async (label: string, color: string) => {
     const nextColors = { ...settings.outcome_colors, [label]: color };
-    await saveSettings({ ...settings, outcome_colors: nextColors });
+    await saveSettings({ outcome_colors: nextColors });
   };
 
   const deleteOutcomeOption = async (label: string) => {
     const nextOutcomes = settings.outcomes.filter((outcome) => outcome !== label);
     const { [label]: _, ...restColors } = settings.outcome_colors;
-    await saveSettings({ ...settings, outcomes: nextOutcomes, outcome_colors: restColors });
+    await saveSettings({ outcomes: nextOutcomes, outcome_colors: restColors });
   };
 
   const reorderOutcomeOption = async (fromLabel: string, toLabel: string) => {
     const nextOutcomes = reorderList(settings.outcomes, fromLabel, toLabel);
     if (nextOutcomes === settings.outcomes) return;
-    await saveSettings({ ...settings, outcomes: nextOutcomes });
+    await saveSettings({ outcomes: nextOutcomes });
   };
 
   const addJobTypeOption = async (label: string) => {
@@ -1299,25 +1549,25 @@ const TrackerPage: React.FC = () => {
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ ...settings, job_types: nextTypes, job_type_colors: nextColors });
+    await saveSettings({ job_types: nextTypes, job_type_colors: nextColors });
     return trimmed;
   };
 
   const updateJobTypeColor = async (label: string, color: string) => {
     const nextColors = { ...(settings.job_type_colors || {}), [label]: color };
-    await saveSettings({ ...settings, job_type_colors: nextColors });
+    await saveSettings({ job_type_colors: nextColors });
   };
 
   const deleteJobTypeOption = async (label: string) => {
     const nextTypes = settings.job_types.filter((job) => job !== label);
     const { [label]: _, ...restColors } = settings.job_type_colors || {};
-    await saveSettings({ ...settings, job_types: nextTypes, job_type_colors: restColors });
+    await saveSettings({ job_types: nextTypes, job_type_colors: restColors });
   };
 
   const reorderJobTypeOption = async (fromLabel: string, toLabel: string) => {
     const nextTypes = reorderList(settings.job_types, fromLabel, toLabel);
     if (nextTypes === settings.job_types) return;
-    await saveSettings({ ...settings, job_types: nextTypes });
+    await saveSettings({ job_types: nextTypes });
   };
 
   const addCustomOption = async (propKey: string, label: string) => {
@@ -1331,7 +1581,7 @@ const TrackerPage: React.FC = () => {
     const nextOptions = [...prop.options, { label: trimmed, color: DEFAULT_OPTION_COLOR }];
     const nextProps = [...settings.custom_properties];
     nextProps[propIndex] = { ...prop, options: nextOptions };
-    await saveSettings({ ...settings, custom_properties: nextProps });
+    await saveSettings({ custom_properties: nextProps });
     return trimmed;
   };
 
@@ -1344,7 +1594,7 @@ const TrackerPage: React.FC = () => {
     );
     const nextProps = [...settings.custom_properties];
     nextProps[propIndex] = { ...prop, options: nextOptions };
-    await saveSettings({ ...settings, custom_properties: nextProps });
+    await saveSettings({ custom_properties: nextProps });
   };
 
   const deleteCustomOption = async (propKey: string, label: string) => {
@@ -1354,7 +1604,7 @@ const TrackerPage: React.FC = () => {
     const nextOptions = prop.options.filter((opt) => opt.label !== label);
     const nextProps = [...settings.custom_properties];
     nextProps[propIndex] = { ...prop, options: nextOptions };
-    await saveSettings({ ...settings, custom_properties: nextProps });
+    await saveSettings({ custom_properties: nextProps });
   };
 
   const reorderCustomOption = async (propKey: string, fromLabel: string, toLabel: string) => {
@@ -1365,7 +1615,7 @@ const TrackerPage: React.FC = () => {
     if (nextOptions === prop.options) return;
     const nextProps = [...settings.custom_properties];
     nextProps[propIndex] = { ...prop, options: nextOptions };
-    await saveSettings({ ...settings, custom_properties: nextProps });
+    await saveSettings({ custom_properties: nextProps });
   };
 
   useEffect(() => {
@@ -1456,7 +1706,7 @@ const TrackerPage: React.FC = () => {
           nextVisible = [...prev, col];
         }
         const nextHidden = columnOrderDraft.filter((item) => !nextVisible.includes(item));
-        saveSettings({ ...settings, hidden_columns: nextHidden });
+        saveSettings({ hidden_columns: nextHidden });
         return nextVisible;
       });
     },
@@ -1465,7 +1715,7 @@ const TrackerPage: React.FC = () => {
 
   const showAllColumns = useCallback(() => {
     setVisibleDraft(columnOrderDraft);
-    saveSettings({ ...settings, hidden_columns: [] });
+    saveSettings({ hidden_columns: [] });
   }, [columnOrderDraft, saveSettings, settings]);
 
   const density = settings.table_density || "comfortable";
@@ -1545,7 +1795,7 @@ const TrackerPage: React.FC = () => {
 	        if (nextLabel === settings.custom_properties[idx].name) return;
 	        const nextProps = [...settings.custom_properties];
 	        nextProps[idx] = { ...nextProps[idx], name: nextLabel };
-	        await saveSettings({ ...settings, custom_properties: nextProps });
+	        await saveSettings({ custom_properties: nextProps });
 	      }
 	    } else {
 	      const baseLabel = COLUMN_LABELS[columnMenu.col];
@@ -1562,7 +1812,7 @@ const TrackerPage: React.FC = () => {
 	      } else {
 	        nextLabels[columnMenu.col] = nextLabel;
       }
-      await saveSettings({ ...settings, column_labels: nextLabels });
+      await saveSettings({ column_labels: nextLabels });
     }
   };
 
@@ -1570,7 +1820,7 @@ const TrackerPage: React.FC = () => {
 	    const nextVisible = visibleDraft.filter((item) => item !== col);
 	    setVisibleDraft(nextVisible);
 	    const nextHidden = columnOrderDraft.filter((item) => !nextVisible.includes(item));
-	    saveSettings({ ...settings, hidden_columns: nextHidden });
+	    saveSettings({ hidden_columns: nextHidden });
 	    setColumnFilters((prev) => ({ ...prev, [col]: "" }));
 	    if (sortConfig?.column === col) {
 	      setSortConfig(null);
@@ -1588,7 +1838,7 @@ const TrackerPage: React.FC = () => {
     next.splice(fromIndex, 1);
     next.splice(toIndex, 0, fromCol);
     setColumnOrderDraft(next);
-    saveSettings({ ...settings, table_columns: next });
+    saveSettings({ table_columns: next });
     draggedColRef.current = null;
     setDraggedCol(null);
     setDragOverCol(null);
@@ -1624,14 +1874,14 @@ const TrackerPage: React.FC = () => {
     const next = moveColumnToIndex(columnOrderDraft, col, 0);
     if (next === columnOrderDraft) return;
     setColumnOrderDraft(next);
-    saveSettings({ ...settings, table_columns: next });
+    saveSettings({ table_columns: next });
   };
 
   const unpinColumn = (col: string) => {
     const next = moveColumnToIndex(columnOrderDraft, col, 1);
     if (next === columnOrderDraft) return;
     setColumnOrderDraft(next);
-    saveSettings({ ...settings, table_columns: next });
+    saveSettings({ table_columns: next });
   };
 
   const fitColumnToContent = (col: string) => {
@@ -1643,7 +1893,7 @@ const TrackerPage: React.FC = () => {
     });
     const nextWidth = Math.min(520, Math.max(90, Math.round(maxLen * 8.2 + 56)));
     setColumnWidths((prev) => ({ ...prev, [col]: nextWidth }));
-    saveSettings({ ...settings, column_widths: { ...(settings.column_widths || {}), [col]: nextWidth } });
+    saveSettings({ column_widths: { ...(settings.column_widths || {}), [col]: nextWidth } });
   };
 
   const generateUniqueCustomPropKey = () => {
@@ -1675,7 +1925,6 @@ const TrackerPage: React.FC = () => {
     setColumnOrderDraft(nextOrder);
     setVisibleDraft(nextVisible);
     await saveSettings({
-      ...settings,
       custom_properties: nextProps,
       table_columns: nextOrder,
       hidden_columns: nextHidden
@@ -1704,7 +1953,6 @@ const TrackerPage: React.FC = () => {
     setColumnOrderDraft(nextOrder);
     setVisibleDraft(nextVisible);
     await saveSettings({
-      ...settings,
       custom_properties: nextProps,
       table_columns: nextOrder,
       hidden_columns: nextHidden
@@ -1736,7 +1984,6 @@ const TrackerPage: React.FC = () => {
     if (groupBy === col) setGroupBy(null);
 
     await saveSettings({
-      ...settings,
       custom_properties: nextProps,
       table_columns: nextOrder,
       hidden_columns: nextHidden
@@ -1751,7 +1998,7 @@ const TrackerPage: React.FC = () => {
     if (idx < 0) return;
     const nextProps = [...settings.custom_properties];
     nextProps[idx] = { ...nextProps[idx], type };
-    await saveSettings({ ...settings, custom_properties: nextProps });
+    await saveSettings({ custom_properties: nextProps });
   };
 
   const handleBulkStage = async (value: string) => {
@@ -1830,18 +2077,30 @@ const TrackerPage: React.FC = () => {
     if (!files || files.length === 0) return;
     try {
       await uploadDocuments(appId, Array.from(files));
-      await refresh();
+      await updateApplicationRemote(appId, {});
     } catch (error) {
       console.error("Failed to upload documents", error);
     }
   };
 
-  const handleDeleteDocument = async (appId: number, fileId: string) => {
+  const handleDeleteDocument = async (
+    appId: number,
+    fileId: string,
+    opts?: { confirm?: boolean; sync?: boolean }
+  ): Promise<boolean> => {
+    if (opts?.confirm !== false) {
+      const confirmed = window.confirm("Delete this document? This action cannot be undone.");
+      if (!confirmed) return false;
+    }
     try {
       await deleteDocument(appId, fileId);
-      await refresh();
+      if (opts?.sync !== false) {
+        await updateApplicationRemote(appId, {});
+      }
+      return true;
     } catch (error) {
       console.error("Failed to delete document", error);
+      return false;
     }
   };
 
@@ -2469,6 +2728,7 @@ const TrackerPage: React.FC = () => {
       return raw;
     }
     if (col === "contacts") return contactsToString(app.contacts);
+    if (col === "todo_items") return todoItemsToString(app.todo_items);
     if (col === "documents_files") return documentsToString(app.documents_files);
     const value = (app as Record<string, unknown>)[col];
     if (value === null || value === undefined) return "";
@@ -2515,6 +2775,7 @@ const TrackerPage: React.FC = () => {
 
   const calcValueFor = (app: Application, col: string): string | number | boolean | null => {
     if (col === "contacts") return contactsToString(app.contacts);
+    if (col === "todo_items") return todoItemsToString(app.todo_items);
     if (col === "documents_files") return documentsToString(app.documents_files);
     const kind = getColumnKind(col);
     if (col.startsWith("prop__")) {
@@ -2605,7 +2866,7 @@ const TrackerPage: React.FC = () => {
         id="density"
         value={density}
         onChange={(event) =>
-          saveSettings({ ...settings, table_density: event.target.value as "compact" | "comfortable" })
+          saveSettings({ table_density: event.target.value as "compact" | "comfortable" })
         }
       >
         <option value="comfortable">{t("Comfortable")}</option>
@@ -3037,6 +3298,14 @@ const TrackerPage: React.FC = () => {
                         />
                       );
                     }
+                    if (col === "todo_items") {
+                      return (
+                        <TodoItemsCell
+                          items={app.todo_items || []}
+                          onCommit={(next) => updateApplication(app.id, { todo_items: next })}
+                        />
+                      );
+                    }
                     if (col === "last_round_cleared") {
                       return (
                         <TextCell
@@ -3134,10 +3403,7 @@ const TrackerPage: React.FC = () => {
                                   key={`${app.id}-file-${file.id}`}
                                   className="doc-chip doc-button"
                                   type="button"
-                                  onClick={() => {
-                                    if (!isPrimaryTable) return;
-                                    setDocumentModal({ appId: app.id, file });
-                                  }}
+                                  onClick={() => setDocumentModal({ appId: app.id, file })}
                                   aria-label={`Document ${file.name}`}
                                 >
                                   <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -3269,13 +3535,12 @@ const TrackerPage: React.FC = () => {
 	                            onCommit={(nextIds) =>
 	                              commitProp(nextIds.length === 0 ? "" : JSON.stringify(nextIds))
 	                            }
-	                            onOpenFile={(file) => {
-	                              if (!isPrimaryTable) return;
-	                              setDocumentModal({ appId: app.id, file });
-	                            }}
+	                            onDeleteFile={async (file) =>
+	                              handleDeleteDocument(app.id, file.id, { confirm: false, sync: false })
+	                            }
+	                            onOpenFile={(file) => setDocumentModal({ appId: app.id, file })}
 	                            onUploadAndAttach={async (filesToUpload, signal) => {
 	                              if (!filesToUpload || filesToUpload.length === 0) return;
-	                              if (!isPrimaryTable) return;
 	                              const before = new Set((app.documents_files || []).map((f) => f.id));
 	                              const uploaded = await uploadDocuments(app.id, filesToUpload, signal);
 	                              const afterFiles = uploaded.documents_files || [];
@@ -3283,7 +3548,7 @@ const TrackerPage: React.FC = () => {
 	                              const merged = Array.from(new Set([...selectedIds, ...newIds]));
 	                              const nextProps = { ...(app.properties || {}) };
 	                              nextProps[propKey] = merged.length === 0 ? "" : JSON.stringify(merged);
-	                              await updateApplication(app.id, { properties: nextProps });
+	                              void updateApplication(app.id, { properties: nextProps });
 	                            }}
 	                          />
 	                        );
@@ -3806,14 +4071,73 @@ const TrackerPage: React.FC = () => {
                 Download
               </button>
               <button
-                className="danger"
+                className="icon-button danger"
                 type="button"
+                aria-label="Delete document"
+                onClick={() =>
+                  setDocumentDeleteConfirm({ appId: documentModal.appId, file: documentModal.file })
+                }
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {documentDeleteConfirm && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => !documentDeleteBusy && setDocumentDeleteConfirm(null)}
+        >
+          <div className="modal confirm-delete-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="modal-header">
+              <div>
+                <h2>Delete Document</h2>
+                <p>{documentDeleteConfirm.file.name}</p>
+              </div>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => setDocumentDeleteConfirm(null)}
+                aria-label="Close"
+                disabled={documentDeleteBusy}
+              >
+                ×
+              </button>
+            </header>
+            <p>Do you want to delete this document?</p>
+            <div className="confirm-delete-actions">
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => setDocumentDeleteConfirm(null)}
+                disabled={documentDeleteBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="icon-button danger"
+                type="button"
+                aria-label="Delete document"
+                disabled={documentDeleteBusy}
                 onClick={async () => {
-                  await handleDeleteDocument(documentModal.appId, documentModal.file.id);
+                  const target = documentDeleteConfirm;
+                  if (!target) return;
+                  setDocumentDeleteBusy(true);
+                  const removed = await handleDeleteDocument(target.appId, target.file.id, { confirm: false });
+                  setDocumentDeleteBusy(false);
+                  if (!removed) return;
+                  setDocumentDeleteConfirm(null);
                   setDocumentModal(null);
                 }}
               >
-                Delete
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                </svg>
               </button>
             </div>
           </div>

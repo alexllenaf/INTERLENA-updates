@@ -90,7 +90,7 @@ const PipelinePage: React.FC = () => {
     }
     const nextStages = reorderList(stages, fromStage, targetStage);
     if (nextStages !== stages) {
-      await saveSettings({ ...settings, stages: nextStages });
+      await saveSettings({ stages: nextStages });
     }
     resetStageDrag();
   };

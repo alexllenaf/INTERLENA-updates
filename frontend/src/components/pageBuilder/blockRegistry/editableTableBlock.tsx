@@ -1,24 +1,65 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { saveBlobAsFile } from "../../../api";
+import { useAppData } from "../../../state";
 import BlockPanel from "../../BlockPanel";
-import StarRating from "../../StarRating";
-import { DateCell, SelectCell, type SelectOption, TextCell } from "../../TableCells";
+import { type SelectOption } from "../../TableCells";
 import TrackerSearchBar from "../../tracker/TrackerSearchBar";
+import {
+  TYPE_REGISTRY,
+  type ColumnTypeDef,
+  type SaveSettingsFn,
+  type TypeRegistryContext
+} from "../../dataTypes/typeRegistry";
 import { EditableTableToolbar } from "../../blocks/BlockRenderer";
 import {
   type EditableTableColumnKind,
+  type EditableTableSelectOption,
+  type TableOverrides,
   type PageBlockConfig,
   type PageBlockPropsMap
 } from "../types";
+import {
+  TODO_SOURCE_TABLE_LINK_KEY,
+  collectEditableTableTargets,
+  getBlockLink,
+  patchBlockLink
+} from "../blockLinks";
+import { getTableSchema } from "../tableSchemaRegistry";
 import { createSlotContext, renderHeader } from "./shared";
 import { type BlockDefinition, type BlockRenderContext, type BlockRenderMode } from "./types";
+import {
+  ColumnMenuChevronRight,
+  columnMenuIconCalc,
+  columnMenuIconChangeType,
+  columnMenuIconDuplicate,
+  columnMenuIconFilter,
+  columnMenuIconFit,
+  columnMenuIconGroup,
+  columnMenuIconHide,
+  columnMenuIconInsertLeft,
+  columnMenuIconInsertRight,
+  columnMenuIconPin,
+  columnMenuIconSort,
+  columnMenuIconTrash,
+  columnMenuIconTypeCheckbox,
+  columnMenuIconTypeContacts,
+  columnMenuIconTypeDate,
+  columnMenuIconTypeDocuments,
+  columnMenuIconTypeLinks,
+  columnMenuIconTypeNumber,
+  columnMenuIconTypeRating,
+  columnMenuIconTypeSelect,
+  columnMenuIconTypeText,
+  columnMenuIconTypeTodo
+} from "../../columnMenuIcons";
 
 const DEFAULT_TABLE_COLUMNS = ["Column 1", "Column 2", "Column 3"];
 const DEFAULT_TABLE_ROWS = [["", "", ""]];
 const MAX_TABLE_COLUMNS = 24;
 const MAX_TABLE_ROWS = 1200;
 const DEFAULT_TABLE_COLUMN_WIDTH = 180;
+const HEADER_ICON_WIDTH_BUDGET = 80;
 const COLUMN_MENU_WIDTH = 240;
 const COLUMN_MENU_GUTTER = 12;
 const COLUMN_MENU_OFFSET = 6;
@@ -32,6 +73,7 @@ const TABLE_COLUMN_KINDS: TableColumnKind[] = [
   "date",
   "checkbox",
   "rating",
+  "todo",
   "contacts",
   "links",
   "documents"
@@ -49,7 +91,9 @@ const normalizeTableColumns = (raw: unknown): string[] => {
 const normalizeTableRows = (raw: unknown, columnCount: number): string[][] => {
   const normalizedColumnCount = Math.max(1, Math.min(columnCount, MAX_TABLE_COLUMNS));
   if (!Array.isArray(raw)) {
-    return DEFAULT_TABLE_ROWS.map((row) => row.slice(0, normalizedColumnCount));
+    return DEFAULT_TABLE_ROWS.map((row) =>
+      Array.from({ length: normalizedColumnCount }, (_, index) => row[index] || "")
+    );
   }
   return raw
     .slice(0, MAX_TABLE_ROWS)
@@ -117,9 +161,398 @@ const buildSelectOptionsFromRows = (columnIndex: number, tableRows: string[][]):
   return options;
 };
 
+const FALLBACK_TYPE_REF = "text.basic@1";
+const LOCAL_SELECT_TYPE_REF = "select.local@1";
+const DEFAULT_SELECT_OPTION_COLOR = "#E2E8F0";
+const LEGACY_KIND_TYPE_REFS: Record<TableColumnKind, string> = {
+  text: "text.basic@1",
+  number: "number.basic@1",
+  select: LOCAL_SELECT_TYPE_REF,
+  date: "date.iso@1",
+  checkbox: "checkbox.bool@1",
+  rating: "rating.stars_0_5_half@1",
+  todo: "todo.items@1",
+  contacts: "contacts.list@1",
+  links: "links.list@1",
+  documents: "documents.list@1"
+};
+const MISSING_TYPE_REF_WARNINGS = new Set<string>();
+
+type ResolvedSchemaColumn = {
+  key: string;
+  label: string;
+  kind: TableColumnKind;
+  typeRef: string;
+  typeDef: ColumnTypeDef;
+  typeContext: TypeRegistryContext;
+  width?: number;
+  selectOptions: SelectOption[];
+};
+
+type EffectiveTableModel = {
+  usingSchema: boolean;
+  columns: string[];
+  rows: string[][];
+  columnKinds: Record<string, TableColumnKind>;
+  columnWidths: Record<string, number>;
+  hiddenColumns: string[];
+  selectOptionsByColumn: Record<string, SelectOption[]>;
+  managedSelectOptionsByColumn: Record<string, SelectOption[]>;
+  schemaColumnByLabel: Record<string, ResolvedSchemaColumn>;
+  storageColumnCount: number;
+  remapRowsForPersistence: (displayRows: string[][]) => string[][];
+};
+
+type ResolveTableModelContext = {
+  settings: unknown;
+  saveSettings?: SaveSettingsFn;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+};
+
+const normalizeSelectOptions = (options: SelectOption[]): SelectOption[] => {
+  const seen = new Set<string>();
+  const list: SelectOption[] = [];
+  options.forEach((option) => {
+    const label = typeof option?.label === "string" ? option.label.trim() : "";
+    if (!label || seen.has(label)) return;
+    seen.add(label);
+    list.push({
+      ...option,
+      label
+    });
+  });
+  return list;
+};
+
+const estimateHeaderMinWidth = (label: string): number => {
+  const safeLabel = label.trim() || "Column";
+  const labelWidth = safeLabel.length * 8.5;
+  return Math.max(DEFAULT_TABLE_COLUMN_WIDTH, Math.ceil(labelWidth + HEADER_ICON_WIDTH_BUDGET));
+};
+
+const toEditableTableSelectOption = (option: SelectOption): EditableTableSelectOption => ({
+  label: option.label,
+  color: option.color,
+  display: option.display,
+  editable: option.editable
+});
+
+const normalizeCustomSelectOptions = (
+  raw: unknown,
+  columnList: string[]
+): Record<string, SelectOption[]> => {
+  if (!isRecord(raw)) return {};
+  const allowed = new Set(columnList);
+  const parsed = raw as Record<string, unknown>;
+  const next: Record<string, SelectOption[]> = {};
+  Object.entries(parsed).forEach(([key, value]) => {
+    if (!allowed.has(key) || !Array.isArray(value)) return;
+    const parsedOptions: SelectOption[] = [];
+    value.forEach((entry) => {
+      if (!isRecord(entry)) return;
+      const label = typeof entry.label === "string" ? entry.label.trim() : "";
+      if (!label) return;
+      const color = typeof entry.color === "string" && entry.color.trim() ? entry.color.trim() : undefined;
+      const display =
+        typeof entry.display === "string" && entry.display.trim() ? entry.display.trim() : undefined;
+      const editable = typeof entry.editable === "boolean" ? entry.editable : true;
+      parsedOptions.push({
+        label,
+        color: color || DEFAULT_SELECT_OPTION_COLOR,
+        display,
+        editable
+      });
+    });
+    const normalized = normalizeSelectOptions(parsedOptions);
+    if (normalized.length > 0) {
+      next[key] = normalized;
+    }
+  });
+  return next;
+};
+
+const serializeCustomSelectOptions = (
+  optionsByColumn: Record<string, SelectOption[]>,
+  columnList: string[]
+): Record<string, EditableTableSelectOption[]> => {
+  const allowed = new Set(columnList);
+  const next: Record<string, EditableTableSelectOption[]> = {};
+  Object.entries(optionsByColumn).forEach(([column, options]) => {
+    if (!allowed.has(column)) return;
+    const normalized = normalizeSelectOptions(options || []);
+    if (normalized.length === 0) return;
+    next[column] = normalized.map(toEditableTableSelectOption);
+  });
+  return next;
+};
+
+const mergeSelectOptions = (primary: SelectOption[], fallback: SelectOption[]): SelectOption[] =>
+  normalizeSelectOptions([...(primary || []), ...(fallback || [])]);
+
+const applySelectOptionOverrides = (
+  baseOptions: SelectOption[],
+  overrideConfig: unknown,
+  policy?: ColumnTypeDef["overridePolicy"]
+): SelectOption[] => {
+  const normalizedBase = normalizeSelectOptions(baseOptions || []);
+  if (!isRecord(overrideConfig)) return normalizedBase;
+
+  const allowRelabel = Boolean(policy?.allowRelabelOptions);
+  const allowHide = Boolean(policy?.allowHideOptions);
+  const allowAdd = Boolean(policy?.allowAddOptions);
+
+  const relabelMap = allowRelabel && isRecord(overrideConfig.relabelOptions)
+    ? (overrideConfig.relabelOptions as Record<string, unknown>)
+    : {};
+  const hideSet = allowHide ? new Set(normalizeStringArray(overrideConfig.hideOptions)) : new Set<string>();
+  const addOptions = allowAdd ? normalizeStringArray(overrideConfig.addOptions) : [];
+
+  const relabeled = normalizedBase
+    .map((option) => {
+      const relabelValue = relabelMap[option.label];
+      const label =
+        typeof relabelValue === "string" && relabelValue.trim() ? relabelValue.trim() : option.label;
+      return { ...option, label };
+    })
+    .filter((option) => !hideSet.has(option.label));
+
+  const appended = addOptions.map((label) => ({ label }));
+  return normalizeSelectOptions([...relabeled, ...appended]);
+};
+
+const createUniqueLabel = (label: string, used: Set<string>): string => {
+  const base = label.trim() || "Column";
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  let attempt = 2;
+  while (used.has(`${base} (${attempt})`)) {
+    attempt += 1;
+  }
+  const next = `${base} (${attempt})`;
+  used.add(next);
+  return next;
+};
+
+const toTableColumnKind = (kind: EditableTableColumnKind): TableColumnKind =>
+  TABLE_COLUMN_KIND_SET.has(kind as TableColumnKind) ? (kind as TableColumnKind) : "text";
+
+const resolveTypeDef = (typeRef: string, schemaRef: string, columnKey: string): ColumnTypeDef => {
+  const resolved = TYPE_REGISTRY[typeRef];
+  if (resolved) return resolved;
+  const warningKey = `${schemaRef}:${columnKey}:${typeRef}`;
+  if (!MISSING_TYPE_REF_WARNINGS.has(warningKey)) {
+    MISSING_TYPE_REF_WARNINGS.add(warningKey);
+    console.warn(
+      `[EditableTable] Unknown typeRef "${typeRef}" in schema "${schemaRef}" for column "${columnKey}". Falling back to "${FALLBACK_TYPE_REF}".`
+    );
+  }
+  return TYPE_REGISTRY[FALLBACK_TYPE_REF];
+};
+
+const resolveEffectiveTableModel = (
+  props: PageBlockPropsMap["editableTable"],
+  ctx: ResolveTableModelContext
+): EffectiveTableModel => {
+  if (!props.schemaRef) {
+    const columns = normalizeTableColumns(props.customColumns);
+    const rows = normalizeTableRows(props.customRows, columns.length);
+    const columnKinds = normalizeTableColumnKinds(props.customColumnTypes, columns);
+    const managedSelectOptionsByColumn = normalizeCustomSelectOptions(props.customSelectOptions, columns);
+    const selectOptionsByColumn: Record<string, SelectOption[]> = {};
+    columns.forEach((column, index) => {
+      selectOptionsByColumn[column] = mergeSelectOptions(
+        managedSelectOptionsByColumn[column] || [],
+        buildSelectOptionsFromRows(index, rows)
+      );
+    });
+    return {
+      usingSchema: false,
+      columns,
+      rows,
+      columnKinds,
+      columnWidths: {},
+      hiddenColumns: [],
+      selectOptionsByColumn,
+      managedSelectOptionsByColumn,
+      schemaColumnByLabel: {},
+      storageColumnCount: columns.length,
+      remapRowsForPersistence: (nextRows) => normalizeTableRows(nextRows, columns.length)
+    };
+  }
+
+  const schema = getTableSchema(props.schemaRef, { settings: ctx.settings });
+  if (!schema.columns.length) {
+    const fallbackColumns = normalizeTableColumns(props.customColumns);
+    const fallbackRows = normalizeTableRows(props.customRows, fallbackColumns.length);
+    const managedSelectOptionsByColumn = normalizeCustomSelectOptions(
+      props.customSelectOptions,
+      fallbackColumns
+    );
+    const selectOptionsByColumn: Record<string, SelectOption[]> = {};
+    fallbackColumns.forEach((column, index) => {
+      selectOptionsByColumn[column] = mergeSelectOptions(
+        managedSelectOptionsByColumn[column] || [],
+        buildSelectOptionsFromRows(index, fallbackRows)
+      );
+    });
+    return {
+      usingSchema: false,
+      columns: fallbackColumns,
+      rows: fallbackRows,
+      columnKinds: normalizeTableColumnKinds(props.customColumnTypes, fallbackColumns),
+      columnWidths: {},
+      hiddenColumns: [],
+      selectOptionsByColumn,
+      managedSelectOptionsByColumn,
+      schemaColumnByLabel: {},
+      storageColumnCount: fallbackColumns.length,
+      remapRowsForPersistence: (nextRows) => normalizeTableRows(nextRows, fallbackColumns.length)
+    };
+  }
+
+  const overrides: TableOverrides = props.overrides || {};
+  const schemaByKey = new Map(schema.columns.map((column) => [column.key, column]));
+  const schemaKeys = schema.columns.map((column) => column.key);
+  const orderedKeys: string[] = [];
+  normalizeStringArray(overrides.columnOrder).forEach((key) => {
+    if (schemaByKey.has(key) && !orderedKeys.includes(key)) orderedKeys.push(key);
+  });
+  schemaKeys.forEach((key) => {
+    if (!orderedKeys.includes(key)) orderedKeys.push(key);
+  });
+
+  const hiddenKeySet = new Set(
+    normalizeStringArray(overrides.hiddenColumns).filter((key) => schemaByKey.has(key))
+  );
+  const labelOverrides = isRecord(overrides.labelOverrides)
+    ? (overrides.labelOverrides as Record<string, unknown>)
+    : {};
+  const widthOverrides = isRecord(overrides.columnWidths)
+    ? (overrides.columnWidths as Record<string, unknown>)
+    : {};
+  const typeOverrides = isRecord(overrides.typeOverrides)
+    ? (overrides.typeOverrides as Record<string, unknown>)
+    : {};
+
+  const storageIndexByKey: Record<string, number> = {};
+  schemaKeys.forEach((key, index) => {
+    storageIndexByKey[key] = index;
+  });
+  const displayIndexByKey: Record<string, number> = {};
+  orderedKeys.forEach((key, index) => {
+    displayIndexByKey[key] = index;
+  });
+
+  const usedLabels = new Set<string>();
+  const resolvedColumns: ResolvedSchemaColumn[] = [];
+  orderedKeys.forEach((key) => {
+    const column = schemaByKey.get(key);
+    if (!column) return;
+    const rawTypeRef = typeof column.typeRef === "string" && column.typeRef.trim() ? column.typeRef : FALLBACK_TYPE_REF;
+    const typeDef = resolveTypeDef(rawTypeRef, props.schemaRef || "", key);
+    const kind = toTableColumnKind(typeDef.baseKind);
+    const overrideLabel = labelOverrides[key];
+    const labelSeed =
+      typeof overrideLabel === "string" && overrideLabel.trim()
+        ? overrideLabel.trim()
+        : column.label || key;
+    const label = createUniqueLabel(labelSeed, usedLabels);
+    const overrideWidth = widthOverrides[key];
+    const width =
+      typeof overrideWidth === "number" && Number.isFinite(overrideWidth) && overrideWidth > 0
+        ? overrideWidth
+        : typeof column.width === "number" && Number.isFinite(column.width) && column.width > 0
+          ? column.width
+          : undefined;
+    const typeContext: TypeRegistryContext = {
+      settings: isRecord(ctx.settings) ? (ctx.settings as TypeRegistryContext["settings"]) : undefined,
+      saveSettings: ctx.saveSettings,
+      column: {
+        key,
+        label,
+        config: column.config || null
+      }
+    };
+    const baseOptions = typeDef.getOptions ? typeDef.getOptions(typeContext) : [];
+    const selectOptions = applySelectOptionOverrides(baseOptions, typeOverrides[key], typeDef.overridePolicy);
+    resolvedColumns.push({
+      key,
+      label,
+      kind,
+      typeRef: rawTypeRef,
+      typeDef,
+      typeContext,
+      width,
+      selectOptions
+    });
+  });
+
+  const columns = resolvedColumns.map((column) => column.label);
+  const columnKinds: Record<string, TableColumnKind> = {};
+  const columnWidths: Record<string, number> = {};
+  const schemaColumnByLabel: Record<string, ResolvedSchemaColumn> = {};
+  const selectOptionsByColumn: Record<string, SelectOption[]> = {};
+  resolvedColumns.forEach((column) => {
+    columnKinds[column.label] = column.kind;
+    schemaColumnByLabel[column.label] = column;
+    selectOptionsByColumn[column.label] = column.selectOptions;
+    if (typeof column.width === "number") {
+      columnWidths[column.label] = column.width;
+    }
+  });
+  const hiddenColumns = resolvedColumns
+    .filter((column) => hiddenKeySet.has(column.key))
+    .map((column) => column.label);
+
+  const storageRows = normalizeTableRows(props.customRows, schemaKeys.length);
+  const displayRows = storageRows.map((row) =>
+    orderedKeys.map((key) => {
+      const storageIndex = storageIndexByKey[key];
+      return storageIndex >= 0 ? row[storageIndex] || "" : "";
+    })
+  );
+
+  const remapRowsForPersistence = (displayRowsInput: string[][]) => {
+    const normalizedDisplayRows = normalizeTableRows(displayRowsInput, orderedKeys.length);
+    return normalizedDisplayRows.map((row) =>
+      schemaKeys.map((key) => {
+        const displayIndex = displayIndexByKey[key];
+        return displayIndex >= 0 ? row[displayIndex] || "" : "";
+      })
+    );
+  };
+
+  return {
+    usingSchema: true,
+    columns,
+    rows: displayRows,
+    columnKinds,
+    columnWidths,
+    hiddenColumns,
+    selectOptionsByColumn,
+    managedSelectOptionsByColumn: {},
+    schemaColumnByLabel,
+    storageColumnCount: schemaKeys.length,
+    remapRowsForPersistence
+  };
+};
+
 type DefaultEditableTableProps = {
   block: PageBlockConfig<"editableTable">;
   mode: BlockRenderMode;
+  settings?: unknown;
+  saveSettings?: SaveSettingsFn;
   patchBlockProps: (patch: Partial<PageBlockPropsMap["editableTable"]>) => void;
   extraActions?: React.ReactNode;
   isExpanded: boolean;
@@ -148,57 +581,6 @@ type TableRowEntry = {
   rowIndex: number;
 };
 
-type TableNumberCellProps = {
-  value: string;
-  step?: number;
-  placeholder?: string;
-  onCommit: (next: string) => void;
-};
-
-const TableNumberCell: React.FC<TableNumberCellProps> = ({ value, step = 1, placeholder, onCommit }) => {
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  const commit = () => {
-    const trimmed = draft.trim();
-    if (!trimmed) {
-      if (value !== "") onCommit("");
-      return;
-    }
-    const parsed = Number(trimmed);
-    if (Number.isNaN(parsed)) {
-      setDraft(value);
-      return;
-    }
-    const next = String(parsed);
-    if (next === value) return;
-    onCommit(next);
-  };
-
-  return (
-    <input
-      className="cell-number"
-      type="number"
-      step={step}
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          setDraft(value);
-        }
-      }}
-      placeholder={placeholder}
-    />
-  );
-};
-
 type ColumnMenuEntry =
   | { kind: "separator"; key: string }
   | {
@@ -212,29 +594,22 @@ type ColumnMenuEntry =
       action?: () => void;
     };
 
-const ColumnMenuIcon: React.FC<{ viewBox?: string; children: React.ReactNode }> = ({
-  viewBox = "0 0 20 20",
-  children
-}) => (
-  <svg aria-hidden="true" viewBox={viewBox} className="column-menu-icon">
-    {children}
-  </svg>
-);
-
-const ColumnMenuChevronRight = () => (
-  <ColumnMenuIcon viewBox="0 0 16 16">
-    <path d="M6.722 3.238a.625.625 0 1 0-.884.884L9.716 8l-3.878 3.878a.625.625 0 0 0 .884.884l4.32-4.32a.625.625 0 0 0 0-.884z" />
-  </ColumnMenuIcon>
-);
-
 const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   block,
   mode,
+  settings,
+  saveSettings,
   patchBlockProps,
   extraActions,
   isExpanded,
   onToggleExpanded
 }) => {
+  const effectiveModel = useMemo(
+    () => resolveEffectiveTableModel(block.props, { settings, saveSettings }),
+    [block.props, settings, saveSettings]
+  );
+  const isSchemaBacked = effectiveModel.usingSchema;
+  const isTrackerApplicationsSchema = block.props.schemaRef === "tracker.applications@1";
   const rootRef = useRef<HTMLDivElement | null>(null);
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const columnMenuListRef = useRef<HTMLDivElement | null>(null);
@@ -244,7 +619,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
-  const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>(effectiveModel.hiddenColumns);
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [columnMenu, setColumnMenu] = useState<{ column: string; rename: string; filter: string } | null>(null);
@@ -259,18 +634,55 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   const [groupBy, setGroupBy] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [columnCalcs, setColumnCalcs] = useState<Record<string, TableCalcOp>>({});
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(effectiveModel.columnWidths);
   const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
-  const columns = useMemo(() => normalizeTableColumns(block.props.customColumns), [block.props.customColumns]);
-  const persistedColumnKinds = useMemo(
-    () => normalizeTableColumnKinds(block.props.customColumnTypes, columns),
-    [block.props.customColumnTypes, columns]
-  );
+  const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
+  const [editRowIndex, setEditRowIndex] = useState<number | null>(null);
+  const [editRowDraft, setEditRowDraft] = useState<string[] | null>(null);
+  const columns = useMemo(() => effectiveModel.columns, [effectiveModel.columns]);
+  const persistedColumnKinds = useMemo(() => effectiveModel.columnKinds, [effectiveModel.columnKinds]);
   const [columnKinds, setColumnKinds] = useState<Record<string, TableColumnKind>>(persistedColumnKinds);
-  const rows = useMemo(
-    () => normalizeTableRows(block.props.customRows, columns.length),
-    [block.props.customRows, columns.length]
+  const rows = useMemo(() => effectiveModel.rows, [effectiveModel.rows]);
+  const canEdit = mode === "edit";
+  const canEditStructure = canEdit && !isSchemaBacked;
+  const schemaConfigKey = useMemo(
+    () =>
+      JSON.stringify({
+        schemaRef: block.props.schemaRef || "",
+        overrides: block.props.overrides || {}
+      }),
+    [block.props.schemaRef, block.props.overrides]
   );
+  const trackerStages = useMemo(
+    () =>
+      isRecord(settings) ? normalizeStringArray((settings as Record<string, unknown>).stages) : [],
+    [settings]
+  );
+  const trackerOutcomes = useMemo(
+    () =>
+      isRecord(settings) ? normalizeStringArray((settings as Record<string, unknown>).outcomes) : [],
+    [settings]
+  );
+  const stageColumnIndex = useMemo(() => {
+    if (!isTrackerApplicationsSchema) return -1;
+    const schemaStageColumn = Object.values(effectiveModel.schemaColumnByLabel).find(
+      (column) => column.key === "stage"
+    );
+    if (schemaStageColumn) {
+      return columns.indexOf(schemaStageColumn.label);
+    }
+    return columns.findIndex((column) => column.trim().toLowerCase() === "stage");
+  }, [columns, effectiveModel.schemaColumnByLabel, isTrackerApplicationsSchema]);
+  const outcomeColumnIndex = useMemo(() => {
+    if (!isTrackerApplicationsSchema) return -1;
+    const schemaOutcomeColumn = Object.values(effectiveModel.schemaColumnByLabel).find(
+      (column) => column.key === "outcome"
+    );
+    if (schemaOutcomeColumn) {
+      return columns.indexOf(schemaOutcomeColumn.label);
+    }
+    return columns.findIndex((column) => column.trim().toLowerCase() === "outcome");
+  }, [columns, effectiveModel.schemaColumnByLabel, isTrackerApplicationsSchema]);
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   const computeColumnMenuPos = (anchor: HTMLElement, menuEl?: HTMLElement) => {
     const rect = anchor.getBoundingClientRect();
@@ -296,12 +708,37 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   }, [columns]);
 
   useEffect(() => {
+    if (!isSchemaBacked) return;
+    setHiddenColumns(effectiveModel.hiddenColumns);
+    setColumnWidths((prev) => ({ ...prev, ...effectiveModel.columnWidths }));
+  }, [isSchemaBacked, schemaConfigKey]);
+
+  useEffect(() => {
     setColumnKinds(persistedColumnKinds);
   }, [persistedColumnKinds]);
 
   useEffect(() => {
-    setPinnedColumn((prev) => (prev && columns.includes(prev) ? prev : null));
-  }, [columns]);
+    setPinnedColumn((prev) => {
+      const visible = columns.filter((column) => !hiddenColumns.includes(column));
+      if (visible.length === 0) return null;
+      if (prev && visible.includes(prev)) return prev;
+      return visible[0];
+    });
+  }, [columns, hiddenColumns]);
+
+  useEffect(() => {
+    if (!isTrackerApplicationsSchema) return;
+    if (stageFilter !== "all" && !trackerStages.includes(stageFilter)) {
+      setStageFilter("all");
+    }
+  }, [isTrackerApplicationsSchema, stageFilter, trackerStages]);
+
+  useEffect(() => {
+    if (!isTrackerApplicationsSchema) return;
+    if (outcomeFilter !== "all" && !trackerOutcomes.includes(outcomeFilter)) {
+      setOutcomeFilter("all");
+    }
+  }, [isTrackerApplicationsSchema, outcomeFilter, trackerOutcomes]);
 
   useEffect(() => {
     if (!columnMenu) return;
@@ -367,7 +804,8 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     if (!resizing) return;
     const handleMove = (event: MouseEvent) => {
       const delta = event.clientX - resizing.startX;
-      const nextWidth = Math.max(90, resizing.startWidth + delta);
+      const minWidth = estimateHeaderMinWidth(resizing.column);
+      const nextWidth = Math.max(minWidth, resizing.startWidth + delta);
       setColumnWidths((prev) => ({ ...prev, [resizing.column]: nextWidth }));
     };
     const handleUp = () => setResizing(null);
@@ -378,6 +816,16 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
       document.removeEventListener("mouseup", handleUp);
     };
   }, [resizing]);
+
+  useEffect(() => {
+    if (detailRowIndex !== null && (detailRowIndex < 0 || detailRowIndex >= rows.length)) {
+      setDetailRowIndex(null);
+    }
+    if (editRowIndex !== null && (editRowIndex < 0 || editRowIndex >= rows.length)) {
+      setEditRowIndex(null);
+      setEditRowDraft(null);
+    }
+  }, [detailRowIndex, editRowIndex, rows.length]);
 
   const visibleColumns = useMemo(() => {
     const base = columns
@@ -394,15 +842,51 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   const selectOptionsByColumn = useMemo(() => {
     const next: Record<string, SelectOption[]> = {};
     columns.forEach((column, index) => {
-      next[column] = buildSelectOptionsFromRows(index, rows);
+      const optionsFromRows = buildSelectOptionsFromRows(index, rows);
+      const schemaOptions = effectiveModel.selectOptionsByColumn[column] || [];
+      next[column] = mergeSelectOptions(schemaOptions, optionsFromRows);
     });
     return next;
-  }, [columns, rows]);
+  }, [columns, rows, effectiveModel.selectOptionsByColumn]);
 
-  const persistTable = (nextColumns: string[], nextRows: string[][]) => {
+  const persistTable = (
+    nextColumns: string[],
+    nextRows: string[][],
+    extraPatch: Partial<PageBlockPropsMap["editableTable"]> = {}
+  ) => {
+    if (isSchemaBacked) {
+      const storageRows = effectiveModel.remapRowsForPersistence(nextRows);
+      patchBlockProps({
+        customRows: normalizeTableRows(storageRows, effectiveModel.storageColumnCount),
+        ...extraPatch
+      });
+      return;
+    }
     patchBlockProps({
       customColumns: normalizeTableColumns(nextColumns),
-      customRows: normalizeTableRows(nextRows, nextColumns.length)
+      customRows: normalizeTableRows(nextRows, nextColumns.length),
+      ...extraPatch
+    });
+  };
+
+  const readLegacySelectOptionsFromProps = (columnList: string[]): Record<string, SelectOption[]> =>
+    normalizeCustomSelectOptions(block.props.customSelectOptions, columnList);
+
+  const persistLegacySelectOptions = (
+    column: string,
+    nextOptions: SelectOption[],
+    columnList: string[] = columns
+  ) => {
+    if (isSchemaBacked) return;
+    const nextByColumn = readLegacySelectOptionsFromProps(columnList);
+    const normalized = normalizeSelectOptions(nextOptions || []);
+    if (normalized.length > 0) {
+      nextByColumn[column] = normalized;
+    } else {
+      delete nextByColumn[column];
+    }
+    patchBlockProps({
+      customSelectOptions: serializeCustomSelectOptions(nextByColumn, columnList)
     });
   };
 
@@ -410,6 +894,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     nextKinds: Record<string, TableColumnKind>,
     columnList: string[] = columns
   ) => {
+    if (isSchemaBacked) return;
     const normalized = normalizeTableColumnKinds(nextKinds, columnList);
     setColumnKinds(normalized);
     patchBlockProps({ customColumnTypes: normalized });
@@ -477,11 +962,25 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const handleRenameColumn = (colIndex: number, value: string) => {
+    if (!canEditStructure) return;
     const oldName = columns[colIndex];
     const nextName = value.trim() || oldName;
     const nextColumns = [...columns];
     nextColumns[colIndex] = nextName;
-    persistTable(nextColumns, rows);
+    let extraPatch: Partial<PageBlockPropsMap["editableTable"]> = {};
+    if (oldName !== nextName) {
+      const nextSelectOptions = readLegacySelectOptionsFromProps(columns);
+      const sourceOptions = nextSelectOptions[oldName];
+      if (sourceOptions) {
+        const merged = mergeSelectOptions(nextSelectOptions[nextName] || [], sourceOptions);
+        nextSelectOptions[nextName] = merged;
+        delete nextSelectOptions[oldName];
+      }
+      extraPatch = {
+        customSelectOptions: serializeCustomSelectOptions(nextSelectOptions, nextColumns)
+      };
+    }
+    persistTable(nextColumns, rows, extraPatch);
     renameColumnMeta(oldName, nextName, nextColumns);
     setColumnMenu((prev) =>
       prev && prev.column === oldName ? { ...prev, column: nextName, rename: nextName } : prev
@@ -489,6 +988,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const handleDeleteColumn = (colIndex: number) => {
+    if (!canEditStructure) return;
     if (columns.length <= 1) return;
     const columnLabel = columns[colIndex] || `Column ${colIndex + 1}`;
     const confirmed = window.confirm(
@@ -498,18 +998,24 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     const column = columns[colIndex];
     const nextColumns = columns.filter((_, index) => index !== colIndex);
     const nextRows = rows.map((row) => row.filter((_, index) => index !== colIndex));
-    persistTable(nextColumns, nextRows);
+    const nextSelectOptions = readLegacySelectOptionsFromProps(columns);
+    delete nextSelectOptions[column];
+    persistTable(nextColumns, nextRows, {
+      customSelectOptions: serializeCustomSelectOptions(nextSelectOptions, nextColumns)
+    });
     clearColumnMeta(column, nextColumns);
     setColumnMenu(null);
   };
 
   const handleAddColumn = () => {
+    if (!canEditStructure) return;
     const nextColumns = [...columns, `Column ${columns.length + 1}`];
     const nextRows = rows.map((row) => [...row, ""]);
     persistTable(nextColumns, nextRows);
   };
 
   const insertColumnAt = (index: number) => {
+    if (!canEditStructure) return;
     const targetIndex = Math.max(0, Math.min(index, columns.length));
     const nextColumns = [...columns];
     nextColumns.splice(targetIndex, 0, `Column ${columns.length + 1}`);
@@ -522,6 +1028,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const duplicateColumnAt = (index: number) => {
+    if (!canEditStructure) return;
     if (index < 0 || index >= columns.length) return;
     const sourceName = columns[index];
     const buildCandidate = (attempt: number) =>
@@ -540,7 +1047,14 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
       next.splice(index + 1, 0, row[index] || "");
       return next;
     });
-    persistTable(nextColumns, nextRows);
+    const nextSelectOptions = readLegacySelectOptionsFromProps(columns);
+    const sourceOptions = nextSelectOptions[sourceName] || [];
+    if (sourceOptions.length > 0) {
+      nextSelectOptions[nextName] = sourceOptions.map((option) => ({ ...option }));
+    }
+    persistTable(nextColumns, nextRows, {
+      customSelectOptions: serializeCustomSelectOptions(nextSelectOptions, nextColumns)
+    });
     updateColumnKinds(
       { ...columnKinds, [nextName]: columnKinds[sourceName] || "text" },
       nextColumns
@@ -561,6 +1075,41 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     persistTable(columns, nextRows);
   };
 
+  const openDetailRow = (rowIndex: number) => {
+    if (rowIndex < 0 || rowIndex >= rows.length) return;
+    setDetailRowIndex(rowIndex);
+  };
+
+  const openEditRow = (rowIndex: number) => {
+    if (!canEdit) return;
+    const row = rows[rowIndex];
+    if (!row) return;
+    setEditRowIndex(rowIndex);
+    setEditRowDraft(Array.from({ length: columns.length }, (_, colIndex) => row[colIndex] || ""));
+  };
+
+  const updateEditDraftCell = (colIndex: number, value: string) => {
+    setEditRowDraft((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      next[colIndex] = value;
+      return next;
+    });
+  };
+
+  const saveEditedRow = () => {
+    if (!canEdit) return;
+    if (editRowIndex === null || !editRowDraft) return;
+    const nextRows = rows.map((row, index) =>
+      index === editRowIndex
+        ? Array.from({ length: columns.length }, (_, colIndex) => editRowDraft[colIndex] || "")
+        : row
+    );
+    persistTable(columns, nextRows);
+    setEditRowIndex(null);
+    setEditRowDraft(null);
+  };
+
   const handleDeleteRow = (rowIndex: number) => {
     const confirmed = window.confirm(
       `Delete row ${rowIndex + 1}? This action cannot be undone.`
@@ -568,6 +1117,19 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     if (!confirmed) return;
     const nextRows = rows.filter((_, index) => index !== rowIndex);
     persistTable(columns, nextRows);
+    setDetailRowIndex((prev) => {
+      if (prev === null) return prev;
+      if (prev === rowIndex) return null;
+      return prev > rowIndex ? prev - 1 : prev;
+    });
+    setEditRowIndex((prev) => {
+      if (prev === null) return prev;
+      if (prev === rowIndex) {
+        setEditRowDraft(null);
+        return null;
+      }
+      return prev > rowIndex ? prev - 1 : prev;
+    });
   };
 
   const handleCellChange = (rowIndex: number, colIndex: number, value: string) => {
@@ -577,7 +1139,141 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     persistTable(columns, nextRows);
   };
 
+  const buildSelectCellOptions = (column: string, cellValue: string): SelectOption[] => {
+    const selectOptions = selectOptionsByColumn[column] || [];
+    const hasCurrentSelectValue =
+      cellValue.trim().length > 0 &&
+      selectOptions.some((option) => option.label === cellValue);
+    return hasCurrentSelectValue || cellValue.trim().length === 0
+      ? selectOptions
+      : [{ label: cellValue }, ...selectOptions];
+  };
+
+  const buildLegacyTypeContext = (
+    column: string,
+    kind: TableColumnKind
+  ): TypeRegistryContext => ({
+    column: {
+      key: column,
+      label: column
+    },
+    selectState:
+      kind === "select"
+        ? {
+            options:
+              effectiveModel.managedSelectOptionsByColumn[column] ||
+              selectOptionsByColumn[column] ||
+              [],
+            setOptions: (nextOptions) =>
+              persistLegacySelectOptions(column, nextOptions),
+            defaultColor: DEFAULT_SELECT_OPTION_COLOR
+          }
+        : undefined
+  });
+
+  const serializeTypedValueForColumn = (column: string, value: unknown): string | null => {
+    const schemaColumn = effectiveModel.schemaColumnByLabel[column];
+    if (schemaColumn) {
+      const serialized = schemaColumn.typeDef.serialize(value, schemaColumn.typeContext);
+      const parsed = schemaColumn.typeDef.parse(serialized, schemaColumn.typeContext);
+      const validation = schemaColumn.typeDef.validate?.(parsed, schemaColumn.typeContext);
+      if (validation && !validation.valid) {
+        console.warn(
+          `[EditableTable] Validation failed for column "${schemaColumn.key}" (${schemaColumn.typeRef}): ${validation.reason || "invalid value"}`
+        );
+        return null;
+      }
+      return serialized;
+    }
+
+    const kind = getColumnKind(column);
+    const legacyTypeRef = LEGACY_KIND_TYPE_REFS[kind] || FALLBACK_TYPE_REF;
+    const legacyTypeDef = resolveTypeDef(legacyTypeRef, "editableTable.legacy", column);
+    const legacyTypeContext = buildLegacyTypeContext(column, kind);
+    const serialized = legacyTypeDef.serialize(value, legacyTypeContext);
+    const parsed = legacyTypeDef.parse(serialized, legacyTypeContext);
+    const validation = legacyTypeDef.validate?.(parsed, legacyTypeContext);
+    if (validation && !validation.valid) {
+      console.warn(
+        `[EditableTable] Validation failed for legacy column "${column}" (${legacyTypeRef}): ${validation.reason || "invalid value"}`
+      );
+      return null;
+    }
+    return serialized;
+  };
+
+  const renderTypedCellByColumn = ({
+    column,
+    rawValue,
+    canEditCell,
+    highlightQuery,
+    onCommit
+  }: {
+    column: string;
+    rawValue: string;
+    canEditCell: boolean;
+    highlightQuery?: string;
+    onCommit: (next: unknown) => void;
+  }) => {
+    const schemaColumn = effectiveModel.schemaColumnByLabel[column];
+    const selectCellOptions = buildSelectCellOptions(column, rawValue);
+
+    if (schemaColumn) {
+      const parsedCellValue = schemaColumn.typeDef.parse(rawValue, schemaColumn.typeContext);
+      const schemaSelectActions =
+        schemaColumn.kind === "select"
+          ? schemaColumn.typeDef.getSelectActions?.(schemaColumn.typeContext)
+          : undefined;
+      return schemaColumn.typeDef.renderCell({
+        value: parsedCellValue,
+        rawValue,
+        canEdit: canEditCell,
+        highlightQuery,
+        options: selectCellOptions,
+        context: schemaColumn.typeContext,
+        selectActions: schemaSelectActions,
+        onCommit
+      });
+    }
+
+    const kind = getColumnKind(column);
+    const legacyTypeRef = LEGACY_KIND_TYPE_REFS[kind] || FALLBACK_TYPE_REF;
+    const legacyTypeDef = resolveTypeDef(legacyTypeRef, "editableTable.legacy", column);
+    const legacyTypeContext = buildLegacyTypeContext(column, kind);
+    const legacyParsedValue = legacyTypeDef.parse(rawValue, legacyTypeContext);
+    const legacySelectActions =
+      kind === "select"
+        ? legacyTypeDef.getSelectActions?.(legacyTypeContext)
+        : undefined;
+
+    return legacyTypeDef.renderCell({
+      value: legacyParsedValue,
+      rawValue,
+      canEdit: canEditCell,
+      highlightQuery,
+      options: kind === "select" ? selectCellOptions : undefined,
+      context: legacyTypeContext,
+      selectActions: legacySelectActions,
+      onCommit
+    });
+  };
+
+  const commitTypedCellValue = (rowIndex: number, colIndex: number, value: unknown) => {
+    const column = columns[colIndex];
+    const serialized = serializeTypedValueForColumn(column, value);
+    if (serialized === null) return;
+    handleCellChange(rowIndex, colIndex, serialized);
+  };
+
+  const commitTypedDraftCellValue = (colIndex: number, value: unknown) => {
+    const column = columns[colIndex];
+    const serialized = serializeTypedValueForColumn(column, value);
+    if (serialized === null) return;
+    updateEditDraftCell(colIndex, serialized);
+  };
+
   const moveColumn = (fromIndex: number, toIndex: number) => {
+    if (!canEditStructure) return;
     if (toIndex < 0 || toIndex >= columns.length || toIndex === fromIndex) return;
     const fromName = columns[fromIndex];
     const toName = columns[toIndex];
@@ -595,7 +1291,8 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
       ...rows.map((row) => String(row[colIndex] || ""))
     ];
     const maxLen = sample.reduce((max, value) => Math.max(max, value.length), 8);
-    const nextWidth = Math.max(120, Math.min(560, maxLen * 8 + 36));
+    const minWidth = estimateHeaderMinWidth(column);
+    const nextWidth = Math.max(minWidth, Math.min(560, maxLen * 8 + 36));
     setColumnWidths((prev) => ({ ...prev, [column]: nextWidth }));
   };
 
@@ -662,6 +1359,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const applyColumnRename = () => {
+    if (!canEditStructure) return;
     if (!columnMenu) return;
     const colIndex = columns.indexOf(columnMenu.column);
     if (colIndex < 0) return;
@@ -673,7 +1371,8 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     handleRenameColumn(colIndex, nextLabel);
   };
 
-  const getColumnWidth = (column: string) => columnWidths[column] || DEFAULT_TABLE_COLUMN_WIDTH;
+  const getColumnWidth = (column: string) =>
+    Math.max(columnWidths[column] || DEFAULT_TABLE_COLUMN_WIDTH, estimateHeaderMinWidth(column));
 
   const baseEntries = useMemo<TableRowEntry[]>(
     () => rows.map((row, rowIndex) => ({ row, rowIndex })),
@@ -694,17 +1393,36 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
       );
   }, [baseEntries, query, visibleColumns]);
 
+  const advancedFilteredEntries = useMemo(() => {
+    if (!isTrackerApplicationsSchema) return searchedEntries;
+    return searchedEntries.filter(({ row }) => {
+      const stageValue = stageColumnIndex >= 0 ? String(row[stageColumnIndex] || "").trim() : "";
+      const outcomeValue = outcomeColumnIndex >= 0 ? String(row[outcomeColumnIndex] || "").trim() : "";
+      const matchesStage = stageFilter === "all" || stageColumnIndex < 0 || stageValue === stageFilter;
+      const matchesOutcome =
+        outcomeFilter === "all" || outcomeColumnIndex < 0 || outcomeValue === outcomeFilter;
+      return matchesStage && matchesOutcome;
+    });
+  }, [
+    isTrackerApplicationsSchema,
+    outcomeColumnIndex,
+    outcomeFilter,
+    searchedEntries,
+    stageColumnIndex,
+    stageFilter
+  ]);
+
   const filteredEntries = useMemo(() => {
     const activeFilters = Object.entries(columnFilters).filter(([, value]) => value.trim().length > 0);
-    if (activeFilters.length === 0) return searchedEntries;
-    return searchedEntries.filter(({ row }) =>
+    if (activeFilters.length === 0) return advancedFilteredEntries;
+    return advancedFilteredEntries.filter(({ row }) =>
       activeFilters.every(([column, value]) => {
         const colIndex = columns.indexOf(column);
         if (colIndex < 0) return true;
         return String(row[colIndex] || "").toLowerCase().includes(value.trim().toLowerCase());
       })
     );
-  }, [columnFilters, columns, searchedEntries]);
+  }, [advancedFilteredEntries, columnFilters, columns]);
 
   const orderedEntries = useMemo(() => {
     if (!sortConfig) return filteredEntries;
@@ -776,8 +1494,6 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     if (op === "max") return String(Math.max(...nums));
     return "";
   };
-  const canEdit = mode === "edit";
-
   const findColumnIndex = (...candidates: string[]) => {
     const lowered = new Set(candidates.map((candidate) => candidate.trim().toLowerCase()));
     return columns.findIndex((column) => lowered.has(column.trim().toLowerCase()));
@@ -816,113 +1532,28 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const getColumnKind = (column: string): TableColumnKind => columnKinds[column] || "text";
-  const iconChangeType = (
-    <ColumnMenuIcon>
-      <path d="M6.475 3.125a.625.625 0 1 0 0 1.25h7.975c.65 0 1.175.526 1.175 1.175v6.057l-1.408-1.408a.625.625 0 1 0-.884.884l2.475 2.475a.625.625 0 0 0 .884 0l2.475-2.475a.625.625 0 0 0-.884-.884l-1.408 1.408V5.55a2.425 2.425 0 0 0-2.425-2.425zM3.308 6.442a.625.625 0 0 1 .884 0l2.475 2.475a.625.625 0 1 1-.884.884L4.375 8.393v6.057c0 .649.526 1.175 1.175 1.175h7.975a.625.625 0 0 1 0 1.25H5.55a2.425 2.425 0 0 1-2.425-2.425V8.393L1.717 9.801a.625.625 0 1 1-.884-.884z" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeText = (
-    <ColumnMenuIcon>
-      <path d="M4 5.25c0-.345.28-.625.625-.625h10.75a.625.625 0 1 1 0 1.25H4.625A.625.625 0 0 1 4 5.25m0 4c0-.345.28-.625.625-.625h7.25a.625.625 0 1 1 0 1.25h-7.25A.625.625 0 0 1 4 9.25m0 4c0-.345.28-.625.625-.625h10.75a.625.625 0 1 1 0 1.25H4.625A.625.625 0 0 1 4 13.25" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeNumber = (
-    <ColumnMenuIcon>
-      <path d="M7.25 4.25a.625.625 0 0 1 1.23.252L8.24 5.75h3.52l.26-1.498a.625.625 0 1 1 1.23.216l-.23 1.282h1.355a.625.625 0 1 1 0 1.25h-1.58l-.7 4h1.655a.625.625 0 1 1 0 1.25H12.86l-.255 1.458a.625.625 0 0 1-1.23-.216l.216-1.242H8.06l-.255 1.458a.625.625 0 0 1-1.23-.216l.216-1.242H5.375a.625.625 0 1 1 0-1.25h1.64l.7-4H6.125a.625.625 0 1 1 0-1.25h1.81zm1.28 2.75-.7 4h3.52l.7-4z" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeSelect = (
-    <ColumnMenuIcon>
-      <path d="M5.5 5.5h9A1.5 1.5 0 0 1 16 7v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 4 13V7a1.5 1.5 0 0 1 1.5-1.5m0 1.25a.25.25 0 0 0-.25.25v6c0 .138.112.25.25.25h9a.25.25 0 0 0 .25-.25V7a.25.25 0 0 0-.25-.25zm3.4 2.2a.625.625 0 0 1 .884 0L10 9.366l.216-.216a.625.625 0 1 1 .884.884l-.658.658a.625.625 0 0 1-.884 0L8.9 10.034a.625.625 0 0 1 0-.884" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeDate = (
-    <ColumnMenuIcon>
-      <path d="M6.25 3.5a.625.625 0 0 1 .625.625V5h6.25v-.875a.625.625 0 1 1 1.25 0V5h.375A1.75 1.75 0 0 1 16.5 6.75v8.5A1.75 1.75 0 0 1 14.75 17h-9.5A1.75 1.75 0 0 1 3.5 15.25v-8.5A1.75 1.75 0 0 1 5.25 5h.375v-.875A.625.625 0 0 1 6.25 3.5m-1 2.75a.5.5 0 0 0-.5.5v1h10.5v-1a.5.5 0 0 0-.5-.5zm-.5 3v6a.5.5 0 0 0 .5.5h9.5a.5.5 0 0 0 .5-.5v-6z" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeCheckbox = (
-    <ColumnMenuIcon>
-      <path d="M6 4.75h8A1.25 1.25 0 0 1 15.25 6v8A1.25 1.25 0 0 1 14 15.25H6A1.25 1.25 0 0 1 4.75 14V6A1.25 1.25 0 0 1 6 4.75m0 1.25a.0 0 0 0-.0 0v8a.0 0 0 0 .0 0h8a.0 0 0 0 .0 0V6a.0 0 0 0-.0 0zm7.192 2.442a.625.625 0 0 1 0 .884l-3.25 3.25a.625.625 0 0 1-.884 0l-1.75-1.75a.625.625 0 1 1 .884-.884l1.308 1.308 2.808-2.808a.625.625 0 0 1 .884 0" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeRating = (
-    <ColumnMenuIcon>
-      <path d="M10 3.25a.75.75 0 0 1 .684.444l1.6 3.5 3.79.38a.75.75 0 0 1 .422 1.305l-2.82 2.44.82 3.66a.75.75 0 0 1-1.11.81L10 13.64 6.614 15.79a.75.75 0 0 1-1.11-.81l.82-3.66-2.82-2.44a.75.75 0 0 1 .422-1.305l3.79-.38 1.6-3.5A.75.75 0 0 1 10 3.25m0 2.59-1.02 2.23a.75.75 0 0 1-.585.43l-2.42.243 1.8 1.557a.75.75 0 0 1 .24.742l-.53 2.36 2.18-1.385a.75.75 0 0 1 .805 0l2.18 1.385-.53-2.36a.75.75 0 0 1 .24-.742l1.8-1.557-2.42-.243a.75.75 0 0 1-.585-.43z" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeContacts = (
-    <ColumnMenuIcon>
-      <path d="M10 3.5a3.25 3.25 0 1 1 0 6.5 3.25 3.25 0 0 1 0-6.5m0 1.25a2 2 0 1 0 0 4 2 2 0 0 0 0-4m0 6.75c2.9 0 5.25 1.68 5.25 3.75 0 .69-.56 1.25-1.25 1.25H6c-.69 0-1.25-.56-1.25-1.25 0-2.07 2.35-3.75 5.25-3.75m0 1.25c-2.14 0-4 1.17-4 2.5h8c0-1.33-1.86-2.5-4-2.5" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeLinks = (
-    <ColumnMenuIcon>
-      <path d="M8.22 7.28a2.5 2.5 0 0 1 3.536 0 .625.625 0 1 1-.884.884 1.25 1.25 0 0 0-1.768 0l-1.06 1.06a1.25 1.25 0 0 0 0 1.768.625.625 0 1 1-.884.884 2.5 2.5 0 0 1 0-3.536zM11.78 12.72a2.5 2.5 0 0 1-3.536 0 .625.625 0 1 1 .884-.884 1.25 1.25 0 0 0 1.768 0l1.06-1.06a1.25 1.25 0 0 0 0-1.768.625.625 0 1 1 .884-.884 2.5 2.5 0 0 1 0 3.536z" />
-    </ColumnMenuIcon>
-  );
-  const iconTypeDocuments = (
-    <ColumnMenuIcon>
-      <path d="M5 2.5h6l4 4V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Zm6 1.5H6v12h8V8h-3V4Z" />
-    </ColumnMenuIcon>
-  );
-  const iconFilter = (
-    <ColumnMenuIcon>
-      <path d="M3 4.875a.625.625 0 1 0 0 1.25h14a.625.625 0 1 0 0-1.25zm2.125 5.742h9.75a.625.625 0 1 0 0-1.25h-9.75a.625.625 0 1 0 0 1.25m1.5 3.883c0-.345.28-.625.625-.625h5.5a.625.625 0 1 1 0 1.25h-5.5a.625.625 0 0 1-.625-.625" />
-    </ColumnMenuIcon>
-  );
-  const iconSort = (
-    <ColumnMenuIcon>
-      <path d="M14.075 3.45a.625.625 0 0 0-.884 0l-3.497 3.5a.625.625 0 0 0 .883.884l2.431-2.431v10.705a.625.625 0 0 0 1.25 0V5.402l2.431 2.43a.625.625 0 1 0 .884-.883zM2.427 12.167a.625.625 0 0 1 .884 0l2.43 2.431V3.893a.625.625 0 0 1 1.25 0v10.705l2.431-2.43a.625.625 0 0 1 .884.883L6.81 16.55a.625.625 0 0 1-.884 0l-3.498-3.498a.625.625 0 0 1 0-.884" />
-    </ColumnMenuIcon>
-  );
-  const iconGroup = (
-    <ColumnMenuIcon>
-      <path d="M3.925 2.95a.55.55 0 1 0 0 1.1h12.15a.55.55 0 1 0 0-1.1zm0 7.767a.55.55 0 0 0 0 1.1h12.15a.55.55 0 1 0 0-1.1zm-.55-4.234a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v1.8a1 1 0 0 1-1 1h-1.8a1 1 0 0 1-1-1zm1.1.1v1.6h1.6v-1.6zm4.625-1.1a1 1 0 0 0-1 1v1.8a1 1 0 0 0 1 1h1.8a1 1 0 0 0 1-1v-1.8a1 1 0 0 0-1-1zm.1 2.7v-1.6h1.6v1.6zm3.625-1.7a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v1.8a1 1 0 0 1-1 1h-1.8a1 1 0 0 1-1-1zm1.1.1v1.6h1.6v-1.6zm-9.55 6.667a1 1 0 0 0-1 1v1.8a1 1 0 0 0 1 1h1.8a1 1 0 0 0 1-1v-1.8a1 1 0 0 0-1-1zm.1 2.7v-1.6h1.6v1.6zm3.625-1.7a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v1.8a1 1 0 0 1-1 1H9.1a1 1 0 0 1-1-1zm1.1.1v1.6h1.6v-1.6zm4.625-1.1a1 1 0 0 0-1 1v1.8a1 1 0 0 0 1 1h1.8a1 1 0 0 0 1-1v-1.8a1 1 0 0 0-1-1zm.1 2.7v-1.6h1.6v1.6z" />
-    </ColumnMenuIcon>
-  );
-  const iconCalc = (
-    <ColumnMenuIcon>
-      <path d="M4.78 3.524a.63.63 0 0 1 .583-.399h9.274a.625.625 0 1 1 0 1.25H6.976l5.663 5.163a.625.625 0 0 1 0 .924l-5.663 5.163h7.661a.625.625 0 1 1 0 1.25H5.363a.625.625 0 0 1-.421-1.087L11.29 10 4.942 4.212a.625.625 0 0 1-.162-.688" />
-    </ColumnMenuIcon>
-  );
-  const iconPin = (
-    <ColumnMenuIcon>
-      <path d="M6.653 2.375A.625.625 0 0 0 6.028 3v.474A3.62 3.62 0 0 0 7.24 6.179l.289.258-.157 1.603a4.625 4.625 0 0 0-2.997 4.33V13c0 .345.28.625.625.625h4.13v3.08c0 .158.035.317.1.46l.433.94a.35.35 0 0 0 .565.103l.063-.087.44-.956c.065-.142.1-.3.1-.46v-3.08H15c.345 0 .625-.28.625-.625v-.63a4.625 4.625 0 0 0-2.997-4.33l-.157-1.603.289-.258a3.63 3.63 0 0 0 1.212-2.705V3a.625.625 0 0 0-.625-.625zm1.42 2.871c-.468-.417-.75-1-.79-1.621h5.434a2.38 2.38 0 0 1-.79 1.621l-.525.47a.63.63 0 0 0-.206.527l.227 2.318a.63.63 0 0 0 .422.531l.237.08a3.375 3.375 0 0 1 2.293 3.197v.006h-8.75v-.006c0-1.447.922-2.733 2.293-3.197l.237-.08a.63.63 0 0 0 .422-.531l.227-2.318a.63.63 0 0 0-.206-.528z" />
-    </ColumnMenuIcon>
-  );
-  const iconHide = (
-    <ColumnMenuIcon>
-      <path d="M3.893 2.875a.626.626 0 0 1 .79-.02l.092.088.126.146.016.035.072.105 11.273 13.15a.624.624 0 0 1-1.036.678l-1.615-1.884c-1.12.408-2.339.633-3.611.633-3.757 0-7.049-1.946-8.707-4.843l-.155-.283a1.46 1.46 0 0 1 0-1.359l.155-.283c.89-1.554 2.249-2.835 3.898-3.688L3.826 3.757l-.072-.105a.626.626 0 0 1 .14-.777M6.031 6.33c-1.564.744-2.842 1.913-3.653 3.33l-.134.243a.21.21 0 0 0 0 .197l.134.243c1.426 2.49 4.292 4.214 7.622 4.214.958 0 1.877-.144 2.734-.406l-1.1-1.284a3.3 3.3 0 0 1-1.634.438l-.17-.004a3.307 3.307 0 0 1-3.132-3.133l-.004-.17c0-.777.269-1.492.718-2.056zm2.904 3.387q-.037.135-.038.281a1.104 1.104 0 0 0 1.218 1.097zM10 4.194c3.878 0 7.26 2.075 8.862 5.127l.074.164c.125.332.125.7 0 1.032l-.074.163a9.3 9.3 0 0 1-2.987 3.327l-.82-.955c1.15-.764 2.084-1.779 2.7-2.953l.02-.048a.2.2 0 0 0 0-.1l-.02-.049C16.382 7.282 13.438 5.445 10 5.445q-.705 0-1.378.1l-.94-1.098A10.7 10.7 0 0 1 10 4.194" />
-      <path d="M10.17 6.694a3.307 3.307 0 0 1 3.136 3.303l-.005.17a3.3 3.3 0 0 1-.116.702L9.624 6.713A3 3 0 0 1 10 6.691z" />
-    </ColumnMenuIcon>
-  );
-  const iconFit = (
-    <ColumnMenuIcon>
-      <path d="M16.625 8A2.625 2.625 0 0 0 14 5.375h-1.42a.625.625 0 1 1 0-1.25H14a3.875 3.875 0 0 1 0 7.75H4.259l3.333 3.333a.625.625 0 0 1-.884.884l-4.4-4.4a.625.625 0 0 1 0-.884l4.4-4.4a.625.625 0 0 1 .884.884l-3.333 3.333H14A2.625 2.625 0 0 0 16.625 8" />
-    </ColumnMenuIcon>
-  );
-  const iconInsertLeft = (
-    <ColumnMenuIcon>
-      <path d="M3.024 3.524a1.92 1.92 0 0 0-1.918 1.92v9.113a1.92 1.92 0 0 0 3.837 0V5.444a1.92 1.92 0 0 0-1.919-1.92m0 1.251c.37 0 .67.3.67.67v9.112a.67.67 0 0 1-1.338 0V5.444c0-.369.3-.668.668-.669m8.612.383a.625.625 0 0 0-.884 0l-4.4 4.4a.626.626 0 0 0 0 .884l4.4 4.4a.626.626 0 0 0 .884-.884l-3.334-3.333h9.967a.625.625 0 0 0 0-1.25H8.303l3.333-3.333a.625.625 0 0 0 0-.884" />
-    </ColumnMenuIcon>
-  );
-  const iconInsertRight = (
-    <ColumnMenuIcon>
-      <path d="M16.976 3.524a1.92 1.92 0 0 1 1.918 1.92v9.113a1.92 1.92 0 0 1-3.837 0V5.444c0-1.06.859-1.92 1.919-1.92m0 1.251a.67.67 0 0 0-.67.67v9.112a.67.67 0 0 0 1.338 0V5.444a.67.67 0 0 0-.668-.669m-8.612.383a.625.625 0 0 1 .884 0l4.4 4.4a.626.626 0 0 1 0 .884l-4.4 4.4a.626.626 0 0 1-.884-.884l3.334-3.333H1.731a.625.625 0 0 1 0-1.25h9.966L8.364 6.042a.625.625 0 0 1 0-.884" />
-    </ColumnMenuIcon>
-  );
-  const iconDuplicate = (
-    <ColumnMenuIcon>
-      <path d="M4.5 2.375A2.125 2.125 0 0 0 2.375 4.5V12c0 1.174.951 2.125 2.125 2.125h1.625v1.625c0 1.174.951 2.125 2.125 2.125h7.5a2.125 2.125 0 0 0 2.125-2.125v-7.5a2.125 2.125 0 0 0-2.125-2.125h-1.625V4.5A2.125 2.125 0 0 0 12 2.375zm8.375 3.75H8.25A2.125 2.125 0 0 0 6.125 8.25v4.625H4.5A.875.875 0 0 1 3.625 12V4.5c0-.483.392-.875.875-.875H12c.483 0 .875.392.875.875zm-5.5 2.125c0-.483.392-.875.875-.875h7.5c.483 0 .875.392.875.875v7.5a.875.875 0 0 1-.875.875h-7.5a.875.875 0 0 1-.875-.875z" />
-    </ColumnMenuIcon>
-  );
-  const iconTrash = (
-    <ColumnMenuIcon>
-      <path d="M8.806 8.505a.55.55 0 0 0-1.1 0v5.979a.55.55 0 1 0 1.1 0zm3.488 0a.55.55 0 0 0-1.1 0v5.979a.55.55 0 0 0 1.1 0z" />
-      <path d="M6.386 3.925v1.464H3.523a.625.625 0 1 0 0 1.25h.897l.393 8.646A2.425 2.425 0 0 0 7.236 17.6h5.528a2.425 2.425 0 0 0 2.422-2.315l.393-8.646h.898a.625.625 0 1 0 0-1.25h-2.863V3.925c0-.842-.683-1.525-1.525-1.525H7.91c-.842 0-1.524.683-1.524 1.525M7.91 3.65h4.18c.15 0 .274.123.274.275v1.464H7.636V3.925c0-.152.123-.275.274-.275m-.9 2.99h7.318l-.39 8.588a1.175 1.175 0 0 1-1.174 1.122H7.236a1.175 1.175 0 0 1-1.174-1.122l-.39-8.589z" />
-    </ColumnMenuIcon>
-  );
+  const iconChangeType = columnMenuIconChangeType;
+  const iconTypeText = columnMenuIconTypeText;
+  const iconTypeNumber = columnMenuIconTypeNumber;
+  const iconTypeSelect = columnMenuIconTypeSelect;
+  const iconTypeDate = columnMenuIconTypeDate;
+  const iconTypeCheckbox = columnMenuIconTypeCheckbox;
+  const iconTypeRating = columnMenuIconTypeRating;
+  const iconTypeTodo = columnMenuIconTypeTodo;
+  const iconTypeContacts = columnMenuIconTypeContacts;
+  const iconTypeLinks = columnMenuIconTypeLinks;
+  const iconTypeDocuments = columnMenuIconTypeDocuments;
+  const iconFilter = columnMenuIconFilter;
+  const iconSort = columnMenuIconSort;
+  const iconGroup = columnMenuIconGroup;
+  const iconCalc = columnMenuIconCalc;
+  const iconPin = columnMenuIconPin;
+  const iconHide = columnMenuIconHide;
+  const iconFit = columnMenuIconFit;
+  const iconInsertLeft = columnMenuIconInsertLeft;
+  const iconInsertRight = columnMenuIconInsertRight;
+  const iconDuplicate = columnMenuIconDuplicate;
+  const iconTrash = columnMenuIconTrash;
 
   const menuCol = columnMenu?.column || "";
   const menuColIndex = columns.indexOf(menuCol);
@@ -947,10 +1578,10 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: `type-${type}`,
         label,
         icon,
-        disabled: !canEdit,
+        disabled: !canEditStructure,
         end: menuKind === type ? <span className="column-menu-check">✓</span> : undefined,
         action: () => {
-          if (!canEdit) return;
+          if (!canEditStructure) return;
           updateColumnKinds({ ...columnKinds, [menuCol]: type });
           setMenuView("root");
         }
@@ -963,6 +1594,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         mkType("date", "Fecha", iconTypeDate),
         mkType("checkbox", "Casilla", iconTypeCheckbox),
         mkType("rating", "Valoracion", iconTypeRating),
+        mkType("todo", "To-Do Items", iconTypeTodo),
         { kind: "separator", key: "type-sep-0" },
         mkType("contacts", "Contactos", iconTypeContacts),
         mkType("links", "Links", iconTypeLinks),
@@ -1196,6 +1828,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: "change-type",
         label: "Cambiar tipo",
         icon: iconChangeType,
+        disabled: !canEditStructure,
         submenu: "type",
         end: <ColumnMenuChevronRight />
       },
@@ -1211,7 +1844,11 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         label: menuPinned ? "Desfijar" : "Fijar",
         icon: iconPin,
         action: () => {
-          setPinnedColumn((prev) => (prev === menuCol ? null : menuCol));
+          setPinnedColumn((prev) => {
+            if (prev !== menuCol) return menuCol;
+            const fallback = columns.find((column) => column !== menuCol && !hiddenColumns.includes(column));
+            return fallback || menuCol;
+          });
           if (!menuPinned) {
             setHiddenColumns((prev) => prev.filter((column) => column !== menuCol));
           }
@@ -1241,8 +1878,9 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: "insert-left",
         label: "Insertar a la izquierda",
         icon: iconInsertLeft,
+        disabled: !canEditStructure,
         action: () => {
-          if (menuColIndex < 0) return;
+          if (!canEditStructure || menuColIndex < 0) return;
           insertColumnAt(menuColIndex);
           closeColumnMenu();
         }
@@ -1252,8 +1890,9 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: "insert-right",
         label: "Insertar a la derecha",
         icon: iconInsertRight,
+        disabled: !canEditStructure,
         action: () => {
-          if (menuColIndex < 0) return;
+          if (!canEditStructure || menuColIndex < 0) return;
           insertColumnAt(menuColIndex + 1);
           closeColumnMenu();
         }
@@ -1263,9 +1902,9 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: "duplicate",
         label: "Duplicar propiedad",
         icon: iconDuplicate,
-        disabled: !canEdit || menuColIndex < 0,
+        disabled: !canEditStructure || menuColIndex < 0,
         action: () => {
-          if (!canEdit || menuColIndex < 0) return;
+          if (!canEditStructure || menuColIndex < 0) return;
           duplicateColumnAt(menuColIndex);
           closeColumnMenu();
         }
@@ -1275,9 +1914,9 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         key: "delete",
         label: "Eliminar propiedad",
         icon: iconTrash,
-        disabled: !canEdit || menuColIndex < 0 || columns.length <= 1,
+        disabled: !canEditStructure || menuColIndex < 0 || columns.length <= 1,
         action: () => {
-          if (!canEdit || menuColIndex < 0 || columns.length <= 1) return;
+          if (!canEditStructure || menuColIndex < 0 || columns.length <= 1) return;
           handleDeleteColumn(menuColIndex);
         }
       }
@@ -1359,9 +1998,12 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   };
 
   const hasHiddenColumns = columns.some((column) => hiddenColumns.includes(column));
+  const searchPlaceholder =
+    (block.props.searchPlaceholder || "").trim() ||
+    (isTrackerApplicationsSchema ? "Company, role, location..." : "Search...");
 
   return (
-    <div ref={rootRef}>
+    <div ref={rootRef} className="editable-table-stack">
       <EditableTableToolbar
         toolbar={{
           leading: (
@@ -1370,17 +2012,17 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
               onChange={setQuery}
               stageFilter={stageFilter}
               onStageFilterChange={setStageFilter}
-              stages={[]}
+              stages={trackerStages}
               outcomeFilter={outcomeFilter}
               onOutcomeFilterChange={setOutcomeFilter}
-              outcomes={[]}
-              placeholder="Company, role, location..."
+              outcomes={trackerOutcomes}
+              placeholder={searchPlaceholder}
               allLabel="All"
               stageLabel="Stage"
               outcomeLabel="Outcome"
               filterAriaLabel="Filter"
               clearAriaLabel="Clear search"
-              alwaysShowClearButton
+              showAdvancedFilters={isTrackerApplicationsSchema}
             />
           ),
           columns: {
@@ -1407,7 +2049,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
               <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("active")}>
                 Export Active
               </button>
-              <button className="ghost" type="button" onClick={handleAddColumn} disabled={!canEdit}>
+              <button className="ghost" type="button" onClick={handleAddColumn} disabled={!canEditStructure}>
                 Add Column
               </button>
               <button className="primary" type="button" onClick={handleAddRow} disabled={!canEdit}>
@@ -1442,14 +2084,17 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                   const sortActive = sortConfig?.column === column;
                   const filterActive = Boolean(columnFilters[column]?.trim());
                   const width = getColumnWidth(column);
+                  const isPinned = pinnedColumn === column;
                   return (
                     <th
                       key={`${block.id}-head-${colIndex}`}
-                      className={`column-header ${dragOverColumn === column ? "drag-over" : ""}`}
-                      style={{ width, minWidth: width }}
-                      draggable={canEdit}
+                      className={`column-header ${isPinned ? "sticky-col" : ""} ${
+                        dragOverColumn === column ? "drag-over" : ""
+                      }`}
+                      style={{ width, minWidth: width, left: isPinned ? 0 : undefined }}
+                      draggable={canEditStructure}
                       onDragStart={(event) => {
-                        if (!canEdit) return;
+                        if (!canEditStructure) return;
                         event.dataTransfer.setData("text/plain", column);
                         event.dataTransfer.effectAllowed = "move";
                         setDraggedColumn(column);
@@ -1459,19 +2104,21 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                         setDragOverColumn(null);
                       }}
                       onDragOver={(event) => {
-                        if (!canEdit || !draggedColumn || draggedColumn === column) return;
+                        if (!canEditStructure || !draggedColumn || draggedColumn === column) return;
                         event.preventDefault();
                         setDragOverColumn(column);
                       }}
                       onDragLeave={() => setDragOverColumn(null)}
                       onDrop={(event) => {
-                        if (!canEdit) return;
+                        if (!canEditStructure) return;
                         event.preventDefault();
                         handleColumnReorder(column);
                       }}
                     >
                       <div className="th-content">
-                        <span className="column-label">{column || `Column ${colIndex + 1}`}</span>
+                        <span className="column-label" title={column || `Column ${colIndex + 1}`}>
+                          {column || `Column ${colIndex + 1}`}
+                        </span>
                         {sortActive && (
                           <span className="sort-indicator">
                             {sortConfig?.direction === "asc" ? "↑" : "↓"}
@@ -1531,97 +2178,58 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                     {visibleColumns.map(({ column, index: colIndex }) => {
                       const width = getColumnWidth(column);
                       const cellValue = row[colIndex] || "";
-                      const kind = getColumnKind(column);
-                      const selectOptions = selectOptionsByColumn[column] || [];
-                      const hasCurrentSelectValue =
-                        cellValue.trim().length > 0 &&
-                        selectOptions.some((option) => option.label === cellValue);
-                      const selectCellOptions =
-                        hasCurrentSelectValue || cellValue.trim().length === 0
-                          ? selectOptions
-                          : [{ label: cellValue }, ...selectOptions];
+                      const isPinned = pinnedColumn === column;
                       return (
-                        <td key={`${block.id}-cell-${rowIndex}-${colIndex}`} style={{ width, minWidth: width }}>
-                          {kind === "checkbox" ? (
-                            <input
-                              className="cell-checkbox"
-                              type="checkbox"
-                              checked={cellValue.trim().toLowerCase() === "true"}
-                              onChange={(event) =>
-                                handleCellChange(rowIndex, colIndex, event.target.checked ? "true" : "false")
-                              }
-                              disabled={!canEdit}
-                            />
-                          ) : kind === "rating" ? (
-                            <StarRating
-                              value={Number.isFinite(Number(cellValue)) ? Number(cellValue) : null}
-                              onChange={
-                                canEdit
-                                  ? (next) =>
-                                      handleCellChange(rowIndex, colIndex, next === null ? "" : String(next))
-                                  : undefined
-                              }
-                              size="sm"
-                              step={0.5}
-                              readonly={!canEdit}
-                            />
-                          ) : kind === "number" ? (
-                            canEdit ? (
-                              <TableNumberCell
-                                value={cellValue}
-                                step={1}
-                                placeholder="Value"
-                                onCommit={(next) => handleCellChange(rowIndex, colIndex, next)}
-                              />
-                            ) : (
-                              <input className="cell-number" type="number" value={cellValue} readOnly />
-                            )
-                          ) : kind === "select" ? (
-                            canEdit ? (
-                              <SelectCell
-                                value={cellValue}
-                                options={selectCellOptions}
-                                onCreateOption={(label) => {
-                                  const next = label.trim();
-                                  return next || null;
-                                }}
-                                onCommit={(next) => handleCellChange(rowIndex, colIndex, next)}
-                              />
-                            ) : (
-                              <span className="select-pill">{cellValue || "—"}</span>
-                            )
-                          ) : kind === "date" ? (
-                            canEdit ? (
-                              <DateCell
-                                value={cellValue}
-                                onCommit={(next) => handleCellChange(rowIndex, colIndex, next ? next : "")}
-                              />
-                            ) : (
-                              <input className="cell-date" type="date" value={cellValue} readOnly />
-                            )
-                          ) : (
-                            canEdit ? (
-                              <TextCell
-                                value={cellValue}
-                                highlightQuery={query}
-                                onCommit={(next) => handleCellChange(rowIndex, colIndex, next)}
-                              />
-                            ) : (
-                              <input className="cell-input" value={cellValue} readOnly />
-                            )
-                          )}
+                        <td
+                          key={`${block.id}-cell-${rowIndex}-${colIndex}`}
+                          className={isPinned ? "sticky-col" : ""}
+                          style={{ width, minWidth: width, left: isPinned ? 0 : undefined }}
+                        >
+                          {renderTypedCellByColumn({
+                            column,
+                            rawValue: cellValue,
+                            canEditCell: canEdit,
+                            highlightQuery: query,
+                            onCommit: (next) => commitTypedCellValue(rowIndex, colIndex, next)
+                          })}
                         </td>
                       );
                     })}
                     <td className="row-actions-cell">
-                      <button
-                        className="ghost small"
-                        type="button"
-                        onClick={() => handleDeleteRow(rowIndex)}
-                        disabled={!canEdit}
-                      >
-                        Delete
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={() => openDetailRow(rowIndex)}
+                          aria-label="Details"
+                        >
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M10 4.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm-.75 1.75h1.5v1.5h-1.5v-1.5Zm0 3h1.5v3h-1.5v-3Z" />
+                          </svg>
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={() => openEditRow(rowIndex)}
+                          aria-label="Edit"
+                          disabled={!canEdit}
+                        >
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M14.85 2.85a1.5 1.5 0 0 1 2.12 2.12l-9.5 9.5-3.2.35.35-3.2 9.5-9.5ZM4.3 15.7h11.4v1.5H4.3v-1.5Z" />
+                          </svg>
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          type="button"
+                          onClick={() => handleDeleteRow(rowIndex)}
+                          aria-label="Delete"
+                          disabled={!canEdit}
+                        >
+                          <svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                          </svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1662,8 +2270,13 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                 <tr className="calc-row">
                   {visibleColumns.map(({ column, index }) => {
                     const width = getColumnWidth(column);
+                    const isPinned = pinnedColumn === column;
                     return (
-                      <td key={`${block.id}-calc-${index}`} style={{ width, minWidth: width }}>
+                      <td
+                        key={`${block.id}-calc-${index}`}
+                        className={isPinned ? "sticky-col" : ""}
+                        style={{ width, minWidth: width, left: isPinned ? 0 : undefined }}
+                      >
                         <div className="calc-cell">{calcResultFor(column)}</div>
                       </td>
                     );
@@ -1693,8 +2306,12 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                 <button
                   className="column-menu-type-button"
                   type="button"
-                  onClick={() => setMenuView("type")}
+                  onClick={() => {
+                    if (!canEditStructure) return;
+                    setMenuView("type");
+                  }}
                   aria-label="Cambiar tipo"
+                  disabled={!canEditStructure}
                 >
                   {iconChangeType}
                 </button>
@@ -1702,6 +2319,7 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                   className="column-menu-rename-input"
                   type="text"
                   value={columnMenu.rename}
+                  readOnly={!canEditStructure}
                   onChange={(event) =>
                     setColumnMenu((prev) => (prev ? { ...prev, rename: event.target.value } : prev))
                   }
@@ -1797,6 +2415,101 @@ const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
           </div>,
           document.body
         )}
+      {detailRowIndex !== null &&
+        rows[detailRowIndex] &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => setDetailRowIndex(null)}
+          >
+            <div className="modal" onClick={(event) => event.stopPropagation()}>
+              <header className="modal-header">
+                <div>
+                  <h2>Row details</h2>
+                  <p>Row {detailRowIndex + 1}</p>
+                </div>
+                <button className="ghost" type="button" onClick={() => setDetailRowIndex(null)} aria-label="Close">
+                  ×
+                </button>
+              </header>
+              <div className="form-grid">
+                {columns.map((column, colIndex) => (
+                  <div className="field" key={`${block.id}-detail-${detailRowIndex}-${colIndex}`}>
+                    <label>{column || `Column ${colIndex + 1}`}</label>
+                    <input value={rows[detailRowIndex][colIndex] || ""} readOnly />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+      {editRowIndex !== null &&
+        editRowDraft &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            onClick={() => {
+              setEditRowIndex(null);
+              setEditRowDraft(null);
+            }}
+          >
+            <div className="modal" onClick={(event) => event.stopPropagation()}>
+              <header className="modal-header">
+                <div>
+                  <h2>{isTrackerApplicationsSchema ? "Edit Application" : "Edit row"}</h2>
+                  <p>{isTrackerApplicationsSchema ? "Update values by column type." : `Row ${editRowIndex + 1}`}</p>
+                </div>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => {
+                    setEditRowIndex(null);
+                    setEditRowDraft(null);
+                  }}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </header>
+              <div className="form-grid">
+                {columns.map((column, colIndex) => (
+                  <div className="field" key={`${block.id}-edit-${editRowIndex}-${colIndex}`}>
+                    <label>{column || `Column ${colIndex + 1}`}</label>
+                    {renderTypedCellByColumn({
+                      column,
+                      rawValue: editRowDraft[colIndex] || "",
+                      canEditCell: true,
+                      onCommit: (next) => commitTypedDraftCellValue(colIndex, next)
+                    })}
+                  </div>
+                ))}
+                <div className="form-actions">
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => {
+                      setEditRowIndex(null);
+                      setEditRowDraft(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button className="primary" type="button" onClick={saveEditedRow}>
+                    Save changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
@@ -1809,7 +2522,9 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
   resolveSlot,
   menuActions
 }) => {
+  const { settings, saveSettings } = useAppData();
   const [isTableExpanded, setIsTableExpanded] = useState(false);
+  const [isTodoLinkModalOpen, setIsTodoLinkModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isTableExpanded) return;
@@ -1821,6 +2536,46 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [isTableExpanded]);
+
+  const linkTargets = useMemo(
+    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"] }),
+    [settings]
+  );
+  const linkedTableId = getBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY);
+  const linkedTableTarget = linkedTableId
+    ? linkTargets.find((target) => target.blockId === linkedTableId) || null
+    : null;
+
+  const openTodoLinkPicker = () => {
+    setIsTodoLinkModalOpen(true);
+  };
+
+  const setTodoLinkedTable = (nextBlockId?: string | null) => {
+    patchBlockProps(
+      patchBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY, nextBlockId) as Partial<
+        PageBlockPropsMap["editableTable"]
+      >
+    );
+    setIsTodoLinkModalOpen(false);
+  };
+
+  const blockMenuActions = useMemo(() => {
+    const baseActions = menuActions || [];
+    if (mode !== "edit" || block.props.variant !== "todo") {
+      return baseActions;
+    }
+    const linkLabel = linkedTableTarget
+      ? `Tabla vinculada: ${linkedTableTarget.title}`
+      : "Vincular con tabla editable";
+    return [
+      {
+        key: `todo-link-table-${block.id}`,
+        label: linkLabel,
+        onClick: openTodoLinkPicker
+      },
+      ...baseActions
+    ];
+  }, [block.id, block.props.variant, linkedTableTarget, menuActions, mode, openTodoLinkPicker]);
 
   const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
   const actions = block.props.actionsSlotId ? resolveSlot?.(block.props.actionsSlotId, block, slotContext) : null;
@@ -1841,6 +2596,8 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
     <DefaultEditableTable
       block={block as PageBlockConfig<"editableTable">}
       mode={mode}
+      settings={settings}
+      saveSettings={saveSettings}
       patchBlockProps={(patch) => patchBlockProps(patch as Partial<PageBlockPropsMap["editableTable"]>)}
       extraActions={toolbarActions}
       isExpanded={usesFallbackTable && isTableExpanded}
@@ -1850,7 +2607,7 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
 
   return (
     <>
-      <BlockPanel id={block.id} as="section" className={panelClassName} menuActions={menuActions}>
+      <BlockPanel id={block.id} as="section" className={panelClassName} menuActions={blockMenuActions}>
         {renderHeader(
           block.id,
           mode,
@@ -1868,6 +2625,68 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
           fallbackTable
         )}
       </BlockPanel>
+      {isTodoLinkModalOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setIsTodoLinkModalOpen(false)}>
+            <div className="modal" onClick={(event) => event.stopPropagation()}>
+              <header className="modal-header">
+                <div>
+                  <h2>Vincular tabla editable</h2>
+                  <p>Selecciona la tabla por titulo.</p>
+                </div>
+                <button className="ghost" type="button" onClick={() => setIsTodoLinkModalOpen(false)} aria-label="Close">
+                  ×
+                </button>
+              </header>
+              <div className="todo-link-modal-body">
+                {linkTargets.length === 0 ? (
+                  <div className="empty">No hay tablas editables disponibles.</div>
+                ) : (
+                  <div className="todo-link-table-wrap">
+                    <table className="table todo-link-table">
+                      <thead>
+                        <tr>
+                          <th>Titulo</th>
+                          <th>Pagina</th>
+                          <th>To-Do</th>
+                          <th>Accion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {linkTargets.map((target) => {
+                          const isActive = target.blockId === linkedTableId;
+                          return (
+                            <tr key={target.blockId} className={isActive ? "is-active" : undefined}>
+                              <td>{target.title}</td>
+                              <td>{target.pageId}</td>
+                              <td>{target.hasTodoColumn ? "Si" : "No"}</td>
+                              <td className="todo-link-action-cell">
+                                <button
+                                  className={isActive ? "ghost" : "primary"}
+                                  type="button"
+                                  onClick={() => setTodoLinkedTable(target.blockId)}
+                                >
+                                  {isActive ? "Vinculada" : "Vincular"}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="todo-link-footer">
+                  <button className="ghost" type="button" onClick={() => setTodoLinkedTable(null)}>
+                    Sin vinculo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
       {usesFallbackTable &&
         isTableExpanded &&
         typeof document !== "undefined" &&

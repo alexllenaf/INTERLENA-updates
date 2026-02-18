@@ -3,13 +3,18 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import signal
 import shutil
 import socket
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 from typing import Iterable
+
+
+DESKTOP_FRONTEND_PORT = 5173
 
 
 def _pick_port(
@@ -17,17 +22,274 @@ def _pick_port(
     start: int = 8501,
     end: int = 8519,
 ) -> int:
-    def _is_free(port: int) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            return sock.connect_ex(("127.0.0.1", port)) != 0
-
-    if preferred and _is_free(preferred):
+    if preferred and _is_port_free(preferred):
         return preferred
     for port in range(start, end + 1):
-        if _is_free(port):
+        if _is_port_free(port):
             return port
     raise SystemExit(f"No free port found between {start}-{end}.")
+
+
+def _is_port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _listening_processes(port: int) -> str | None:
+    if not shutil.which("lsof"):
+        return None
+    try:
+        result = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    output = (result.stdout or "").strip()
+    return output if output else None
+
+
+def _listening_pids(port: int) -> list[int]:
+    if not shutil.which("lsof"):
+        return []
+    try:
+        result = subprocess.run(
+            ["lsof", "-t", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return []
+    out: list[int] = []
+    for line in (result.stdout or "").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            out.append(int(raw))
+        except ValueError:
+            continue
+    return sorted(set(out))
+
+
+def _process_command(pid: int) -> str | None:
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    value = (result.stdout or "").strip()
+    return value if value else None
+
+
+def _process_ppid(pid: int) -> int | None:
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    raw = (result.stdout or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _is_interview_backend_command(command: str | None) -> bool:
+    if not command:
+        return False
+    return "interview-atlas-backend" in command
+
+
+def _contains_path(command: str, path: Path) -> bool:
+    normalized = command.replace("\\", "/")
+    target = str(path).replace("\\", "/")
+    normalized_nfc = unicodedata.normalize("NFC", normalized)
+    normalized_nfd = unicodedata.normalize("NFD", normalized)
+    target_nfc = unicodedata.normalize("NFC", target)
+    target_nfd = unicodedata.normalize("NFD", target)
+    return target_nfc in normalized_nfc or target_nfd in normalized_nfd
+
+
+def _is_project_vite_command(command: str | None, project_root: Path) -> bool:
+    if not command:
+        return False
+    if "node_modules/.bin/vite" not in command:
+        return False
+    return _contains_path(command, project_root)
+
+
+def _is_project_backend_command(command: str | None, project_root: Path) -> bool:
+    if not _is_interview_backend_command(command):
+        return False
+    if not command:
+        return False
+    return _contains_path(command, project_root)
+
+
+def _is_project_desktop_runtime_command(command: str | None, project_root: Path) -> bool:
+    if not command:
+        return False
+    if not _contains_path(command, project_root):
+        return False
+    normalized = command.replace("\\", "/")
+    if "src-tauri/target/" not in normalized:
+        return False
+    if "interview-atlas-backend" in normalized:
+        return False
+    return True
+
+
+def _is_project_dev_parent_command(command: str | None, project_root: Path) -> bool:
+    if not command:
+        return False
+    if not _contains_path(command, project_root):
+        return False
+    tokens = (
+        "node_modules/.bin/vite",
+        "node_modules/.bin/tauri",
+        "npm run dev",
+        "npm run tauri:dev",
+        "npm-cli.js",
+        "tauri dev",
+    )
+    return any(token in command for token in tokens)
+
+
+def _project_backend_pid_chain(listener_pid: int, project_root: Path) -> list[int]:
+    cmd = _process_command(listener_pid)
+    if not _is_project_backend_command(cmd, project_root):
+        return []
+
+    chain = [listener_pid]
+    current = listener_pid
+    seen = {listener_pid}
+
+    while True:
+        parent = _process_ppid(current)
+        if parent is None:
+            return chain
+        if parent <= 1:
+            return chain
+        if parent in seen:
+            return chain
+        seen.add(parent)
+        parent_cmd = _process_command(parent)
+        if not (
+            _is_project_backend_command(parent_cmd, project_root)
+            or _is_project_desktop_runtime_command(parent_cmd, project_root)
+            or _is_project_dev_parent_command(parent_cmd, project_root)
+        ):
+            return chain
+        chain.append(parent)
+        current = parent
+
+
+def _project_vite_pid_chain(listener_pid: int, project_root: Path) -> list[int]:
+    cmd = _process_command(listener_pid)
+    if not _is_project_vite_command(cmd, project_root):
+        return []
+
+    chain = [listener_pid]
+    current = listener_pid
+    seen = {listener_pid}
+    while True:
+        parent = _process_ppid(current)
+        if parent is None:
+            return chain
+        if parent <= 1:
+            return chain
+        if parent in seen:
+            return chain
+        seen.add(parent)
+        parent_cmd = _process_command(parent)
+        if not _is_project_dev_parent_command(parent_cmd, project_root):
+            return chain
+        chain.append(parent)
+        current = parent
+
+
+def _kill_pids(pids: list[int], sig: signal.Signals) -> list[int]:
+    killed: list[int] = []
+    for pid in sorted(set(pids)):
+        try:
+            os.kill(pid, sig)
+            killed.append(pid)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
+    return killed
+
+
+def _cleanup_desktop_backend_processes(port: int, project_root: Path) -> list[int]:
+    listener_pids = _listening_pids(port)
+    if not listener_pids:
+        return []
+
+    stale_pids: list[int] = []
+    for pid in listener_pids:
+        stale_pids.extend(_project_backend_pid_chain(pid, project_root))
+    stale_pids = sorted(set(stale_pids))
+    if not stale_pids:
+        return []
+
+    _kill_pids(stale_pids, signal.SIGTERM)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if _is_port_free(port):
+            return stale_pids
+        time.sleep(0.1)
+
+    _kill_pids(stale_pids, signal.SIGKILL)
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        if _is_port_free(port):
+            break
+        time.sleep(0.1)
+    return stale_pids
+
+
+def _cleanup_frontend_dev_server_processes(port: int, project_root: Path) -> list[int]:
+    listener_pids = _listening_pids(port)
+    if not listener_pids:
+        return []
+
+    stale_pids: list[int] = []
+    for pid in listener_pids:
+        stale_pids.extend(_project_vite_pid_chain(pid, project_root))
+    stale_pids = sorted(set(stale_pids))
+    if not stale_pids:
+        return []
+
+    _kill_pids(stale_pids, signal.SIGTERM)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if _is_port_free(port):
+            return stale_pids
+        time.sleep(0.1)
+
+    _kill_pids(stale_pids, signal.SIGKILL)
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        if _is_port_free(port):
+            break
+        time.sleep(0.1)
+    return stale_pids
 
 
 def _wait_for_port(port: int, timeout_s: float = 15.0) -> bool:
@@ -233,6 +495,40 @@ def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
         "cargo",
         "Install Rust (cargo) and retry. On macOS: https://www.rust-lang.org/tools/install",
     )
+
+    cleaned_frontend = _cleanup_frontend_dev_server_processes(DESKTOP_FRONTEND_PORT, root)
+    if cleaned_frontend:
+        print(
+            f"Stopped existing frontend dev process(es) on port {DESKTOP_FRONTEND_PORT}: "
+            + ", ".join(str(pid) for pid in cleaned_frontend)
+        )
+
+    if not _is_port_free(DESKTOP_FRONTEND_PORT):
+        listeners = _listening_processes(DESKTOP_FRONTEND_PORT)
+        msg = [
+            f"Desktop frontend dev port {DESKTOP_FRONTEND_PORT} is already in use.",
+            "Close any running Vite/Tauri dev process (or any process using that port) and retry.",
+        ]
+        if listeners:
+            msg.extend(["", "Port listeners:", listeners])
+        raise SystemExit("\n".join(msg))
+
+    cleaned = _cleanup_desktop_backend_processes(backend_port, root)
+    if cleaned:
+        print(
+            f"Stopped existing Interview Atlas backend process(es) on port {backend_port}: "
+            + ", ".join(str(pid) for pid in cleaned)
+        )
+
+    if not _is_port_free(backend_port):
+        listeners = _listening_processes(backend_port)
+        msg = [
+            f"Desktop backend port {backend_port} is already in use.",
+            "Close any running Interview Atlas app (or any process using that port) and retry.",
+        ]
+        if listeners:
+            msg.extend(["", "Port listeners:", listeners])
+        raise SystemExit("\n".join(msg))
 
     _ensure_backend_sidecar_current(root / "backend", backend_bin)
 

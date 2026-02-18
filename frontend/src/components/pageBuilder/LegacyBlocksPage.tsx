@@ -229,7 +229,10 @@ const LegacyBlocksPage: React.FC<Props> = ({ pageId, blocks, className = "" }) =
         if (!currentSettings || !nextConfig) return;
         const nextJson = JSON.stringify(nextConfig);
         if (!nextJson || nextJson === configSavedJsonRef.current) return;
-        const updated = await saveSettingsRef.current(writePageConfig(currentSettings, pageId, nextConfig));
+        const nextSettings = writePageConfig(currentSettings, pageId, nextConfig);
+        const updated = await saveSettingsRef.current({
+          page_configs: nextSettings.page_configs
+        });
         if (updated) {
           configSavedJsonRef.current = nextJson;
         }

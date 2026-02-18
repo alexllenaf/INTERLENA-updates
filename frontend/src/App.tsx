@@ -69,6 +69,17 @@ type CustomSheet = {
   name: string;
 };
 
+type SidebarRenameTarget =
+  | {
+      kind: "base";
+      path: string;
+      fallback: string;
+    }
+  | {
+      kind: "sheet";
+      sheetId: string;
+    };
+
 const NAV_LABELS_STORAGE_KEY = "sidebar_nav_labels_v1";
 const CUSTOM_SHEETS_STORAGE_KEY = "sidebar_custom_sheets_v1";
 
@@ -155,6 +166,8 @@ const AppShell: React.FC = () => {
     readNavLabelOverrides()
   );
   const [customSheets, setCustomSheets] = useState<CustomSheet[]>(() => readCustomSheets());
+  const [renameTarget, setRenameTarget] = useState<SidebarRenameTarget | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [sheetToDelete, setSheetToDelete] = useState<CustomSheet | null>(null);
   const hasLoadedProfileRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
@@ -273,7 +286,6 @@ const AppShell: React.FC = () => {
     }
     saveTimerRef.current = window.setTimeout(() => {
       saveSettings({
-        ...settings,
         brand_profile: profile,
       });
     }, 400);
@@ -438,30 +450,44 @@ const AppShell: React.FC = () => {
     [navLabelOverrides]
   );
 
-  const renameBaseNavItem = (path: string, fallback: string) => {
-    const currentLabel = resolveNavLabel(path, fallback);
-    const nextLabel = window.prompt(t("Rename page"), currentLabel);
-    if (nextLabel === null) return;
-    const trimmed = nextLabel.trim();
-    if (!trimmed || trimmed === fallback) {
-      setNavLabelOverrides((prev) => {
-        const { [path]: _, ...rest } = prev;
-        return rest;
-      });
-      return;
-    }
-    setNavLabelOverrides((prev) => ({ ...prev, [path]: trimmed }));
+  const closeRenameModal = useCallback(() => {
+    setRenameTarget(null);
+    setRenameDraft("");
+  }, []);
+
+  const openBaseNavRename = (path: string, fallback: string) => {
+    setRenameDraft(resolveNavLabel(path, fallback));
+    setRenameTarget({ kind: "base", path, fallback });
   };
 
-  const renameCustomSheet = (sheetId: string, currentName: string) => {
-    const nextLabel = window.prompt(t("Rename page"), currentName);
-    if (nextLabel === null) return;
-    const trimmed = nextLabel.trim();
+  const openCustomSheetRename = (sheetId: string, currentName: string) => {
+    setRenameDraft(currentName);
+    setRenameTarget({ kind: "sheet", sheetId });
+  };
+
+  const confirmRename = useCallback(() => {
+    if (!renameTarget) return;
+    const trimmed = renameDraft.trim();
+    if (renameTarget.kind === "base") {
+      const { path, fallback } = renameTarget;
+      if (!trimmed || trimmed === fallback) {
+        setNavLabelOverrides((prev) => {
+          const { [path]: _, ...rest } = prev;
+          return rest;
+        });
+        closeRenameModal();
+        return;
+      }
+      setNavLabelOverrides((prev) => ({ ...prev, [path]: trimmed }));
+      closeRenameModal();
+      return;
+    }
     if (!trimmed) return;
     setCustomSheets((prev) =>
-      prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: trimmed } : sheet))
+      prev.map((sheet) => (sheet.id === renameTarget.sheetId ? { ...sheet, name: trimmed } : sheet))
     );
-  };
+    closeRenameModal();
+  }, [closeRenameModal, renameDraft, renameTarget]);
 
   const addCustomSheet = () => {
     const id = createSheetId();
@@ -493,7 +519,6 @@ const AppShell: React.FC = () => {
       const nextPageConfigs = { ...settings.page_configs };
       delete nextPageConfigs[pageId];
       await saveSettings({
-        ...settings,
         page_configs: nextPageConfigs
       });
     },
@@ -659,7 +684,7 @@ const AppShell: React.FC = () => {
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    renameBaseNavItem(item.path, item.label);
+                    openBaseNavRename(item.path, item.label);
                   }}
                 >
                   <PencilIcon />
@@ -697,7 +722,7 @@ const AppShell: React.FC = () => {
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    renameCustomSheet(sheet.id, sheet.name);
+                    openCustomSheetRename(sheet.id, sheet.name);
                   }}
                 >
                   <PencilIcon />
@@ -863,6 +888,51 @@ const AppShell: React.FC = () => {
               </button>
               <button className="danger" type="button" onClick={() => void confirmDeleteCustomSheet()}>
                 {t("Delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {renameTarget && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("Rename page")}
+          onClick={closeRenameModal}
+        >
+          <div className="modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="confirm-modal-body">
+              <h3>{t("Rename page")}</h3>
+            </div>
+            <input
+              className="confirm-modal-input"
+              type="text"
+              value={renameDraft}
+              autoFocus
+              onChange={(event) => setRenameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  confirmRename();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeRenameModal();
+                }
+              }}
+            />
+            <div className="confirm-modal-actions">
+              <button className="ghost" type="button" onClick={closeRenameModal}>
+                {t("Cancel")}
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={confirmRename}
+                disabled={renameTarget.kind === "sheet" && !renameDraft.trim()}
+              >
+                {t("Save")}
               </button>
             </div>
           </div>

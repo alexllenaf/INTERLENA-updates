@@ -1,21 +1,32 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+type FilterOption = {
+  value: string;
+  label: string;
+};
+
 type Props = {
   value: string;
   onChange: (value: string) => void;
   stageFilter: string;
   onStageFilterChange: (value: string) => void;
-  stages: string[];
+  stages: readonly string[];
+  stageOptions?: FilterOption[];
   outcomeFilter: string;
   onOutcomeFilterChange: (value: string) => void;
-  outcomes: string[];
+  outcomes: readonly string[];
+  outcomeOptions?: FilterOption[];
   placeholder: string;
   allLabel: string;
+  stageAllLabel?: string;
+  outcomeAllLabel?: string;
   stageLabel: string;
   outcomeLabel: string;
+  hideOutcomeFilter?: boolean;
   filterAriaLabel: string;
   clearAriaLabel: string;
   alwaysShowClearButton?: boolean;
+  showAdvancedFilters?: boolean;
 };
 
 const TrackerSearchBar: React.FC<Props> = ({
@@ -24,16 +35,22 @@ const TrackerSearchBar: React.FC<Props> = ({
   stageFilter,
   onStageFilterChange,
   stages,
+  stageOptions,
   outcomeFilter,
   onOutcomeFilterChange,
   outcomes,
+  outcomeOptions,
   placeholder,
   allLabel,
+  stageAllLabel,
+  outcomeAllLabel,
   stageLabel,
   outcomeLabel,
+  hideOutcomeFilter,
   filterAriaLabel,
   clearAriaLabel,
-  alwaysShowClearButton
+  alwaysShowClearButton,
+  showAdvancedFilters = true
 }) => {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -61,11 +78,33 @@ const TrackerSearchBar: React.FC<Props> = ({
   }, [open]);
 
   const hasActiveAdvancedFilters = useMemo(
-    () => stageFilter !== "all" || outcomeFilter !== "all",
-    [stageFilter, outcomeFilter]
+    () =>
+      showAdvancedFilters &&
+      (stageFilter !== "all" || (!hideOutcomeFilter && outcomeFilter !== "all")),
+    [showAdvancedFilters, stageFilter, outcomeFilter, hideOutcomeFilter]
+  );
+  const resolvedStageOptions = useMemo<FilterOption[]>(
+    () =>
+      stageOptions && stageOptions.length > 0
+        ? stageOptions
+        : stages.map((stage) => ({ value: stage, label: stage })),
+    [stageOptions, stages]
+  );
+  const resolvedOutcomeOptions = useMemo<FilterOption[]>(
+    () =>
+      outcomeOptions && outcomeOptions.length > 0
+        ? outcomeOptions
+        : outcomes.map((outcome) => ({ value: outcome, label: outcome })),
+    [outcomeOptions, outcomes]
   );
 
   const showClearButton = Boolean(alwaysShowClearButton || value.trim());
+
+  useEffect(() => {
+    if (!showAdvancedFilters && open) {
+      setOpen(false);
+    }
+  }, [open, showAdvancedFilters]);
 
   return (
     <div className="tracker-search" ref={popoverRef}>
@@ -95,44 +134,48 @@ const TrackerSearchBar: React.FC<Props> = ({
               </svg>
             </button>
           )}
-          <button
-            type="button"
-            className={`tracker-search-filter ${open ? "open" : ""} ${hasActiveAdvancedFilters ? "active" : ""}`}
-            onClick={() => setOpen((prev) => !prev)}
-            aria-label={filterAriaLabel}
-            aria-expanded={open}
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M3 4.75A.75.75 0 0 1 3.75 4h12.5a.75.75 0 0 1 .56 1.25L12 10.54V15a.75.75 0 0 1-1.2.6l-2-1.5a.75.75 0 0 1-.3-.6v-2.96L3.19 5.25A.75.75 0 0 1 3 4.75Z" />
-            </svg>
-          </button>
+          {showAdvancedFilters && (
+            <button
+              type="button"
+              className={`tracker-search-filter ${open ? "open" : ""} ${hasActiveAdvancedFilters ? "active" : ""}`}
+              onClick={() => setOpen((prev) => !prev)}
+              aria-label={filterAriaLabel}
+              aria-expanded={open}
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M3 4.75A.75.75 0 0 1 3.75 4h12.5a.75.75 0 0 1 .56 1.25L12 10.54V15a.75.75 0 0 1-1.2.6l-2-1.5a.75.75 0 0 1-.3-.6v-2.96L3.19 5.25A.75.75 0 0 1 3 4.75Z" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
-      {open && (
+      {open && showAdvancedFilters && (
         <div className="tracker-search-popover" role="dialog" aria-label={filterAriaLabel}>
           <div className="tracker-search-popover-row">
             <label>{stageLabel}</label>
             <select value={stageFilter} onChange={(event) => onStageFilterChange(event.target.value)}>
-              <option value="all">{allLabel}</option>
-              {stages.map((stage) => (
-                <option key={stage} value={stage}>
-                  {stage}
+              <option value="all">{stageAllLabel || allLabel}</option>
+              {resolvedStageOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
           </div>
-          <div className="tracker-search-popover-row">
-            <label>{outcomeLabel}</label>
-            <select value={outcomeFilter} onChange={(event) => onOutcomeFilterChange(event.target.value)}>
-              <option value="all">{allLabel}</option>
-              {outcomes.map((outcome) => (
-                <option key={outcome} value={outcome}>
-                  {outcome}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!hideOutcomeFilter && (
+            <div className="tracker-search-popover-row">
+              <label>{outcomeLabel}</label>
+              <select value={outcomeFilter} onChange={(event) => onOutcomeFilterChange(event.target.value)}>
+                <option value="all">{outcomeAllLabel || allLabel}</option>
+                {resolvedOutcomeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
     </div>

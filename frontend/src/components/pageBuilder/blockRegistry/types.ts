@@ -32,7 +32,7 @@ export type BlockRenderContext<TType extends PageBlockType = PageBlockType> = {
 
 export type BlockDefinition<TType extends PageBlockType = PageBlockType> = {
   type: TType;
-  component: (ctx: BlockRenderContext<TType>) => React.ReactNode;
+  component: React.ComponentType<BlockRenderContext<TType>>;
   createDefaultProps: () => PageBlockPropsMap[TType];
   defaultLayout: GridLayout;
 };

@@ -14,7 +14,7 @@ type ApplicationFormProps = {
   settings: Settings;
   onSubmit: (payload: ApplicationInput, files: File[]) => void;
   onClose: () => void;
-  onDeleteExistingDocument?: (fileId: string) => Promise<void> | void;
+  onDeleteExistingDocument?: (fileId: string) => Promise<boolean> | boolean;
 };
 
 const defaultForm: ApplicationInput = {
@@ -122,7 +122,8 @@ const ApplicationForm: React.FC<ApplicationFormProps> = ({
   const handleRemoveExisting = async (fileId: string) => {
     if (!initial || !initial.id) return;
     if (!onDeleteExistingDocument) return;
-    await Promise.resolve(onDeleteExistingDocument(fileId));
+    const removed = await Promise.resolve(onDeleteExistingDocument(fileId));
+    if (!removed) return;
     setExistingFiles((prev) => prev.filter((file) => file.id !== fileId));
   };
 

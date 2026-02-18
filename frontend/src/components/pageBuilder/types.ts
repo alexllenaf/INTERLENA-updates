@@ -16,6 +16,8 @@ export const PAGE_BLOCK_TYPES = [
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
 
 export type ChartSize = "small" | "medium" | "large" | "xlarge";
+export type ChartVisualType = "bar" | "line" | "area" | "pie" | "timeline";
+export type ChartMetricOp = "count_rows" | "count_values" | "sum" | "avg";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -27,22 +29,31 @@ export type GridLayout = {
   rowStart?: number;
 };
 
-export type TextBlockProps = {
+export type BlockLinksMap = Record<string, string>;
+
+type LinkableBlockProps = {
+  links?: BlockLinksMap;
+};
+
+export type TextBlockProps = LinkableBlockProps & {
   text: string;
 };
 
-export type TitleDescriptionBlockProps = {
+export type TitleDescriptionBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   actionsSlotId?: string;
 };
 
-export type EditableTableBlockProps = {
+export type EditableTableBlockProps = LinkableBlockProps & {
   title: string;
   description?: string;
   variant?: "tracker" | "todo";
+  schemaRef?: string;
+  overrides?: TableOverrides;
   customColumns?: string[];
   customColumnTypes?: Record<string, EditableTableColumnKind>;
+  customSelectOptions?: Record<string, EditableTableSelectOption[]>;
   customRows?: string[][];
   searchPlaceholder?: string;
   addActionLabel?: string;
@@ -60,11 +71,33 @@ export type EditableTableColumnKind =
   | "date"
   | "checkbox"
   | "rating"
+  | "todo"
   | "contacts"
   | "links"
   | "documents";
 
-export type InformationalTableBlockProps = {
+export type TableSelectTypeOverride = {
+  addOptions?: string[];
+  relabelOptions?: Record<string, string>;
+  hideOptions?: string[];
+};
+
+export type EditableTableSelectOption = {
+  label: string;
+  color?: string;
+  display?: string;
+  editable?: boolean;
+};
+
+export type TableOverrides = {
+  hiddenColumns?: string[];
+  columnOrder?: string[];
+  columnWidths?: Record<string, number>;
+  labelOverrides?: Record<string, string>;
+  typeOverrides?: Record<string, TableSelectTypeOverride>;
+};
+
+export type InformationalTableBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contentSlotId?: string;
@@ -72,26 +105,45 @@ export type InformationalTableBlockProps = {
   rows?: string[][];
 };
 
-export type CalendarBlockProps = {
+export type CalendarBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contentSlotId?: string;
 };
 
-export type ChartBlockProps = {
+export type ChartBlockProps = LinkableBlockProps & {
   title: string;
   size: ChartSize;
   actionSlotId?: string;
   contentSlotId?: string;
+  chartType?: ChartVisualType;
+  seriesColor?: string;
+  metricOp?: ChartMetricOp;
+  sourceCategoryColumn?: string;
+  sourceValueColumn?: string;
 };
 
-export type KpiBlockProps = {
+export type KpiMetricOp =
+  | "count_rows"
+  | "count_values"
+  | "count_empty"
+  | "unique_values"
+  | "value_count"
+  | "sum"
+  | "avg";
+
+export type KpiBlockProps = LinkableBlockProps & {
   label: string;
+  labelAuto?: boolean;
   value?: string;
   valueSlotId?: string;
+  sourceColumn?: string;
+  metricOp?: KpiMetricOp;
+  metricTargetValue?: string;
+  metricAsPercent?: boolean;
 };
 
-export type PipelineBlockProps = {
+export type PipelineBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contentSlotId?: string;

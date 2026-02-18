@@ -6,7 +6,7 @@ import {
   PAGE_BLOCK_REGISTRY,
   createDefaultPageBlock
 } from "./blockRegistry";
-import { PAGE_BLOCK_LIBRARY } from "./pageData";
+import { PAGE_BLOCK_LIBRARY, getBlockPresetById, type PageBlockLibraryEntry } from "./pageData";
 import PageRenderer from "./PageRenderer";
 import {
   GridLayout,
@@ -187,6 +187,73 @@ const cloneBlockPropsForDuplicate = (props: Record<string, unknown>, suffix: str
     cloned[key] = `${value}:${suffix}`;
   });
   return cloned;
+};
+
+const BLOCK_NAME_KEYS = ["title", "label"] as const;
+type BlockNameKey = (typeof BLOCK_NAME_KEYS)[number];
+
+const normalizeName = (value: string) => value.trim().toLocaleLowerCase();
+
+const readBlockName = (props: Record<string, unknown>): { key: BlockNameKey; value: string } | null => {
+  for (const key of BLOCK_NAME_KEYS) {
+    const raw = props[key];
+    if (typeof raw !== "string") continue;
+    const value = raw.trim();
+    if (!value) continue;
+    return { key, value };
+  }
+  return null;
+};
+
+const collectUsedNames = (blocks: PageBlockConfig[]): Set<string> => {
+  const used = new Set<string>();
+  blocks.forEach((block) => {
+    const named = readBlockName(block.props as Record<string, unknown>);
+    if (!named) return;
+    used.add(normalizeName(named.value));
+  });
+  return used;
+};
+
+const resolveUniqueBlockName = (desired: string, usedNames: Set<string>): string => {
+  const desiredNorm = normalizeName(desired);
+  let hasBase = false;
+  let maxSuffix = 0;
+
+  usedNames.forEach((name) => {
+    if (name === desiredNorm) {
+      hasBase = true;
+      return;
+    }
+    if (!name.startsWith(`${desiredNorm} `)) return;
+    const suffixRaw = name.slice(desiredNorm.length + 1).trim();
+    if (!/^\d+$/.test(suffixRaw)) return;
+    const suffix = Number(suffixRaw);
+    if (!Number.isInteger(suffix) || suffix <= 0) return;
+    if (suffix > maxSuffix) {
+      maxSuffix = suffix;
+    }
+  });
+
+  if (!hasBase && maxSuffix === 0) return desired;
+  const nextSuffix = Math.max(1, maxSuffix + 1);
+  return `${desired} ${nextSuffix}`;
+};
+
+const withUniqueBlockName = (candidate: PageBlockConfig, existingBlocks: PageBlockConfig[]): PageBlockConfig => {
+  const props = candidate.props as Record<string, unknown>;
+  const named = readBlockName(props);
+  if (!named) return candidate;
+  const usedNames = collectUsedNames(existingBlocks);
+  const nextName = resolveUniqueBlockName(named.value, usedNames);
+  if (nextName === named.value) return candidate;
+  return {
+    ...candidate,
+    props: {
+      ...props,
+      [named.key]: nextName
+    } as any
+  };
 };
 
 const normalizeBlockLayoutToSpanSlots = (block: PageBlockConfig): PageBlockConfig => {
@@ -502,8 +569,9 @@ const PageEditor: React.FC<Props> = ({
       layout: { ...block.layout },
       props: cloneBlockPropsForDuplicate(sourceProps, suffix) as any
     };
+    const uniqueClone = withUniqueBlockName(clone, pageConfig.blocks);
     const next = [...pageConfig.blocks];
-    next.splice(sourceIndex + 1, 0, clone);
+    next.splice(sourceIndex + 1, 0, uniqueClone);
     updateBlocks(compactBlocks(next));
   };
 
@@ -551,9 +619,24 @@ const PageEditor: React.FC<Props> = ({
     });
   };
 
-  const addBlock = (type: PageBlockType) => {
-    const id = `${type}:${generateId()}`;
-    const block = createBlockForType?.(type, id) || createDefaultPageBlock(type, id);
+  const addBlock = (entry: PageBlockLibraryEntry) => {
+    const id = `${entry.type}:${generateId()}`;
+    let block = createBlockForType?.(entry.type, id) || createDefaultPageBlock(entry.type, id);
+    const preset = getBlockPresetById(entry.presetId);
+    if (preset && preset.type === entry.type) {
+      block = {
+        ...block,
+        layout: {
+          ...block.layout,
+          ...(preset.layout || {})
+        },
+        props: {
+          ...(block.props as Record<string, unknown>),
+          ...(preset.props as Record<string, unknown>)
+        } as any
+      };
+    }
+    block = withUniqueBlockName(block, pageConfig.blocks);
     const next = compactBlocks([...pageConfig.blocks, block]);
     updateBlocks(next);
     setIsAddOpen(false);
@@ -562,9 +645,12 @@ const PageEditor: React.FC<Props> = ({
   const draggedBlock = drag?.blockId
     ? pageConfig.blocks.find((block) => block.id === drag.blockId) || null
     : null;
+  const GhostBlockComponent = draggedBlock
+    ? (registry[draggedBlock.type].component as React.ComponentType<any>)
+    : null;
 
   const ghost =
-    drag?.active && draggedBlock && typeof document !== "undefined"
+    drag?.active && draggedBlock && GhostBlockComponent && typeof document !== "undefined"
       ? createPortal(
           <div
             className={`page-editor-ghost ${drag.invalid ? "invalid" : ""}`}
@@ -575,19 +661,20 @@ const PageEditor: React.FC<Props> = ({
               height: drag.ghostRect.height
             }}
           >
-            {registry[draggedBlock.type].component({
-              block: ({
+            <GhostBlockComponent
+              key={draggedBlock.id}
+              block={({
                 ...draggedBlock,
                 props: {
                   ...(draggedBlock.props as Record<string, unknown>),
                   ...(resolveBlockProps?.(draggedBlock) || {})
                 }
-              } as any),
-              mode: "view",
-              resolveSlot,
-              updateBlockProps: () => undefined,
-              patchBlockProps: () => undefined
-            } as any)}
+              } as any)}
+              mode="view"
+              resolveSlot={resolveSlot}
+              updateBlockProps={() => undefined}
+              patchBlockProps={() => undefined}
+            />
           </div>,
           document.body
         )
@@ -640,7 +727,7 @@ const PageEditor: React.FC<Props> = ({
           {isAddOpen && (
             <div className="page-editor-add-menu" role="menu" aria-label="Add block">
               {PAGE_BLOCK_LIBRARY.map((entry) => (
-                <button key={entry.type} type="button" onClick={() => addBlock(entry.type)}>
+                <button key={entry.id} type="button" onClick={() => addBlock(entry)}>
                   <span>{entry.label}</span>
                   <small>{entry.description}</small>
                 </button>

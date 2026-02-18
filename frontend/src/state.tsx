@@ -19,7 +19,7 @@ export type AppContextValue = {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  saveSettings: (next: Settings) => Promise<Settings | null>;
+  saveSettings: (next: Partial<Settings>) => Promise<Settings | null>;
   createApplication: (payload: ApplicationInput) => Promise<Application | null>;
   updateApplication: (id: number, payload: Partial<ApplicationInput>) => Promise<void>;
   deleteApplication: (id: number) => Promise<void>;
@@ -69,7 +69,7 @@ const mergePageConfigs = (...sources: Array<unknown>): Record<string, unknown> =
   return merged;
 };
 
-const mergeSettingsForSave = (current: Settings | null, next: Settings): Settings => {
+const mergeSettingsForSave = (current: Settings | null, next: Partial<Settings>): Partial<Settings> => {
   if (!current) return next;
   const currentPages =
     current.page_configs && typeof current.page_configs === "object" ? current.page_configs : {};
@@ -147,7 +147,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh();
   }, [refresh]);
 
-  const saveSettings = useCallback(async (next: Settings) => {
+  const saveSettings = useCallback(async (next: Partial<Settings>) => {
     setError(null);
     const requestSeq = ++saveRequestSeqRef.current;
     const nextPages =
@@ -156,7 +156,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pageConfigsRef.current = mergePageConfigs(pageConfigsRef.current, nextPages);
     }
     const stickyPages = mergePageConfigs(settingsRef.current?.page_configs, pageConfigsRef.current, nextPages);
-    const mergedWithStickyPages: Settings = {
+    const mergedWithStickyPages: Partial<Settings> = {
       ...mergeSettingsForSave(settingsRef.current, next),
       page_configs: stickyPages
     };

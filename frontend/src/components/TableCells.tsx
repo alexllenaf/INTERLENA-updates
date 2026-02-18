@@ -7,6 +7,7 @@ type TextCellProps = {
   value?: string | null;
   placeholder?: string;
   highlightQuery?: string;
+  readOnly?: boolean;
   onCommit: (next: string) => void;
 };
 
@@ -14,6 +15,7 @@ export const TextCell: React.FC<TextCellProps> = ({
   value,
   placeholder,
   highlightQuery = "",
+  readOnly = false,
   onCommit
 }) => {
   const [draft, setDraft] = useState(value ?? "");
@@ -26,6 +28,7 @@ export const TextCell: React.FC<TextCellProps> = ({
   }, [value]);
 
   const commit = () => {
+    if (readOnly) return;
     if (!dirty) return;
     const next = draft;
     if (next === (value ?? "")) {
@@ -56,15 +59,18 @@ export const TextCell: React.FC<TextCellProps> = ({
         className={`cell-input ${!isFocused && hasMatch ? "cell-input-transparent" : ""}`}
         value={draft}
         onChange={(event) => {
+          if (readOnly) return;
           setDraft(event.target.value);
           setDirty(true);
         }}
         onFocus={() => setIsFocused(true)}
         onBlur={() => {
           setIsFocused(false);
+          if (readOnly) return;
           commit();
         }}
         onKeyDown={(event) => {
+          if (readOnly) return;
           if (event.key === "Enter") {
             event.currentTarget.blur();
           }
@@ -74,6 +80,7 @@ export const TextCell: React.FC<TextCellProps> = ({
           }
         }}
         placeholder={placeholder}
+        readOnly={readOnly}
       />
     </div>
   );

@@ -64,6 +64,7 @@ const PageRenderer: React.FC<Props> = ({
         if (hiddenBlockIds?.has(block.id)) return null;
         const definition = registry[block.type];
         if (!definition) return null;
+        const BlockComponent = definition.component as React.ComponentType<any>;
         const dynamicProps = resolveBlockProps?.(block);
         const effectiveBlock = dynamicProps
           ? ({
@@ -77,16 +78,20 @@ const PageRenderer: React.FC<Props> = ({
           if (!onUpdateBlockProps) return;
           onUpdateBlockProps(block.id, { ...(block.props as Record<string, unknown>), ...patch });
         };
-        const content = definition.component({
-          block: effectiveBlock as any,
-          mode,
-          resolveSlot,
-          menuActions: resolveBlockMenuActions?.(block),
-          updateBlockProps: (next: Record<string, unknown>) =>
-            onUpdateBlockProps?.(block.id, next as Record<string, unknown>),
-          patchBlockProps: (patch: Partial<Record<string, unknown>>) =>
-            nextProps(patch as Record<string, unknown>)
-        } as any);
+        const content = (
+          <BlockComponent
+            block={effectiveBlock as any}
+            mode={mode}
+            resolveSlot={resolveSlot}
+            menuActions={resolveBlockMenuActions?.(block)}
+            updateBlockProps={(next: Record<string, unknown>) =>
+              onUpdateBlockProps?.(block.id, next as Record<string, unknown>)
+            }
+            patchBlockProps={(patch: Partial<Record<string, unknown>>) =>
+              nextProps(patch as Record<string, unknown>)
+            }
+          />
+        );
         const extraClass = blockClassName?.(block) || "";
         return (
           <div

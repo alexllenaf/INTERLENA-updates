@@ -2,11 +2,41 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
 import { EditableTableToolbar } from "../components/blocks/BlockRenderer";
+import {
+  ColumnMenuChevronRight,
+  columnMenuIconCalc,
+  columnMenuIconChangeType,
+  columnMenuIconDuplicate,
+  columnMenuIconFilter,
+  columnMenuIconFit,
+  columnMenuIconGroup,
+  columnMenuIconHide,
+  columnMenuIconInsertLeft,
+  columnMenuIconInsertRight,
+  columnMenuIconPin,
+  columnMenuIconSort,
+  columnMenuIconTrash,
+  columnMenuIconTypeCheckbox,
+  columnMenuIconTypeContacts,
+  columnMenuIconTypeDate,
+  columnMenuIconTypeDocuments,
+  columnMenuIconTypeLinks,
+  columnMenuIconTypeNumber,
+  columnMenuIconTypeRating,
+  columnMenuIconTypeSelect,
+  columnMenuIconTypeText
+} from "../components/columnMenuIcons";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
 import { BlockSlotResolver, PageBlockConfig, PageBuilderPage } from "../components/pageBuilder";
+import {
+  TODO_SOURCE_TABLE_LINK_KEY,
+  collectEditableTableTargets,
+  getBlockLink
+} from "../components/pageBuilder/blockLinks";
 import StarRating from "../components/StarRating";
 import { DateCell, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
+import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
 import { useI18n } from "../i18n";
 import {
   deleteDocument,
@@ -127,6 +157,30 @@ type TodoColumnKind =
   | "links"
   | "documents";
 
+const TODO_COLUMN_KIND_OPTIONS: TodoColumnKind[] = [
+  "text",
+  "number",
+  "select",
+  "date",
+  "checkbox",
+  "rating",
+  "contacts",
+  "links",
+  "documents"
+];
+const TODO_COLUMN_KIND_SET = new Set<TodoColumnKind>(TODO_COLUMN_KIND_OPTIONS);
+const TODO_COLUMN_KIND_DEFAULTS: Record<TodoColumnId, TodoColumnKind> = {
+  application: "select",
+  task: "text",
+  task_location: "text",
+  notes: "text",
+  documents_links: "links",
+  due_date: "date",
+  status: "select",
+  actions: "text"
+};
+type TodoColumnKinds = Partial<Record<TodoColumnId, TodoColumnKind>>;
+
 type TodoSortConfig = { column: TodoColumnId; direction: "asc" | "desc" } | null;
 
 type TodoColumnCalcOp =
@@ -176,6 +230,12 @@ type TodoTablePrefs = {
   hidden: TodoColumnId[];
   pinned: TodoColumnId | null;
   labels: Partial<Record<TodoColumnId, string>>;
+  kinds: TodoColumnKinds;
+};
+
+type TodoSourceAccess = {
+  hasSource: boolean;
+  reason: string | null;
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -196,18 +256,32 @@ const normalizeTodoColumnOrder = (order: unknown): TodoColumnId[] => {
   return unique;
 };
 
+const normalizeTodoColumnKinds = (raw: unknown): TodoColumnKinds => {
+  if (!raw || typeof raw !== "object") return {};
+  const parsed = raw as Record<string, unknown>;
+  const next: TodoColumnKinds = {};
+  (Object.keys(TODO_COLUMN_KIND_DEFAULTS) as TodoColumnId[]).forEach((column) => {
+    const value = parsed[column];
+    if (typeof value !== "string") return;
+    if (!TODO_COLUMN_KIND_SET.has(value as TodoColumnKind)) return;
+    next[column] = value as TodoColumnKind;
+  });
+  return next;
+};
+
 const readTodoTablePrefs = (): TodoTablePrefs => {
   if (typeof window === "undefined") {
-    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {} };
+    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
   }
   try {
     const raw = window.localStorage.getItem(TODO_TABLE_PREFS_STORAGE_KEY);
-    if (!raw) return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {} };
+    if (!raw) return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
     const parsed = JSON.parse(raw) as {
       order?: unknown;
       hidden?: unknown;
       pinned?: unknown;
       labels?: unknown;
+      kinds?: unknown;
     };
     const order = normalizeTodoColumnOrder(parsed.order);
     const hidden = Array.isArray(parsed.hidden)
@@ -233,9 +307,9 @@ const readTodoTablePrefs = (): TodoTablePrefs => {
         labels[key] = trimmed;
       });
     }
-    return { order, hidden, pinned, labels };
+    return { order, hidden, pinned, labels, kinds: normalizeTodoColumnKinds(parsed.kinds) };
   } catch {
-    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {} };
+    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
   }
 };
 
@@ -246,6 +320,103 @@ const writeTodoTablePrefs = (prefs: TodoTablePrefs) => {
   } catch {
     // ignore storage failures
   }
+};
+
+const TRACKER_COLUMN_LABEL_FALLBACKS: Record<string, string> = {
+  company_name: "Company",
+  position: "Position",
+  job_type: "Job Type",
+  location: "Location",
+  stage: "Stage",
+  outcome: "Outcome",
+  application_date: "Application Date",
+  interview_datetime: "Interview",
+  followup_date: "Follow-Up",
+  interview_rounds: "Interview Rounds",
+  interview_type: "Interview Type",
+  interviewers: "Interviewers",
+  company_score: "Company Score",
+  contacts: "Contacts",
+  last_round_cleared: "Last Round Cleared",
+  total_rounds: "Total Rounds",
+  my_interview_score: "Interview Score",
+  improvement_areas: "Improvement Areas",
+  skill_to_upgrade: "Skill To Upgrade",
+  job_description: "Job Description",
+  notes: "Notes",
+  todo_items: "To-Do Items",
+  documents_links: "Documents / Links",
+  favorite: "Favorite"
+};
+
+const normalizeStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+};
+
+const normalizeStringRecord = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
+    if (typeof raw !== "string") return;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    out[key] = trimmed;
+  });
+  return out;
+};
+
+const humanizeColumnKey = (value: string): string => {
+  const cleaned = value.replace(/^prop__/, "").replace(/[_-]+/g, " ").trim();
+  if (!cleaned) return "Application";
+  return cleaned
+    .split(/\s+/)
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
+    .join(" ");
+};
+
+const resolveTrackerPinnedColumnKey = (settings: unknown): string => {
+  const settingsRecord =
+    settings && typeof settings === "object" && !Array.isArray(settings)
+      ? (settings as Record<string, unknown>)
+      : {};
+  const order = normalizeStringArray(settingsRecord.table_columns);
+  const hidden = new Set(normalizeStringArray(settingsRecord.hidden_columns));
+  const visible = order.filter((column) => !hidden.has(column));
+  return visible[0] || order[0] || "company_name";
+};
+
+const resolveTrackerPinnedColumnLabel = (settings: unknown, column: string): string => {
+  const settingsRecord =
+    settings && typeof settings === "object" && !Array.isArray(settings)
+      ? (settings as Record<string, unknown>)
+      : {};
+  const labels = normalizeStringRecord(settingsRecord.column_labels);
+  return labels[column] || TRACKER_COLUMN_LABEL_FALLBACKS[column] || humanizeColumnKey(column);
+};
+
+const trackerApplicationValueForColumn = (app: Application, column: string): string => {
+  if (column.startsWith("prop__")) {
+    const key = column.slice("prop__".length);
+    return app.properties?.[key] || "";
+  }
+  if (column === "contacts") {
+    return (app.contacts || []).map((item) => item.name).filter(Boolean).join(" | ");
+  }
+  if (column === "todo_items") {
+    return (app.todo_items || []).map((item) => item.task || "").filter(Boolean).join(" | ");
+  }
+  if (column === "documents_links") {
+    return app.documents_links || "";
+  }
+  if (column === "favorite") {
+    return app.favorite ? "true" : "false";
+  }
+  const raw = (app as Record<string, unknown>)[column];
+  if (raw === null || raw === undefined) return "";
+  return String(raw);
 };
 
 const buildSingleEventIcs = (event: CalendarEvent) => {
@@ -311,16 +482,14 @@ const CalendarPage: React.FC = () => {
     () => new Date(today.getFullYear(), today.getMonth(), 1)
   );
   const [selectedDay, setSelectedDay] = useState<string>(() => toDateKey(today));
-  const [todoColumnOrder, setTodoColumnOrder] = useState<TodoColumnId[]>(() => readTodoTablePrefs().order);
-  const [todoHiddenColumns, setTodoHiddenColumns] = useState<TodoColumnId[]>(
-    () => readTodoTablePrefs().hidden
-  );
-  const [todoPinnedColumn, setTodoPinnedColumn] = useState<TodoColumnId | null>(
-    () => readTodoTablePrefs().pinned
-  );
+  const todoPrefs = useMemo(() => readTodoTablePrefs(), []);
+  const [todoColumnOrder, setTodoColumnOrder] = useState<TodoColumnId[]>(() => todoPrefs.order);
+  const [todoHiddenColumns, setTodoHiddenColumns] = useState<TodoColumnId[]>(() => todoPrefs.hidden);
+  const [todoPinnedColumn, setTodoPinnedColumn] = useState<TodoColumnId | null>(() => todoPrefs.pinned);
   const [todoColumnLabelOverrides, setTodoColumnLabelOverrides] = useState<
     Partial<Record<TodoColumnId, string>>
-  >(() => readTodoTablePrefs().labels);
+  >(() => todoPrefs.labels);
+  const [todoColumnKinds, setTodoColumnKinds] = useState<TodoColumnKinds>(() => todoPrefs.kinds);
   const [todoColumnMenu, setTodoColumnMenu] = useState<TodoColumnMenuState | null>(null);
   const [todoColumnMenuPos, setTodoColumnMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [todoColumnMenuPlacement, setTodoColumnMenuPlacement] = useState<"top" | "bottom">("bottom");
@@ -344,9 +513,42 @@ const CalendarPage: React.FC = () => {
   const todoColumnMenuAnchorRef = useRef<HTMLElement | null>(null);
   const todoColumnMenuCloseTimerRef = useRef<number | null>(null);
 
+  const editableTableTargets = useMemo(
+    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"] }),
+    [settings]
+  );
+
+  const defaultTodoSourceTarget = useMemo(
+    () => editableTableTargets.find((target) => target.hasTodoColumn) || editableTableTargets[0] || null,
+    [editableTableTargets]
+  );
+
+  const isTrackerTodoSource = useMemo(() => {
+    if (!defaultTodoSourceTarget) return false;
+    const contentSlotId =
+      typeof defaultTodoSourceTarget.props?.contentSlotId === "string"
+        ? defaultTodoSourceTarget.props.contentSlotId
+        : "";
+    return (
+      defaultTodoSourceTarget.pageId === "tracker" ||
+      defaultTodoSourceTarget.blockId === "tracker:table" ||
+      contentSlotId.startsWith("tracker:content")
+    );
+  }, [defaultTodoSourceTarget]);
+
+  const todoSourcePinnedTrackerColumn = useMemo(
+    () => (isTrackerTodoSource ? resolveTrackerPinnedColumnKey(settings) : null),
+    [isTrackerTodoSource, settings]
+  );
+
+  const todoSourceApplicationLabel = useMemo(() => {
+    if (!isTrackerTodoSource || !todoSourcePinnedTrackerColumn) return t("Application");
+    return resolveTrackerPinnedColumnLabel(settings, todoSourcePinnedTrackerColumn);
+  }, [isTrackerTodoSource, settings, t, todoSourcePinnedTrackerColumn]);
+
   const todoColumnLabels = useMemo<Record<TodoColumnId, string>>(() => {
     const base: Record<TodoColumnId, string> = {
-      application: t("Application"),
+      application: todoSourceApplicationLabel,
       task: t("Task"),
       task_location: t("Task Location"),
       notes: t("Notes"),
@@ -365,7 +567,44 @@ const CalendarPage: React.FC = () => {
       status: todoColumnLabelOverrides.status || base.status,
       actions: todoColumnLabelOverrides.actions || base.actions
     };
-  }, [t, todoColumnLabelOverrides]);
+  }, [t, todoColumnLabelOverrides, todoSourceApplicationLabel]);
+
+  const resolveTodoSourceAccess = useCallback(
+    (block?: PageBlockConfig | null): TodoSourceAccess => {
+      const explicitLinkId =
+        block?.type === "editableTable"
+          ? getBlockLink((block as PageBlockConfig<"editableTable">).props, TODO_SOURCE_TABLE_LINK_KEY)
+          : null;
+      const explicitTarget = explicitLinkId
+        ? editableTableTargets.find((target) => target.blockId === explicitLinkId) || null
+        : null;
+      const sourceTarget = explicitTarget || defaultTodoSourceTarget;
+
+      if (explicitLinkId && !explicitTarget) {
+        return {
+          hasSource: false,
+          reason: t("The linked editable table no longer exists.")
+        };
+      }
+      if (!sourceTarget) {
+        return {
+          hasSource: false,
+          reason: t("No editable table is available to link this to-do list.")
+        };
+      }
+      if (!sourceTarget.hasTodoColumn) {
+        return {
+          hasSource: false,
+          reason: t("The linked editable table has no To-Do column.")
+        };
+      }
+      return {
+        hasSource: true,
+        reason: null
+      };
+    },
+    [defaultTodoSourceTarget, editableTableTargets, t]
+  );
 
   const weekdayLabels = useMemo(() => buildWeekdayLabels(locale), [locale]);
   useEffect(() => {
@@ -547,6 +786,16 @@ const CalendarPage: React.FC = () => {
   const appByApplicationId = useMemo(() => {
     return new Map(applications.map((app) => [app.application_id, app]));
   }, [applications]);
+  const todoSourceApplicationText = useCallback(
+    (app: Application): string => {
+      if (isTrackerTodoSource && todoSourcePinnedTrackerColumn) {
+        const value = trackerApplicationValueForColumn(app, todoSourcePinnedTrackerColumn).trim();
+        if (value) return value;
+      }
+      return `${app.company_name} — ${app.position}`;
+    },
+    [isTrackerTodoSource, todoSourcePinnedTrackerColumn]
+  );
   const companyOptions = useMemo(() => {
     const set = new Set(applications.map((app) => app.company_name).filter(Boolean));
     return Array.from(set);
@@ -559,10 +808,10 @@ const CalendarPage: React.FC = () => {
     () =>
       applications.map((app) => ({
         value: app.application_id,
-        label: `${app.company_name} — ${app.position}`,
+        label: todoSourceApplicationText(app),
         appId: app.id
       })),
-    [applications]
+    [applications, todoSourceApplicationText]
   );
   const applicationSelectOptions = useMemo<SelectOption[]>(
     () =>
@@ -661,16 +910,19 @@ const CalendarPage: React.FC = () => {
     });
     return rows;
   }, [applications]);
-  const getTodoColumnKind = useCallback((col: TodoColumnId): TodoColumnKind => {
-    if (col === "application") return "select";
-    if (col === "due_date") return "date";
-    if (col === "status") return "select";
-    if (col === "documents_links") return "links";
-    return "text";
-  }, []);
+  const getTodoColumnKind = useCallback(
+    (col: TodoColumnId): TodoColumnKind => {
+      return todoColumnKinds[col] || TODO_COLUMN_KIND_DEFAULTS[col];
+    },
+    [todoColumnKinds]
+  );
 
   const todoCellToString = useCallback((row: TodoRow, col: TodoColumnId): string => {
-    if (col === "application") return `${row.applicationId} ${row.company} ${row.position}`.trim();
+    if (col === "application") {
+      const app = appById.get(row.appId);
+      const pinnedValue = app ? todoSourceApplicationText(app) : `${row.company} — ${row.position}`;
+      return `${row.applicationId} ${pinnedValue} ${row.company} ${row.position}`.trim();
+    }
     if (col === "task") return row.todo.task || "";
     if (col === "task_location") return row.todo.task_location || "";
     if (col === "notes") return row.todo.notes || "";
@@ -678,7 +930,7 @@ const CalendarPage: React.FC = () => {
     if (col === "due_date") return row.todo.due_date || "";
     if (col === "status") return normalizeTodoStatus(row.todo.status);
     return "";
-  }, []);
+  }, [appById, todoSourceApplicationText]);
 
   const filteredTodos = useMemo(() => {
     const base = selected ? todoRows.filter((row) => row.applicationId === selected) : todoRows;
@@ -872,9 +1124,10 @@ const CalendarPage: React.FC = () => {
       order: orderedTodoColumns,
       hidden: todoHiddenColumns,
       pinned: todoPinnedColumn,
-      labels: todoColumnLabelOverrides
+      labels: todoColumnLabelOverrides,
+      kinds: todoColumnKinds
     });
-  }, [orderedTodoColumns, todoHiddenColumns, todoPinnedColumn, todoColumnLabelOverrides]);
+  }, [orderedTodoColumns, todoHiddenColumns, todoPinnedColumn, todoColumnLabelOverrides, todoColumnKinds]);
 
   const reorderTodoColumns = useCallback((from: TodoColumnId, to: TodoColumnId) => {
     if (from === to) return;
@@ -1104,6 +1357,7 @@ const CalendarPage: React.FC = () => {
   const todoMenuCanMove = Boolean(todoMenuCol && todoMenuCol !== "actions");
   const todoMenuCanHide = Boolean(todoMenuCol && todoMenuCol !== "actions");
   const todoMenuCanFit = Boolean(todoMenuCol && todoMenuCol !== "actions");
+  const todoMenuCanSetType = Boolean(todoMenuCol && todoMenuCol !== "actions");
   const todoMenuFilterActive = Boolean(
     todoMenuCol && (todoColumnFilters[todoMenuCol] || "").trim().length > 0
   );
@@ -1112,18 +1366,27 @@ const CalendarPage: React.FC = () => {
   const todoMenuCurrentCalc: TodoColumnCalcOp = todoMenuCol ? todoColumnCalcs[todoMenuCol] || "none" : "none";
 
   const iconBack = <span className="column-menu-back">←</span>;
-  const iconChangeType = <span>⇅</span>;
-  const iconFilter = <span>F</span>;
-  const iconSort = <span>S</span>;
-  const iconGroup = <span>G</span>;
-  const iconCalc = <span>C</span>;
-  const iconPin = <span>P</span>;
-  const iconHide = <span>H</span>;
-  const iconFit = <span>↔</span>;
-  const iconInsertLeft = <span>&lt;+</span>;
-  const iconInsertRight = <span>+&gt;</span>;
-  const iconDuplicate = <span>D</span>;
-  const iconDelete = <span>X</span>;
+  const iconChangeType = columnMenuIconChangeType;
+  const iconTypeText = columnMenuIconTypeText;
+  const iconTypeNumber = columnMenuIconTypeNumber;
+  const iconTypeSelect = columnMenuIconTypeSelect;
+  const iconTypeDate = columnMenuIconTypeDate;
+  const iconTypeCheckbox = columnMenuIconTypeCheckbox;
+  const iconTypeRating = columnMenuIconTypeRating;
+  const iconTypeContacts = columnMenuIconTypeContacts;
+  const iconTypeLinks = columnMenuIconTypeLinks;
+  const iconTypeDocuments = columnMenuIconTypeDocuments;
+  const iconFilter = columnMenuIconFilter;
+  const iconSort = columnMenuIconSort;
+  const iconGroup = columnMenuIconGroup;
+  const iconCalc = columnMenuIconCalc;
+  const iconPin = columnMenuIconPin;
+  const iconHide = columnMenuIconHide;
+  const iconFit = columnMenuIconFit;
+  const iconInsertLeft = columnMenuIconInsertLeft;
+  const iconInsertRight = columnMenuIconInsertRight;
+  const iconDuplicate = columnMenuIconDuplicate;
+  const iconDelete = columnMenuIconTrash;
 
   const menuEntries: MenuEntry[] = (() => {
     if (!todoMenuCol) return [];
@@ -1135,26 +1398,31 @@ const CalendarPage: React.FC = () => {
       action: () => setTodoMenuView("root")
     };
     if (todoColumnMenuView === "type") {
-      const mkType = (type: TodoColumnKind, label: string): MenuEntry => ({
+      const mkType = (type: TodoColumnKind, label: string, icon: React.ReactNode): MenuEntry => ({
         kind: "item",
         key: `type-${type}`,
         label,
-        icon: iconChangeType,
-        disabled: true,
-        end: todoMenuKind === type ? <span className="column-menu-check">✓</span> : undefined
+        icon,
+        disabled: !todoMenuCanSetType,
+        end: todoMenuKind === type ? <span className="column-menu-check">✓</span> : undefined,
+        action: () => {
+          if (!todoMenuCol || todoMenuCol === "actions") return;
+          setTodoColumnKinds((prev) => ({ ...prev, [todoMenuCol]: type }));
+          setTodoMenuView("root");
+        }
       });
       return [
         backEntry,
-        mkType("text", "Texto"),
-        mkType("number", "Numero"),
-        mkType("select", "Seleccion"),
-        mkType("date", "Fecha"),
-        mkType("checkbox", "Casilla"),
-        mkType("rating", "Valoracion"),
+        mkType("text", "Texto", iconTypeText),
+        mkType("number", "Numero", iconTypeNumber),
+        mkType("select", "Seleccion", iconTypeSelect),
+        mkType("date", "Fecha", iconTypeDate),
+        mkType("checkbox", "Casilla", iconTypeCheckbox),
+        mkType("rating", "Valoracion", iconTypeRating),
         { kind: "separator", key: "type-sep-0" },
-        mkType("contacts", "Contactos"),
-        mkType("links", "Links"),
-        mkType("documents", "Documento")
+        mkType("contacts", "Contactos", iconTypeContacts),
+        mkType("links", "Links", iconTypeLinks),
+        mkType("documents", "Documento", iconTypeDocuments)
       ];
     }
     if (todoColumnMenuView === "sort") {
@@ -1383,8 +1651,9 @@ const CalendarPage: React.FC = () => {
         key: "change-type",
         label: "Cambiar tipo",
         icon: iconChangeType,
+        disabled: !todoMenuCanSetType,
         submenu: "type",
-        end: <span>›</span>
+        end: <ColumnMenuChevronRight />
       },
       { kind: "separator", key: "sep-0" },
       {
@@ -1602,6 +1871,8 @@ const CalendarPage: React.FC = () => {
   };
 
   const removeTodoItem = async (appId: number, todoId: string) => {
+    const confirmed = window.confirm("Delete this to-do item? This action cannot be undone.");
+    if (!confirmed) return;
     const app = applications.find((entry) => entry.id === appId);
     if (!app) return;
     const nextTodos = (app.todo_items || []).filter((item) => item.id !== todoId);
@@ -1741,18 +2012,28 @@ const CalendarPage: React.FC = () => {
     if (!files || files.length === 0) return;
     try {
       await uploadDocuments(appId, Array.from(files));
-      await refresh();
+      await updateApplication(appId, {});
     } catch (error) {
       console.error("Failed to upload documents", error);
     }
   };
 
-  const handleDeleteDocument = async (appId: number, fileId: string) => {
+  const handleDeleteDocument = async (
+    appId: number,
+    fileId: string,
+    opts?: { confirm?: boolean }
+  ): Promise<boolean> => {
+    if (opts?.confirm !== false) {
+      const confirmed = window.confirm("Delete this document? This action cannot be undone.");
+      if (!confirmed) return false;
+    }
     try {
       await deleteDocument(appId, fileId);
-      await refresh();
+      await updateApplication(appId, {});
+      return true;
     } catch (error) {
       console.error("Failed to delete document", error);
+      return false;
     }
   };
 
@@ -2020,11 +2301,28 @@ const CalendarPage: React.FC = () => {
     {
       id: "calendar:todo",
       toolbar: {
-          search: {
-            value: todoQuery,
-            onChange: setTodoQuery,
-            placeholder: t("Search to-dos...")
-          },
+          leading: (
+            <TrackerSearchBar
+              value={todoQuery}
+              onChange={setTodoQuery}
+              stageFilter={selected || "all"}
+              onStageFilterChange={(next) => setSelected(next === "all" ? "" : next)}
+              stages={applicationOptions.map((app) => app.value)}
+              stageOptions={applicationOptions.map((app) => ({ value: app.value, label: app.label }))}
+              outcomeFilter="all"
+              onOutcomeFilterChange={() => undefined}
+              outcomes={[]}
+              placeholder={t("Search to-dos...")}
+              allLabel={t("All")}
+              stageAllLabel={t("All applications")}
+              stageLabel={t("Application")}
+              outcomeLabel={t("Status")}
+              hideOutcomeFilter
+              filterAriaLabel={t("Filter")}
+              clearAriaLabel={t("Clear search")}
+              alwaysShowClearButton
+            />
+          ),
           columns: {
             items: orderedTodoColumns.map((col) => ({
               key: col,
@@ -2037,33 +2335,18 @@ const CalendarPage: React.FC = () => {
               toggleTodoColumnHidden(key);
             },
             onShowAll: hiddenTodoColumns.length > 0 ? showAllTodoColumns : undefined
-          }
-        },
-      content: (
-          <>
-            <div className="todo-controls">
-              <div className="todo-summary">
-                {hasApplications ? t("{count} pending", { count: pendingTodos }) : "-"}
-              </div>
-              <div className="field todo-select">
-                <label>{t("Application")}</label>
-                <select
-                  value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
-                  disabled={!hasApplications}
-                >
-                  <option value="">{t("All applications")}</option>
-                  {applicationOptions.map((app) => (
-                    <option key={app.value} value={app.value}>
-                      {app.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          },
+          trailing: (
+            <>
+              <div className="todo-summary">{hasApplications ? t("{count} pending", { count: pendingTodos }) : "-"}</div>
               <button className="primary" type="button" onClick={openTodoCreate} disabled={!hasApplications}>
                 {t("Add To-Do")}
               </button>
-            </div>
+            </>
+          )
+        },
+      content: (
+          <>
             {!hasApplications ? (
               <div className="empty">{t("No applications yet. Add one to start tracking tasks.")}</div>
             ) : rowsForDisplay.length === 0 ? (
@@ -2087,8 +2370,9 @@ const CalendarPage: React.FC = () => {
                           <th
                             key={col}
                             className={[
+                              canMove ? "column-header" : "",
                               isPinned ? "todo-sticky-col" : "",
-                              isDragOver ? "todo-column-drag-over" : ""
+                              isDragOver ? "todo-column-drag-over drag-over" : ""
                             ]
                               .filter(Boolean)
                               .join(" ")}
@@ -2097,43 +2381,36 @@ const CalendarPage: React.FC = () => {
                               minWidth: width,
                               left: isPinned ? 0 : undefined
                             }}
+                            draggable={canMove}
+                            onDragStart={(event) => {
+                              if (!canMove) return;
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", col);
+                              setTodoDragColumn(col);
+                            }}
+                            onDragOver={(event) => {
+                              if (!canMove || !todoDragColumn || todoDragColumn === col) return;
+                              event.preventDefault();
+                              setTodoDragOverColumn(col);
+                            }}
+                            onDragLeave={() => {
+                              if (todoDragOverColumn === col) setTodoDragOverColumn(null);
+                            }}
+                            onDrop={(event) => {
+                              const from = todoDragColumn;
+                              if (!canMove || !from || from === col) return;
+                              event.preventDefault();
+                              reorderTodoColumns(from, col);
+                              setTodoDragColumn(null);
+                              setTodoDragOverColumn(null);
+                            }}
+                            onDragEnd={() => {
+                              setTodoDragColumn(null);
+                              setTodoDragOverColumn(null);
+                            }}
                           >
-                            <div
-                              className={`todo-column-head ${canMove ? "draggable" : ""}`}
-                              draggable={canMove}
-                              onDragStart={(event) => {
-                                if (!canMove) return;
-                                event.dataTransfer.effectAllowed = "move";
-                                event.dataTransfer.setData("text/plain", col);
-                                setTodoDragColumn(col);
-                              }}
-                              onDragOver={(event) => {
-                                if (!canMove || !todoDragColumn || todoDragColumn === col) return;
-                                event.preventDefault();
-                                setTodoDragOverColumn(col);
-                              }}
-                              onDragLeave={() => {
-                                if (todoDragOverColumn === col) setTodoDragOverColumn(null);
-                              }}
-                              onDrop={(event) => {
-                                const from = todoDragColumn;
-                                if (!canMove || !from || from === col) return;
-                                event.preventDefault();
-                                reorderTodoColumns(from, col);
-                                setTodoDragColumn(null);
-                                setTodoDragOverColumn(null);
-                              }}
-                              onDragEnd={() => {
-                                setTodoDragColumn(null);
-                                setTodoDragOverColumn(null);
-                              }}
-                            >
-                              {canMove ? (
-                                <span className="todo-column-drag-handle" aria-hidden="true">
-                                  ||
-                                </span>
-                              ) : null}
-                              <span className="todo-column-title">{todoColumnLabels[col]}</span>
+                            <div className="todo-column-head th-content">
+                              <span className="todo-column-title column-label">{todoColumnLabels[col]}</span>
                               {sortActive && (
                                 <span className="sort-indicator">
                                   {todoSortConfig?.direction === "asc" ? "↑" : "↓"}
@@ -2154,7 +2431,7 @@ const CalendarPage: React.FC = () => {
                                     }
                                   }}
                                 >
-                                  ⋯
+                                  ...
                                 </button>
                               ) : null}
                             </div>
@@ -2423,7 +2700,7 @@ const CalendarPage: React.FC = () => {
   ];
 
   const resolveCalendarSlot = useCallback<BlockSlotResolver>(
-    (slotId) => {
+    (slotId, block) => {
       if (slotId === "calendar:alerts:content") {
         return calendarSlots[0]?.content || null;
       }
@@ -2431,33 +2708,58 @@ const CalendarPage: React.FC = () => {
         return calendarSlots[1]?.content || null;
       }
       if (slotId === "calendar:todo:toolbar") {
+        const source = resolveTodoSourceAccess(block);
+        if (!source.hasSource) {
+          return (
+            <EditableTableToolbar
+              toolbar={{
+                leading: <div className="todo-summary">{source.reason || t("No linked source.")}</div>,
+                trailing: (
+                  <button className="primary" type="button" disabled>
+                    {t("Add To-Do")}
+                  </button>
+                )
+              }}
+            />
+          );
+        }
         const toolbar = calendarSlots[2]?.toolbar;
         return toolbar ? <EditableTableToolbar toolbar={toolbar} /> : null;
       }
       if (slotId === "calendar:todo:content") {
+        const source = resolveTodoSourceAccess(block);
+        if (!source.hasSource) {
+          return <div className="empty">{source.reason || t("No linked source.")}</div>;
+        }
         return calendarSlots[2]?.content || null;
       }
       return null;
     },
-    [calendarSlots]
+    [calendarSlots, resolveTodoSourceAccess, t]
   );
 
   const resolveCalendarBlockProps = useCallback(
     (block: PageBlockConfig) => {
-      if (block.id !== "calendar:todo" || block.type !== "editableTable") return null;
+      if (block.type !== "editableTable") return null;
+      const tableBlock = block as PageBlockConfig<"editableTable">;
+      if (tableBlock.props.variant !== "todo") return null;
+      const source = resolveTodoSourceAccess(block);
       return {
-        description: hasApplications
-          ? t("Manage preparation tasks linked to each application.")
-          : t("Create an application to start a to-do list.")
+        description: source.hasSource
+          ? hasApplications
+            ? t("Manage preparation tasks linked to each application.")
+            : t("Create an application to start a to-do list.")
+          : source.reason || t("No linked source.")
       };
     },
-    [hasApplications, t]
+    [hasApplications, resolveTodoSourceAccess, t]
   );
 
   const resolveCalendarDuplicateProps = useCallback(
     (block: PageBlockConfig) => {
-      if (block.id !== "calendar:todo" || block.type !== "editableTable") return null;
+      if (block.type !== "editableTable") return null;
       const tableBlock = block as PageBlockConfig<"editableTable">;
+      if (tableBlock.props.variant !== "todo") return null;
 
       const sourceColumns = visibleTodoColumns.filter((col) => col !== "actions");
       const usedNames = new Set<string>();
@@ -2492,7 +2794,8 @@ const CalendarPage: React.FC = () => {
         toolbarSlotId: undefined,
         contentSlotId: undefined,
         actionsSlotId: undefined,
-        toolbarActionsSlotId: undefined
+        toolbarActionsSlotId: undefined,
+        links: tableBlock.props.links
       };
     },
     [getTodoColumnKind, rowsForDisplay, t, todoCellToString, todoColumnLabels, visibleTodoColumns]
@@ -2616,7 +2919,7 @@ const CalendarPage: React.FC = () => {
                         <span className="column-menu-item-icon">{entry.icon}</span>
                         <span className="column-menu-item-label">{entry.label}</span>
                         <span className="column-menu-item-end">
-                          {entry.end ?? (entry.submenu ? <span>›</span> : null)}
+                          {entry.end ?? (entry.submenu ? <ColumnMenuChevronRight /> : null)}
                         </span>
                       </div>
                     );
@@ -3275,14 +3578,18 @@ const CalendarPage: React.FC = () => {
                 {t("Download")}
               </button>
               <button
-                className="danger"
+                className="icon-button danger"
                 type="button"
+                aria-label={t("Delete")}
                 onClick={async () => {
-                  await handleDeleteDocument(documentModal.appId, documentModal.file.id);
+                  const removed = await handleDeleteDocument(documentModal.appId, documentModal.file.id);
+                  if (!removed) return;
                   setDocumentModal(null);
                 }}
               >
-                {t("Delete")}
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
+                </svg>
               </button>
             </div>
           </div>

@@ -191,7 +191,7 @@ export async function getStorageInfo(): Promise<{
   return request("/storage");
 }
 
-export async function updateSettings(settings: Settings): Promise<Settings> {
+export async function updateSettings(settings: Partial<Settings>): Promise<Settings> {
   const data = await request<{ settings: Settings }>("/settings", {
     method: "PUT",
     body: JSON.stringify({ settings })

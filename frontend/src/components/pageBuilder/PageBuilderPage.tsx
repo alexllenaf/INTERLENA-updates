@@ -98,7 +98,10 @@ const PageBuilderPage: React.FC<Props> = ({
         trace("flush:start", {
           config: summarizePageConfig(nextConfig)
         });
-        const updated = await saveSettingsRef.current(writePageConfig(currentSettings, pageId, nextConfig));
+        const nextSettings = writePageConfig(currentSettings, pageId, nextConfig);
+        const updated = await saveSettingsRef.current({
+          page_configs: nextSettings.page_configs
+        });
         if (updated) {
           configSavedJsonRef.current = nextJson;
           trace("flush:success", {

@@ -55,6 +55,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "skill_to_upgrade",
         "job_description",
         "notes",
+        "todo_items",
         "documents_links",
         "favorite",
     ],
