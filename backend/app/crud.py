@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from .models import Application, View
+from .models import Application, EmailMessage, EmailSyncCursor, View
+from .services.emails import fetch_email_body_from_provider
 from .settings_store import get_settings
 from .utils import (
     apply_business_rules,
@@ -229,6 +230,146 @@ def update_view(db: Session, view: View, payload: Dict[str, Any]) -> View:
 def delete_view(db: Session, view: View) -> None:
     db.delete(view)
     db.commit()
+
+
+def sync_email_metadata(
+    db: Session,
+    contact_id: str,
+    folder: str,
+    messages: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    now = datetime.utcnow()
+    cutoff_date = (now - timedelta(days=180)).replace(tzinfo=None)
+
+    inserted = 0
+    skipped_existing = 0
+    skipped_out_of_window = 0
+    max_seen_date: Optional[datetime] = None
+
+    for item in messages:
+        message_date = item.get("date")
+        if not isinstance(message_date, datetime):
+            continue
+        if message_date.tzinfo is not None:
+            message_date = message_date.replace(tzinfo=None)
+        if message_date < cutoff_date:
+            skipped_out_of_window += 1
+            continue
+
+        existing = db.get(EmailMessage, item.get("message_id"))
+        if existing:
+            skipped_existing += 1
+            continue
+
+        db.add(
+            EmailMessage(
+                message_id=item.get("message_id"),
+                contact_id=contact_id,
+                from_address=item.get("from_address") or "",
+                to_address=item.get("to_address") or "",
+                subject=item.get("subject") or "",
+                date=message_date,
+                is_read=bool(item.get("is_read")),
+                folder=item.get("folder") or folder,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        inserted += 1
+        if max_seen_date is None or message_date > max_seen_date:
+            max_seen_date = message_date
+
+    cursor = (
+        db.query(EmailSyncCursor)
+        .filter(EmailSyncCursor.contact_id == contact_id, EmailSyncCursor.folder == folder)
+        .first()
+    )
+
+    if max_seen_date is not None:
+        if cursor:
+            if max_seen_date > cursor.last_synced_at:
+                cursor.last_synced_at = max_seen_date
+        else:
+            db.add(
+                EmailSyncCursor(
+                    contact_id=contact_id,
+                    folder=folder,
+                    last_synced_at=max_seen_date,
+                )
+            )
+
+    db.commit()
+
+    cursor = (
+        db.query(EmailSyncCursor)
+        .filter(EmailSyncCursor.contact_id == contact_id, EmailSyncCursor.folder == folder)
+        .first()
+    )
+
+    return {
+        "contact_id": contact_id,
+        "folder": folder,
+        "cutoff_date": cutoff_date,
+        "last_synced_at": cursor.last_synced_at if cursor else None,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "skipped_out_of_window": skipped_out_of_window,
+    }
+
+
+def list_email_metadata(
+    db: Session,
+    contact_id: str,
+    folder: Optional[str] = None,
+    limit: int = 200,
+) -> List[EmailMessage]:
+    query = db.query(EmailMessage).filter(EmailMessage.contact_id == contact_id)
+    if folder:
+        query = query.filter(EmailMessage.folder == folder)
+    return query.order_by(EmailMessage.date.desc(), EmailMessage.message_id.desc()).limit(max(1, min(limit, 500))).all()
+
+
+def get_email_body(db: Session, message_id: str) -> Optional[str]:
+    row = db.get(EmailMessage, message_id)
+    if not row or not row.body:
+        return None
+    return row.body
+
+
+def upsert_email_body_once(db: Session, message_id: str, body: str) -> Dict[str, Any]:
+    row = db.get(EmailMessage, message_id)
+    if not row:
+        raise ValueError("Email message not found")
+    if row.body:
+        return {"message_id": row.message_id, "body": row.body, "cached": True}
+
+    row.body = body
+    row.body_downloaded_at = datetime.utcnow()
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"message_id": row.message_id, "body": row.body or "", "cached": False}
+
+
+def fetch_and_cache_email_body(db: Session, message_id: str) -> Optional[Dict[str, Any]]:
+    row = db.get(EmailMessage, message_id)
+    if not row:
+        return None
+    if row.body:
+        return {"message_id": row.message_id, "body": row.body, "cached": True}
+
+    fetched = fetch_email_body_from_provider(db, row)
+    if not fetched:
+        return None
+
+    row.body = fetched
+    row.body_downloaded_at = datetime.utcnow()
+    row.updated_at = datetime.utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"message_id": row.message_id, "body": row.body or "", "cached": False}
 
 
 def application_to_dict(app: Application) -> Dict[str, Any]:

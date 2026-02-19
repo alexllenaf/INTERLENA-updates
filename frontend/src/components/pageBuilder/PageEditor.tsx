@@ -17,6 +17,12 @@ import {
   clampColSpan
 } from "./types";
 import { getAllowedColStartsForSpan, snapColStartToSpanGrid } from "./gridSlots";
+import {
+  clearCrossPageDragState,
+  getCrossPageDragState,
+  setCrossPageDragState,
+  type SharedDragState
+} from "./crossPageDragStore";
 import { generateId } from "../../utils";
 
 const GRID_COLUMNS = 60;
@@ -26,25 +32,9 @@ const DROP_OUTSIDE_PADDING_PX = 64;
 const AUTO_SCROLL_EDGE_PX = 84;
 const AUTO_SCROLL_STEP_PX = 18;
 const PLACEHOLDER_ID = "__drag_placeholder__";
+const SHARED_DRAG_STALE_MS = 5000;
 
-type DragState = {
-  blockId: string;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  pointerX: number;
-  pointerY: number;
-  offsetX: number;
-  offsetY: number;
-  sourceIndex: number;
-  insertionIndex: number;
-  targetColStart: number;
-  lastStableX: number;
-  lastStableY: number;
-  active: boolean;
-  invalid: boolean;
-  ghostRect: { width: number; height: number };
-};
+type DragState = SharedDragState;
 
 type PackedPosition = {
   colStart: number;
@@ -61,12 +51,20 @@ type Props = {
   pageId: string;
   pageConfig: PageConfig;
   onChange: (next: PageConfig) => void;
+  onDropFromAnotherPage?: (payload: CrossPageDropPayload) => void;
   className?: string;
   registry?: BlockRegistry;
   resolveSlot?: BlockSlotResolver;
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   resolveDuplicateProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
+};
+
+export type CrossPageDropPayload = {
+  sourcePageId: string;
+  sourceBlockId: string;
+  block: PageBlockConfig;
+  nextBlocks: PageBlockConfig[];
 };
 
 type PackItem = {
@@ -333,10 +331,12 @@ const runAutoScroll = (clientY: number) => {
 
 const computeDragPreview = (pageConfig: PageConfig, drag: DragState | null): DragPreview | null => {
   if (!drag || !drag.active) return null;
-  const dragged = pageConfig.blocks.find((block) => block.id === drag.blockId);
-  if (!dragged) return null;
+  const dragged = drag.dragBlock;
+  const draggingFromCurrentPage = drag.sourcePageId === pageConfig.id;
 
-  const withoutDragged = pageConfig.blocks.filter((block) => block.id !== dragged.id);
+  const withoutDragged = draggingFromCurrentPage
+    ? pageConfig.blocks.filter((block) => block.id !== dragged.id)
+    : pageConfig.blocks;
   const insertion = clamp(drag.insertionIndex, 0, withoutDragged.length);
   const order = [...withoutDragged.map((block) => block.id)];
   order.splice(insertion, 0, PLACEHOLDER_ID);
@@ -363,7 +363,7 @@ const computeDragPreview = (pageConfig: PageConfig, drag: DragState | null): Dra
   const packed = packGridItems(items);
   const layoutOverrides: Record<string, GridLayout> = {};
   pageConfig.blocks.forEach((block) => {
-    if (block.id === dragged.id) return;
+    if (draggingFromCurrentPage && block.id === dragged.id) return;
     const packedPos = packed[block.id];
     if (!packedPos) return;
     layoutOverrides[block.id] = {
@@ -391,6 +391,7 @@ const PageEditor: React.FC<Props> = ({
   pageId,
   pageConfig,
   onChange,
+  onDropFromAnotherPage,
   className = "",
   registry = PAGE_BLOCK_REGISTRY,
   resolveSlot,
@@ -402,8 +403,28 @@ const PageEditor: React.FC<Props> = ({
   const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  dragRef.current = drag;
 
   const dragPreview = useMemo(() => computeDragPreview(pageConfig, drag), [pageConfig, drag]);
+
+  useEffect(() => {
+    if (drag) return;
+    const shared = getCrossPageDragState();
+    if (!shared || !shared.active) return;
+    if (Date.now() - shared.updatedAt > SHARED_DRAG_STALE_MS) {
+      clearCrossPageDragState();
+      return;
+    }
+    setDrag(shared);
+  }, [drag, pageId]);
+
+  useEffect(() => {
+    if (!drag) return;
+    // Avoid writing stale drag snapshots after drop/cancel transitions.
+    if (dragRef.current !== drag) return;
+    setCrossPageDragState(drag);
+  }, [drag]);
 
   useEffect(() => {
     if (!isAddOpen) return;
@@ -432,24 +453,15 @@ const PageEditor: React.FC<Props> = ({
             ...prev,
             pointerX: clientX,
             pointerY: clientY,
-            active: nowActive
-          };
-        }
-
-        const draggedBlock = pageConfig.blocks.find((block) => block.id === prev.blockId);
-        if (!draggedBlock) {
-          return {
-            ...prev,
-            pointerX: clientX,
-            pointerY: clientY,
-            active: nowActive
+            active: nowActive,
+            updatedAt: Date.now()
           };
         }
 
         const candidateCol = computeGridSnapColStart(
           containerRef.current,
           clientX,
-          clampColSpan(draggedBlock.layout.colSpan)
+          clampColSpan(prev.dragBlock.layout.colSpan)
         );
         const candidateIndex = computeInsertionIndex(containerRef.current, prev.blockId, clientY);
         const candidateInvalid = isDropInvalid(containerRef.current, clientX, clientY);
@@ -462,7 +474,8 @@ const PageEditor: React.FC<Props> = ({
           return {
             ...prev,
             pointerX: clientX,
-            pointerY: clientY
+            pointerY: clientY,
+            updatedAt: Date.now()
           };
         }
 
@@ -471,7 +484,8 @@ const PageEditor: React.FC<Props> = ({
             ...prev,
             pointerX: clientX,
             pointerY: clientY,
-            active: true
+            active: true,
+            updatedAt: Date.now()
           };
         }
 
@@ -481,7 +495,8 @@ const PageEditor: React.FC<Props> = ({
             ...prev,
             pointerX: clientX,
             pointerY: clientY,
-            active: true
+            active: true,
+            updatedAt: Date.now()
           };
         }
 
@@ -494,7 +509,8 @@ const PageEditor: React.FC<Props> = ({
           targetColStart: candidateCol,
           invalid: candidateInvalid,
           lastStableX: clientX,
-          lastStableY: clientY
+          lastStableY: clientY,
+          updatedAt: Date.now()
         };
       });
     };
@@ -502,27 +518,50 @@ const PageEditor: React.FC<Props> = ({
     const finishDrag = (event: PointerEvent) => {
       if (!drag || drag.pointerId !== event.pointerId) return;
       setDrag(null);
+      clearCrossPageDragState();
       if (!drag.active || drag.invalid) return;
-      const draggedBlock = pageConfig.blocks.find((block) => block.id === drag.blockId);
-      if (!draggedBlock) return;
-      const withoutDragged = pageConfig.blocks.filter((block) => block.id !== draggedBlock.id);
+      const isSamePage = drag.sourcePageId === pageId;
+      const sourceStillExists = pageConfig.blocks.some((block) => block.id === drag.blockId);
+      if (isSamePage && !sourceStillExists) return;
+
+      const withoutDragged = isSamePage
+        ? pageConfig.blocks.filter((block) => block.id !== drag.blockId)
+        : pageConfig.blocks;
       const insertion = clamp(drag.insertionIndex, 0, withoutDragged.length);
       const ordered = [...withoutDragged];
-      ordered.splice(insertion, 0, draggedBlock);
+      const usedIds = new Set(ordered.map((block) => block.id));
+      const droppedBlock =
+        !isSamePage && usedIds.has(drag.dragBlock.id)
+          ? {
+              ...drag.dragBlock,
+              id: createUniqueBlockId(drag.dragBlock.type, usedIds)
+            }
+          : drag.dragBlock;
+      ordered.splice(insertion, 0, droppedBlock);
 
       const items: PackItem[] = ordered.map((block) => ({
         id: block.id,
         span: clampColSpan(block.layout.colSpan),
-        preferredCol: block.id === draggedBlock.id ? drag.targetColStart : block.layout.colStart || 1
+        preferredCol: block.id === droppedBlock.id ? drag.targetColStart : block.layout.colStart || 1
       }));
       const packed = packGridItems(items);
       const nextBlocks = applyPackedLayout(ordered, packed);
-      onChange(withTimestamp(pageConfig, nextBlocks));
+      if (isSamePage) {
+        onChange(withTimestamp(pageConfig, nextBlocks));
+        return;
+      }
+      onDropFromAnotherPage?.({
+        sourcePageId: drag.sourcePageId,
+        sourceBlockId: drag.blockId,
+        block: droppedBlock,
+        nextBlocks
+      });
     };
 
     const cancelDrag = (event: PointerEvent) => {
       if (!drag || drag.pointerId !== event.pointerId) return;
       setDrag(null);
+      clearCrossPageDragState();
     };
 
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
@@ -533,7 +572,7 @@ const PageEditor: React.FC<Props> = ({
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", cancelDrag);
     };
-  }, [drag, onChange, pageConfig]);
+  }, [drag, onChange, onDropFromAnotherPage, pageConfig, pageId]);
 
   useEffect(() => {
     if (!drag?.active) return;
@@ -596,7 +635,9 @@ const PageEditor: React.FC<Props> = ({
     if (sourceIndex < 0) return;
 
     setDrag({
+      sourcePageId: pageId,
       blockId: block.id,
+      dragBlock: block,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -615,7 +656,8 @@ const PageEditor: React.FC<Props> = ({
       lastStableY: event.clientY,
       active: false,
       invalid: false,
-      ghostRect: { width: rect.width, height: rect.height }
+      ghostRect: { width: rect.width, height: rect.height },
+      updatedAt: Date.now()
     });
   };
 
@@ -642,9 +684,7 @@ const PageEditor: React.FC<Props> = ({
     setIsAddOpen(false);
   };
 
-  const draggedBlock = drag?.blockId
-    ? pageConfig.blocks.find((block) => block.id === drag.blockId) || null
-    : null;
+  const draggedBlock = drag?.dragBlock || null;
   const GhostBlockComponent = draggedBlock
     ? (registry[draggedBlock.type].component as React.ComponentType<any>)
     : null;
@@ -681,7 +721,9 @@ const PageEditor: React.FC<Props> = ({
       : null;
 
   const hiddenBlockIds =
-    drag?.active && draggedBlock ? new Set<string>([draggedBlock.id]) : undefined;
+    drag?.active && draggedBlock && drag.sourcePageId === pageId
+      ? new Set<string>([draggedBlock.id])
+      : undefined;
 
   const extraItems =
     drag?.active && dragPreview?.placeholderLayout
@@ -751,7 +793,7 @@ const PageEditor: React.FC<Props> = ({
         extraItems={extraItems}
         containerRef={containerRef}
         blockClassName={(block) => {
-          if (drag?.active && block.id === drag.blockId) return "drag-source-hidden";
+          if (drag?.active && drag.sourcePageId === pageId && block.id === drag.blockId) return "drag-source-hidden";
           return "";
         }}
         renderBlockControls={(block) => {

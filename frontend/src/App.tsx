@@ -1,6 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getUpdateInfo, openExternal } from "./api";
+import { getCrossPageDragState } from "./components/pageBuilder/crossPageDragStore";
 import { useI18n } from "./i18n";
 import { CORE_PAGE_PLUGINS } from "./pagePlugins";
 import { AppProvider, useAppData } from "./state";
@@ -82,6 +83,8 @@ type SidebarRenameTarget =
 
 const NAV_LABELS_STORAGE_KEY = "sidebar_nav_labels_v1";
 const CUSTOM_SHEETS_STORAGE_KEY = "sidebar_custom_sheets_v1";
+const DRAG_HOVER_OPEN_DELAY_MS = 220;
+const DRAG_HOVER_STALE_MS = 5000;
 
 const readNavLabelOverrides = (): Record<string, string> => {
   if (typeof window === "undefined") return {};
@@ -177,6 +180,7 @@ const AppShell: React.FC = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const dragHoverTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -455,6 +459,34 @@ const AppShell: React.FC = () => {
     setRenameDraft("");
   }, []);
 
+  const clearDragHoverTimer = useCallback(() => {
+    if (dragHoverTimerRef.current) {
+      window.clearTimeout(dragHoverTimerRef.current);
+      dragHoverTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleDragHoverOpen = useCallback(
+    (targetPath: string) => {
+      const drag = getCrossPageDragState();
+      if (!drag?.active) return;
+      if (Date.now() - drag.updatedAt > DRAG_HOVER_STALE_MS) return;
+      if (location.pathname === targetPath) return;
+      clearDragHoverTimer();
+      dragHoverTimerRef.current = window.setTimeout(() => {
+        dragHoverTimerRef.current = null;
+        const latest = getCrossPageDragState();
+        if (!latest?.active) return;
+        if (Date.now() - latest.updatedAt > DRAG_HOVER_STALE_MS) return;
+        if (window.location.pathname === targetPath) return;
+        navigate(targetPath);
+      }, DRAG_HOVER_OPEN_DELAY_MS);
+    },
+    [clearDragHoverTimer, location.pathname, navigate]
+  );
+
+  useEffect(() => () => clearDragHoverTimer(), [clearDragHoverTimer]);
+
   const openBaseNavRename = (path: string, fallback: string) => {
     setRenameDraft(resolveNavLabel(path, fallback));
     setRenameTarget({ kind: "base", path, fallback });
@@ -667,7 +699,12 @@ const AppShell: React.FC = () => {
         </div>
         <nav className="nav">
           {baseNavItems.map((item) => (
-            <div className="nav-item" key={item.path}>
+            <div
+              className="nav-item"
+              key={item.path}
+              onPointerEnter={() => scheduleDragHoverOpen(item.path)}
+              onPointerLeave={clearDragHoverTimer}
+            >
               <NavLink
                 to={item.path}
                 end={item.end}
@@ -693,7 +730,12 @@ const AppShell: React.FC = () => {
             </div>
           ))}
           {customSheets.map((sheet) => (
-            <div className="nav-item" key={sheet.id}>
+            <div
+              className="nav-item"
+              key={sheet.id}
+              onPointerEnter={() => scheduleDragHoverOpen(`/sheet/${sheet.id}`)}
+              onPointerLeave={clearDragHoverTimer}
+            >
               <NavLink
                 to={`/sheet/${sheet.id}`}
                 className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}

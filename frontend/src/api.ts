@@ -1,4 +1,22 @@
-import { Application, ApplicationInput, Settings, UpdateInfo, View } from "./types";
+import {
+  Application,
+  ApplicationInput,
+  EmailBodyResult,
+  EmailConnectionTestInput,
+  EmailConnectionTestResult,
+  EmailFoldersListResult,
+  EmailOAuthStartInput,
+  EmailOAuthStartResult,
+  EmailMetadata,
+  EmailMetadataInput,
+  EmailMetadataSyncResult,
+  EmailSendBatchResult,
+  EmailSendContact,
+  EmailSendStats,
+  Settings,
+  UpdateInfo,
+  View
+} from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -49,6 +67,54 @@ async function openExternal(url: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+export async function openOAuthPopup(url: string) {
+  if (!url) return;
+  const width = 520;
+  const height = 720;
+
+  const tauri = (window as unknown as {
+    __TAURI__?: { shell?: { open?: (url: string) => Promise<void> } };
+  }).__TAURI__;
+
+  if (tauri) {
+    try {
+      const { WebviewWindow, currentMonitor } = await import("@tauri-apps/api/window");
+      const monitor = await currentMonitor();
+      const screenWidth = Number(monitor?.size?.width || 1440);
+      const screenHeight = Number(monitor?.size?.height || 900);
+      const x = Math.max(0, Math.floor((screenWidth - width) / 2));
+      const y = Math.max(0, Math.floor((screenHeight - height) / 2));
+      new WebviewWindow(`oauth-${Date.now()}`, {
+        url,
+        title: "Google Sign-In",
+        width,
+        height,
+        resizable: true,
+        center: false,
+        x,
+        y,
+      });
+      return;
+    } catch {
+      // fallback below
+    }
+  }
+
+  const left = Math.max(0, Math.floor((window.screen.width - width) / 2));
+  const top = Math.max(0, Math.floor((window.screen.height - height) / 2));
+  const popup = window.open(
+    url,
+    "google-oauth",
+    `popup=yes,width=${width},height=${height},left=${left},top=${top}`
+  );
+  if (popup) {
+    popup.focus();
+    return;
+  }
+
+  await openExternal(url);
 }
 
 const parseContentDispositionFilename = (header: string | null): string | null => {
@@ -285,6 +351,113 @@ export async function updateView(viewId: string, payload: Partial<View>): Promis
 
 export async function deleteView(viewId: string): Promise<void> {
   await request(`/views/${viewId}`, { method: "DELETE" });
+}
+
+export async function syncEmailMetadata(payload: {
+  contact_id: string;
+  folder?: string;
+  messages: EmailMetadataInput[];
+}): Promise<EmailMetadataSyncResult> {
+  return request<EmailMetadataSyncResult>("/email/sync-metadata", {
+    method: "POST",
+    body: JSON.stringify({
+      contact_id: payload.contact_id,
+      folder: payload.folder || "INBOX",
+      messages: payload.messages
+    })
+  });
+}
+
+export async function listEmailMetadata(params: {
+  contact_id: string;
+  folder?: string;
+  limit?: number;
+}): Promise<EmailMetadata[]> {
+  const query = new URLSearchParams();
+  query.set("contact_id", params.contact_id);
+  if (params.folder) query.set("folder", params.folder);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<EmailMetadata[]>(`/email/messages${suffix}`);
+}
+
+export async function getEmailBody(messageId: string): Promise<EmailBodyResult> {
+  return request<EmailBodyResult>(`/email/messages/${encodeURIComponent(messageId)}/body`);
+}
+
+export async function saveEmailBody(messageId: string, body: string): Promise<EmailBodyResult> {
+  return request<EmailBodyResult>(`/email/messages/${encodeURIComponent(messageId)}/body`, {
+    method: "PUT",
+    body: JSON.stringify({ body })
+  });
+}
+
+export async function testEmailConnection(payload: EmailConnectionTestInput): Promise<EmailConnectionTestResult> {
+  return request<EmailConnectionTestResult>("/email/test-connection", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listEmailFolders(payload: EmailConnectionTestInput): Promise<EmailFoldersListResult> {
+  return request<EmailFoldersListResult>("/email/list-folders", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function startEmailOAuth(payload: EmailOAuthStartInput): Promise<EmailOAuthStartResult> {
+  return request<EmailOAuthStartResult>("/email/oauth/start", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function listEmailSendContacts(limit = 500): Promise<EmailSendContact[]> {
+  const query = new URLSearchParams();
+  query.set("limit", String(limit));
+  return request<EmailSendContact[]>(`/email/send/contacts-source?${query.toString()}`);
+}
+
+export async function getEmailSendStats(): Promise<EmailSendStats> {
+  return request<EmailSendStats>("/email/send/stats");
+}
+
+export async function sendEmailBatch(payload: {
+  subject_template: string;
+  body_template: string;
+  contacts: Array<{
+    name?: string;
+    email: string;
+    company?: string;
+    custom_fields?: Record<string, string>;
+  }>;
+}): Promise<EmailSendBatchResult> {
+  return request<EmailSendBatchResult>("/email/send/batch", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function disconnectGoogleOAuth(): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>("/oauth/google/disconnect", {
+    method: "POST"
+  });
+}
+
+export async function checkGoogleOAuthConfig(): Promise<{ ok: boolean; error: string | null }> {
+  return request<{ ok: boolean; error: string | null }>("/oauth/google/check");
+}
+
+export function getGoogleOAuthStartUrl(): string {
+  const base = String(API_BASE || "/api").trim();
+  const normalized = base.replace(/\/+$/, "");
+  if (!normalized) return "/api/oauth/google/start";
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return `${normalized}/oauth/google/start`;
+  }
+  const prefixed = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  return `${prefixed}/oauth/google/start`;
 }
 
 export function downloadExcel(scope: "all" | "favorites" | "active" = "all") {

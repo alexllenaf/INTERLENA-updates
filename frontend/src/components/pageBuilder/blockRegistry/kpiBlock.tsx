@@ -14,6 +14,7 @@ import {
 } from "../blockLinks";
 import { getTableSchema } from "../tableSchemaRegistry";
 import { createSlotContext } from "./shared";
+import { SourceTablePreview } from "./sourceTablePreview";
 import { type BlockDefinition } from "./types";
 
 type KpiTableSnapshot = {
@@ -304,6 +305,7 @@ const trackerValueForColumn = (app: Application, key: string): string => {
 };
 
 const isTrackerTableSource = (target: {
+  type: string;
   pageId: string;
   blockId: string;
   props: Record<string, unknown>;
@@ -319,6 +321,7 @@ const isTrackerTableSource = (target: {
 };
 
 const isTodoTableSource = (target: {
+  type: string;
   pageId: string;
   blockId: string;
   props: Record<string, unknown>;
@@ -326,6 +329,7 @@ const isTodoTableSource = (target: {
   const variant = normalizeString(target.props.variant);
   const contentSlotId = normalizeString(target.props.contentSlotId);
   return (
+    target.type === "todoTable" ||
     variant === "todo" ||
     target.pageId === "calendar" ||
     target.blockId.includes("todo") ||
@@ -812,7 +816,6 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
         : (computedValue ?? block.props.value ?? "0");
 
     const linkedTableMissing = Boolean(linkedTableId && !linkedTableTarget);
-    const previewRows = tableSnapshot ? tableSnapshot.rows.slice(0, 12) : [];
 
     const setLinkedTable = (nextBlockId?: string | null) => {
       const nextTarget = nextBlockId
@@ -1084,54 +1087,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                   </label>
                 </div>
 
-                {tableSnapshot && (
-                  <section className="kpi-source-preview">
-                    <div className="kpi-source-preview-head">
-                      <h3>Vista previa de tabla</h3>
-                      <p>
-                        {tableSnapshot.rows.length} filas
-                        {tableSnapshot.rows.length > previewRows.length
-                          ? ` (mostrando ${previewRows.length})`
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="table-scroll kpi-source-preview-scroll">
-                      <table className="table kpi-source-preview-table">
-                        <thead>
-                          <tr>
-                            {tableSnapshot.columns.map((column) => (
-                              <th key={`kpi-preview-head-${column}`} title={column}>
-                                {column}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {previewRows.length === 0 ? (
-                            <tr>
-                              <td colSpan={Math.max(1, tableSnapshot.columns.length)}>Sin filas en esta tabla.</td>
-                            </tr>
-                          ) : (
-                            previewRows.map((row, rowIndex) => (
-                              <tr key={`kpi-preview-row-${rowIndex}`}>
-                                {tableSnapshot.columns.map((_, colIndex) => {
-                                  const cellValue = row[colIndex] || "";
-                                  return (
-                                    <td key={`kpi-preview-cell-${rowIndex}-${colIndex}`}>
-                                      <span className="kpi-preview-cell" title={cellValue}>
-                                        {cellValue}
-                                      </span>
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                )}
+                {tableSnapshot && <SourceTablePreview table={tableSnapshot} keyPrefix="kpi-preview" />}
 
                 {linkedTableMissing && (
                   <p className="kpi-edit-hint">La tabla vinculada ya no existe. Selecciona otra.</p>

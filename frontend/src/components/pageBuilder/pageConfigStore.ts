@@ -76,11 +76,19 @@ const isKnownType = (value: unknown): value is PageBlockType =>
   typeof value === "string" && Object.prototype.hasOwnProperty.call(PAGE_BLOCK_REGISTRY, value);
 
 const normalizeBlock = (raw: unknown, index: number): PageBlockConfig | null => {
-  if (!isRecord(raw) || !isKnownType(raw.type)) return null;
-  const template = createDefaultPageBlock(raw.type, `${raw.type}:${index}`);
+  if (!isRecord(raw) || typeof raw.type !== "string") return null;
+  const rawProps = isRecord(raw.props) ? raw.props : null;
+  const maybeLegacyTodoVariant =
+    raw.type === "editableTable" &&
+    rawProps &&
+    typeof rawProps.variant === "string" &&
+    rawProps.variant.trim().toLowerCase() === "todo";
+  const normalizedType: PageBlockType = maybeLegacyTodoVariant ? "todoTable" : (raw.type as PageBlockType);
+  if (!isKnownType(normalizedType)) return null;
+  const template = createDefaultPageBlock(normalizedType, `${normalizedType}:${index}`);
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : template.id;
   const layout = normalizeLayout(raw.layout, template.layout);
-  const props = isRecord(raw.props) ? { ...template.props, ...raw.props } : template.props;
+  const props = rawProps ? { ...template.props, ...rawProps } : template.props;
   return {
     ...template,
     id,

@@ -1,67 +1,377 @@
-import React, { useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import StarRating from "../components/StarRating";
 import { BlockSlotResolver, PageBuilderPage } from "../components/pageBuilder";
+import {
+  PIPELINE_SOURCE_TABLE_LINK_KEY,
+  collectEditableTableTargets,
+  getBlockLink,
+  type EditableTableTarget
+} from "../components/pageBuilder/blockLinks";
+import { type EditableTableColumnKind } from "../components/pageBuilder/types";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
-import { Application, ApplicationInput } from "../types";
+import { type Application, type ApplicationInput, type CustomProperty, type Settings } from "../types";
 import { followupStatus, formatDateTime } from "../utils";
+
+const TRACKER_BASE_COLUMN_ORDER = [
+  "company_name",
+  "position",
+  "job_type",
+  "location",
+  "stage",
+  "outcome",
+  "application_date",
+  "interview_datetime",
+  "followup_date",
+  "interview_rounds",
+  "interview_type",
+  "interviewers",
+  "company_score",
+  "contacts",
+  "last_round_cleared",
+  "total_rounds",
+  "my_interview_score",
+  "improvement_areas",
+  "skill_to_upgrade",
+  "job_description",
+  "notes",
+  "todo_items",
+  "documents_links",
+  "favorite"
+];
+
+const TRACKER_COLUMN_LABELS: Record<string, string> = {
+  company_name: "Company",
+  position: "Position",
+  job_type: "Job Type",
+  location: "Location",
+  stage: "Stage",
+  outcome: "Outcome",
+  application_date: "Application Date",
+  interview_datetime: "Interview",
+  followup_date: "Follow-Up",
+  interview_rounds: "Interview Rounds",
+  interview_type: "Interview Type",
+  interviewers: "Interviewers",
+  company_score: "Company Score",
+  contacts: "Contacts",
+  last_round_cleared: "Last Round Cleared",
+  total_rounds: "Total Rounds",
+  my_interview_score: "Interview Score",
+  improvement_areas: "Improvement Areas",
+  skill_to_upgrade: "Skill To Upgrade",
+  job_description: "Job Description",
+  notes: "Notes",
+  todo_items: "To-Do Items",
+  documents_links: "Documents / Links",
+  favorite: "Favorite"
+};
+
+const TRACKER_COLUMN_KINDS: Record<string, EditableTableColumnKind> = {
+  company_name: "text",
+  position: "text",
+  job_type: "select",
+  location: "text",
+  stage: "select",
+  outcome: "select",
+  application_date: "date",
+  interview_datetime: "date",
+  followup_date: "date",
+  interview_rounds: "number",
+  interview_type: "text",
+  interviewers: "text",
+  company_score: "rating",
+  contacts: "contacts",
+  last_round_cleared: "text",
+  total_rounds: "number",
+  my_interview_score: "rating",
+  improvement_areas: "text",
+  skill_to_upgrade: "text",
+  job_description: "text",
+  notes: "text",
+  todo_items: "todo",
+  documents_links: "documents",
+  favorite: "checkbox"
+};
+
+type TrackerColumnProjection = {
+  labelToKey: Record<string, string>;
+  kindByKey: Record<string, EditableTableColumnKind>;
+};
+
+type PipelineGroupingConfig = {
+  key: string;
+  values: string[];
+  colors: Record<string, string>;
+  allowColumnReorder: boolean;
+};
+
+const DEFAULT_COLUMN_COLOR = "#E2E8F0";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+
+const normalizeStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => normalizeString(entry)).filter(Boolean);
+};
+
+const createUniqueLabel = (label: string, used: Set<string>): string => {
+  const base = label.trim() || "Column";
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  let attempt = 2;
+  while (used.has(`${base} (${attempt})`)) {
+    attempt += 1;
+  }
+  const next = `${base} (${attempt})`;
+  used.add(next);
+  return next;
+};
+
+const customPropertyKind = (prop: CustomProperty | null): EditableTableColumnKind => {
+  if (!prop) return "text";
+  if (prop.type === "number") return "number";
+  if (prop.type === "date") return "date";
+  if (prop.type === "checkbox") return "checkbox";
+  if (prop.type === "rating") return "rating";
+  if (prop.type === "contacts") return "contacts";
+  if (prop.type === "links") return "links";
+  if (prop.type === "documents") return "documents";
+  if (prop.type === "select") return "select";
+  return "text";
+};
+
+const reorderList = (list: string[], fromLabel: string, toLabel: string) => {
+  if (fromLabel === toLabel) return list;
+  const next = [...list];
+  const fromIndex = next.indexOf(fromLabel);
+  const toIndex = next.indexOf(toLabel);
+  if (fromIndex < 0 || toIndex < 0) return list;
+  next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, fromLabel);
+  return next;
+};
+
+const readGroupValue = (app: Application, key: string): string => {
+  if (key.startsWith("prop__")) {
+    const propertyKey = key.slice("prop__".length);
+    return app.properties?.[propertyKey] || "";
+  }
+  const raw = (app as Record<string, unknown>)[key];
+  if (raw === null || raw === undefined) return "";
+  return String(raw);
+};
+
+const buildGroupUpdatePayload = (
+  app: Application,
+  key: string,
+  nextValue: string
+): Partial<ApplicationInput> => {
+  if (key.startsWith("prop__")) {
+    const propertyKey = key.slice("prop__".length);
+    return {
+      properties: {
+        ...(app.properties || {}),
+        [propertyKey]: nextValue
+      }
+    };
+  }
+  if (key === "stage" || key === "outcome" || key === "job_type") {
+    return { [key]: nextValue } as Partial<ApplicationInput>;
+  }
+  return { [key]: nextValue } as Partial<ApplicationInput>;
+};
+
+const isTrackerSourceTarget = (target: EditableTableTarget): boolean => {
+  const schemaRef = normalizeString(target.props.schemaRef);
+  const contentSlotId = normalizeString(target.props.contentSlotId);
+  return (
+    schemaRef === "tracker.applications@1" ||
+    target.pageId === "tracker" ||
+    target.blockId === "tracker:table" ||
+    contentSlotId.startsWith("tracker:content")
+  );
+};
+
+const buildTrackerColumnProjection = (
+  settings: Settings,
+  targetProps: Record<string, unknown>
+): TrackerColumnProjection => {
+  const columnLabels = isRecord(settings.column_labels)
+    ? (settings.column_labels as Record<string, unknown>)
+    : {};
+  const customProps = Array.isArray(settings.custom_properties) ? settings.custom_properties : [];
+  const customPropByKey = new Map(customProps.map((prop) => [prop.key, prop]));
+  const overrideOrder = isRecord(targetProps.overrides)
+    ? normalizeStringArray((targetProps.overrides as Record<string, unknown>).columnOrder)
+    : [];
+  const settingsOrder = normalizeStringArray(settings.table_columns);
+
+  const orderedKeys: string[] = [];
+  const pushKey = (key: string) => {
+    const normalized = key.trim();
+    if (!normalized || orderedKeys.includes(normalized)) return;
+    orderedKeys.push(normalized);
+  };
+
+  (overrideOrder.length > 0 ? overrideOrder : settingsOrder).forEach(pushKey);
+  TRACKER_BASE_COLUMN_ORDER.forEach(pushKey);
+  customProps.forEach((prop) => pushKey(`prop__${prop.key}`));
+
+  const labelToKey: Record<string, string> = {};
+  const kindByKey: Record<string, EditableTableColumnKind> = {};
+  const usedLabels = new Set<string>();
+
+  orderedKeys.forEach((key) => {
+    const labelOverride = columnLabels[key];
+    let labelSeed = typeof labelOverride === "string" ? labelOverride.trim() : "";
+    let kind: EditableTableColumnKind = "text";
+
+    if (key.startsWith("prop__")) {
+      const propKey = key.slice("prop__".length);
+      const prop = customPropByKey.get(propKey) || null;
+      if (!labelSeed) labelSeed = prop?.name || key;
+      kind = customPropertyKind(prop);
+    } else {
+      if (!labelSeed) labelSeed = TRACKER_COLUMN_LABELS[key] || key;
+      kind = TRACKER_COLUMN_KINDS[key] || "text";
+    }
+
+    const label = createUniqueLabel(labelSeed || key, usedLabels);
+    labelToKey[label] = key;
+    kindByKey[key] = kind;
+  });
+
+  return {
+    labelToKey,
+    kindByKey
+  };
+};
+
+const buildPipelineGroupingConfig = (
+  blockProps: Record<string, unknown>,
+  settings: Settings,
+  applications: Application[],
+  tableTargets: EditableTableTarget[]
+): PipelineGroupingConfig => {
+  let sourceKey = "stage";
+  let baseValues = normalizeStringArray(settings.stages);
+  let colors: Record<string, string> = settings.stage_colors || {};
+  let allowColumnReorder = true;
+
+  const linkedTableId = getBlockLink(blockProps, PIPELINE_SOURCE_TABLE_LINK_KEY);
+  const sourceColumn = normalizeString(blockProps.sourceColumn);
+  const linkedTableTarget = linkedTableId
+    ? tableTargets.find((target) => target.blockId === linkedTableId) || null
+    : null;
+
+  if (linkedTableTarget && sourceColumn && isTrackerSourceTarget(linkedTableTarget)) {
+    const projection = buildTrackerColumnProjection(settings, linkedTableTarget.props);
+    const resolvedKey = projection.labelToKey[sourceColumn];
+    if (resolvedKey && projection.kindByKey[resolvedKey] === "select") {
+      sourceKey = resolvedKey;
+      allowColumnReorder = sourceKey === "stage";
+
+      if (sourceKey === "stage") {
+        baseValues = normalizeStringArray(settings.stages);
+        colors = settings.stage_colors || {};
+      } else if (sourceKey === "outcome") {
+        baseValues = normalizeStringArray(settings.outcomes);
+        colors = settings.outcome_colors || {};
+      } else if (sourceKey === "job_type") {
+        baseValues = normalizeStringArray(settings.job_types);
+        colors = settings.job_type_colors || {};
+      } else if (sourceKey.startsWith("prop__")) {
+        const propertyKey = sourceKey.slice("prop__".length);
+        const customProp =
+          settings.custom_properties.find((prop) => prop.key === propertyKey && prop.type === "select") || null;
+        baseValues = customProp
+          ? customProp.options
+              .map((option) => normalizeString(option.label))
+              .filter(Boolean)
+          : [];
+        colors = customProp
+          ? Object.fromEntries(
+              customProp.options
+                .map((option) => [normalizeString(option.label), normalizeString(option.color) || DEFAULT_COLUMN_COLOR])
+                .filter(([label]) => Boolean(label))
+            )
+          : {};
+      }
+    }
+  }
+
+  const values: string[] = [];
+  const seen = new Set<string>();
+  const pushValue = (value: string) => {
+    const normalized = normalizeString(value);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    values.push(normalized);
+  };
+
+  baseValues.forEach(pushValue);
+
+  let hasEmptyValues = false;
+  applications.forEach((app) => {
+    const value = normalizeString(readGroupValue(app, sourceKey));
+    if (!value) {
+      hasEmptyValues = true;
+      return;
+    }
+    pushValue(value);
+  });
+
+  if (hasEmptyValues) {
+    pushValue("");
+  }
+
+  if (values.length === 0) {
+    values.push("");
+  }
+
+  return {
+    key: sourceKey,
+    values,
+    colors,
+    allowColumnReorder
+  };
+};
 
 const PipelinePage: React.FC = () => {
   const { t } = useI18n();
   const { applications, settings, updateApplication, saveSettings } = useAppData();
-  const [draggedStage, setDraggedStage] = useState<string | null>(null);
-  const [stageDragOver, setStageDragOver] = useState<string | null>(null);
-  const [draggedApp, setDraggedApp] = useState<{ id: number; stage: string } | null>(null);
+  const [columnDragOver, setColumnDragOver] = useState<string | null>(null);
+  const [draggedApp, setDraggedApp] = useState<{ id: number; columnValue: string } | null>(null);
   const [dragOverAppId, setDragOverAppId] = useState<number | null>(null);
-  const [dragOverAppStage, setDragOverAppStage] = useState<string | null>(null);
-  const draggedStageRef = useRef<string | null>(null);
-  const draggedAppRef = useRef<{ id: number; stage: string } | null>(null);
+  const [dragOverAppColumn, setDragOverAppColumn] = useState<string | null>(null);
+  const draggedColumnRef = useRef<string | null>(null);
+  const draggedAppRef = useRef<{ id: number; columnValue: string } | null>(null);
 
   if (!settings) {
     return <div className="empty">{t("Loading settings...")}</div>;
   }
 
-  const stages = settings.stages;
+  const tableTargets = useMemo(
+    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
+    [settings]
+  );
 
-  const getStageItems = (stage: string) => {
-    const items = applications.filter((app) => app.stage === stage);
-    const fullyOrdered =
-      items.length > 0 &&
-      items.every((app) => app.pipeline_order !== null && app.pipeline_order !== undefined);
-    if (!fullyOrdered) return items;
-    return [...items]
-      .map((item, index) => ({ item, index }))
-      .sort((a, b) => {
-        const aOrder = a.item.pipeline_order ?? 0;
-        const bOrder = b.item.pipeline_order ?? 0;
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        return a.index - b.index;
-      })
-      .map(({ item }) => item);
-  };
-
-  const reorderList = (list: string[], fromLabel: string, toLabel: string) => {
-    if (fromLabel === toLabel) return list;
-    const next = [...list];
-    const fromIndex = next.indexOf(fromLabel);
-    const toIndex = next.indexOf(toLabel);
-    if (fromIndex < 0 || toIndex < 0) return list;
-    next.splice(fromIndex, 1);
-    next.splice(toIndex, 0, fromLabel);
-    return next;
-  };
-
-  const resetStageDrag = () => {
-    draggedStageRef.current = null;
-    setDraggedStage(null);
-    setStageDragOver(null);
+  const resetColumnDrag = () => {
+    draggedColumnRef.current = null;
+    setColumnDragOver(null);
   };
 
   const resetAppDrag = () => {
     draggedAppRef.current = null;
     setDraggedApp(null);
     setDragOverAppId(null);
-    setDragOverAppStage(null);
+    setDragOverAppColumn(null);
   };
 
   const syncStageOrder = async (stage: string, ordered: Application[]) => {
@@ -82,220 +392,290 @@ const PipelinePage: React.FC = () => {
     await Promise.all(updates);
   };
 
-  const handleStageDrop = async (targetStage: string) => {
-    const fromStage = draggedStageRef.current;
-    if (!fromStage || fromStage === targetStage) {
-      resetStageDrag();
-      return;
-    }
-    const nextStages = reorderList(stages, fromStage, targetStage);
-    if (nextStages !== stages) {
-      await saveSettings({ stages: nextStages });
-    }
-    resetStageDrag();
-  };
-
-  const handleAppDrop = async (targetStage: string, targetId: number | null) => {
-    const dragged = draggedAppRef.current;
-    if (!dragged) return;
-    const { id: draggedId, stage: sourceStage } = dragged;
-    if (targetId === draggedId) {
-      resetAppDrag();
-      return;
-    }
-    const draggedItem = applications.find((app) => app.id === draggedId);
-    if (!draggedItem) {
-      resetAppDrag();
-      return;
-    }
-    const sourceItems = getStageItems(sourceStage);
-    const targetItems = sourceStage === targetStage ? sourceItems : getStageItems(targetStage);
-    const sourceWithout = sourceItems.filter((item) => item.id !== draggedId);
-    const insertionBase = sourceStage === targetStage ? sourceWithout : targetItems;
-    let insertIndex = targetId
-      ? insertionBase.findIndex((item) => item.id === targetId)
-      : insertionBase.length;
-    if (insertIndex < 0) insertIndex = insertionBase.length;
-    const nextTarget = [...insertionBase];
-    nextTarget.splice(insertIndex, 0, draggedItem);
-    if (sourceStage === targetStage) {
-      await syncStageOrder(targetStage, nextTarget);
-    } else {
-      await Promise.all([
-        syncStageOrder(targetStage, nextTarget),
-        syncStageOrder(sourceStage, sourceWithout)
-      ]);
-    }
-    resetAppDrag();
-  };
-
-  const resolvePipelineSlot: BlockSlotResolver = (slotId) => {
+  const resolvePipelineSlot: BlockSlotResolver = (slotId, block) => {
     if (slotId !== "pipeline:board:content") return null;
+
+    const blockProps = isRecord(block.props) ? block.props : {};
+    const grouping = buildPipelineGroupingConfig(blockProps, settings, applications, tableTargets);
+    const columns = grouping.values;
+
+    const getColumnItems = (columnValue: string) => {
+      const items = applications.filter((app) => normalizeString(readGroupValue(app, grouping.key)) === columnValue);
+      if (grouping.key !== "stage") return items;
+
+      const fullyOrdered =
+        items.length > 0 &&
+        items.every((app) => app.pipeline_order !== null && app.pipeline_order !== undefined);
+      if (!fullyOrdered) return items;
+      return [...items]
+        .map((item, index) => ({ item, index }))
+        .sort((a, b) => {
+          const aOrder = a.item.pipeline_order ?? 0;
+          const bOrder = b.item.pipeline_order ?? 0;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+          return a.index - b.index;
+        })
+        .map(({ item }) => item);
+    };
+
+    const reorderableStages = normalizeStringArray(settings.stages);
+    const reorderableStageSet = new Set(reorderableStages);
+
+    const handleColumnDrop = async (targetColumn: string) => {
+      if (!grouping.allowColumnReorder || grouping.key !== "stage") {
+        resetColumnDrag();
+        return;
+      }
+      const fromColumn = draggedColumnRef.current;
+      if (!fromColumn || fromColumn === targetColumn) {
+        resetColumnDrag();
+        return;
+      }
+      if (!reorderableStageSet.has(fromColumn) || !reorderableStageSet.has(targetColumn)) {
+        resetColumnDrag();
+        return;
+      }
+      const nextStages = reorderList(reorderableStages, fromColumn, targetColumn);
+      if (nextStages !== reorderableStages) {
+        await saveSettings({ stages: nextStages });
+      }
+      resetColumnDrag();
+    };
+
+    const handleAppDrop = async (targetColumn: string, targetId: number | null) => {
+      const dragged = draggedAppRef.current;
+      if (!dragged) return;
+      const { id: draggedId, columnValue: sourceColumn } = dragged;
+      if (targetId === draggedId) {
+        resetAppDrag();
+        return;
+      }
+
+      const draggedItem = applications.find((app) => app.id === draggedId);
+      if (!draggedItem) {
+        resetAppDrag();
+        return;
+      }
+
+      if (grouping.key === "stage") {
+        const sourceItems = getColumnItems(sourceColumn);
+        const targetItems = sourceColumn === targetColumn ? sourceItems : getColumnItems(targetColumn);
+        const sourceWithout = sourceItems.filter((item) => item.id !== draggedId);
+        const insertionBase = sourceColumn === targetColumn ? sourceWithout : targetItems;
+        let insertIndex = targetId
+          ? insertionBase.findIndex((item) => item.id === targetId)
+          : insertionBase.length;
+        if (insertIndex < 0) insertIndex = insertionBase.length;
+
+        const nextTarget = [...insertionBase];
+        nextTarget.splice(insertIndex, 0, draggedItem);
+
+        if (sourceColumn === targetColumn) {
+          await syncStageOrder(targetColumn, nextTarget);
+        } else {
+          await Promise.all([
+            syncStageOrder(targetColumn, nextTarget),
+            syncStageOrder(sourceColumn, sourceWithout)
+          ]);
+        }
+      } else {
+        const currentValue = normalizeString(readGroupValue(draggedItem, grouping.key));
+        if (currentValue !== targetColumn) {
+          await updateApplication(draggedItem.id, buildGroupUpdatePayload(draggedItem, grouping.key, targetColumn));
+        }
+      }
+
+      resetAppDrag();
+    };
+
+    const moveAppToColumn = async (app: Application, targetColumn: string) => {
+      if (grouping.key === "stage") {
+        await updateApplication(app.id, { stage: targetColumn });
+        return;
+      }
+      await updateApplication(app.id, buildGroupUpdatePayload(app, grouping.key, targetColumn));
+    };
+
     return (
-          <div className="pipeline-grid">
-            {stages.map((stage, index) => {
-              const items = getStageItems(stage);
-              const isStageDragOver = stageDragOver === stage;
-              const isAppDrop = Boolean(draggedApp && dragOverAppStage === stage);
-              return (
-                <div
-                  key={stage}
-                  className={`pipeline-column${isStageDragOver ? " stage-drag-over" : ""}${
-                    isAppDrop ? " app-drop" : ""
-                  }`}
-                >
-                  <div
-                    className="pipeline-header draggable"
-                    draggable={!draggedApp}
-                    onDragStart={(event) => {
-                      if (draggedAppRef.current) return;
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", stage);
-                      draggedStageRef.current = stage;
-                      setDraggedStage(stage);
-                    }}
-                    onDragOver={(event) => {
-                      const currentDraggedStage = draggedStageRef.current;
-                      const currentDraggedApp = draggedAppRef.current;
-                      if (currentDraggedStage && currentDraggedStage !== stage) {
-                        event.preventDefault();
-                        setStageDragOver(stage);
-                        return;
-                      }
-                      if (currentDraggedApp) {
-                        event.preventDefault();
-                        setDragOverAppStage(stage);
-                        setDragOverAppId(null);
-                      }
-                    }}
-                    onDragLeave={() => {
-                      if (stageDragOver === stage) setStageDragOver(null);
-                    }}
-                    onDrop={(event) => {
-                      const currentDraggedStage = draggedStageRef.current;
-                      const currentDraggedApp = draggedAppRef.current;
-                      if (currentDraggedStage && currentDraggedStage !== stage) {
-                        event.preventDefault();
-                        handleStageDrop(stage);
-                        return;
-                      }
-                      if (currentDraggedApp) {
-                        event.preventDefault();
-                        handleAppDrop(stage, null);
-                      }
-                    }}
-                    onDragEnd={() => {
-                      resetStageDrag();
-                    }}
-                  >
-                    <div className="pipeline-header-title">
-                      <span className="pipeline-drag-handle" aria-hidden="true" />
-                      <span className="tag" style={{ background: settings.stage_colors[stage] || "#E2E8F0" }}>
-                        {stage}
-                      </span>
-                    </div>
-                    <span>{items.length}</span>
-                  </div>
-                  <div
-                    className="pipeline-cards"
-                    onDragOver={(event) => {
-                      if (!draggedAppRef.current) return;
-                      event.preventDefault();
-                      setDragOverAppStage(stage);
-                      setDragOverAppId(null);
-                    }}
-                    onDrop={(event) => {
-                      if (!draggedAppRef.current) return;
-                      event.preventDefault();
-                      handleAppDrop(stage, null);
-                    }}
-                  >
-                    {items.length === 0 && <div className="empty">{t("No items")}</div>}
-                    {items.map((app) => {
-                      const leftStage = index > 0 ? stages[index - 1] : null;
-                      const rightStage = index < stages.length - 1 ? stages[index + 1] : null;
-                      const followupState = followupStatus(app.followup_date);
-                      return (
-                        <div
-                          key={app.id}
-                          className={`pipeline-card${draggedApp?.id === app.id ? " dragging" : ""}${
-                            dragOverAppId === app.id ? " drag-over" : ""
-                          }`}
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", String(app.id));
-                            draggedAppRef.current = { id: app.id, stage: app.stage };
-                            setDraggedApp({ id: app.id, stage: app.stage });
-                          }}
-                          onDragOver={(event) => {
-                            const currentDraggedApp = draggedAppRef.current;
-                            if (!currentDraggedApp || currentDraggedApp.id === app.id) return;
-                            event.preventDefault();
-                            setDragOverAppId(app.id);
-                            setDragOverAppStage(stage);
-                          }}
-                          onDragLeave={() => {
-                            if (dragOverAppId === app.id) setDragOverAppId(null);
-                          }}
-                          onDrop={(event) => {
-                            if (!draggedAppRef.current) return;
-                            event.preventDefault();
-                            handleAppDrop(stage, app.id);
-                          }}
-                          onDragEnd={() => {
-                            resetAppDrag();
-                          }}
-                        >
-                          <span className="pipeline-card-handle" aria-hidden="true" />
-                          <div className="pipeline-card-title">
-                            <h4>{app.company_name}</h4>
-                            <p>{app.position}</p>
-                          </div>
-                          <div className="pipeline-meta">
-                            <span>{app.outcome}</span>
-                            <span>{formatDateTime(app.interview_datetime)}</span>
-                            <span className="pipeline-score">
-                              <span>{t("Score")}</span>
-                              <StarRating
-                                value={app.my_interview_score ?? null}
-                                size="sm"
-                                step={0.5}
-                                readonly
-                              />
-                            </span>
-                            {followupState === "overdue" && (
-                              <span className="tag tag-overdue">{t("Follow-up overdue")}</span>
-                            )}
-                            {followupState === "soon" && (
-                              <span className="tag tag-soon">{t("Follow-up soon")}</span>
-                            )}
-                          </div>
-                          <div className="pipeline-actions">
-                            <button
-                              className="ghost"
-                              onClick={() => leftStage && updateApplication(app.id, { stage: leftStage })}
-                              disabled={!leftStage}
-                            >
-                              &larr;
-                            </button>
-                            <span>{app.stage}</span>
-                            <button
-                              className="ghost"
-                              onClick={() => rightStage && updateApplication(app.id, { stage: rightStage })}
-                              disabled={!rightStage}
-                            >
-                              &rarr;
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+      <div className="pipeline-grid">
+        {columns.map((column, index) => {
+          const items = getColumnItems(column);
+          const canDragColumn = grouping.allowColumnReorder && reorderableStageSet.has(column);
+          const isColumnDragOver = columnDragOver === column;
+          const isAppDrop = Boolean(draggedApp && dragOverAppColumn === column);
+          const columnLabel = column || "Sin valor";
+          const columnColor = column ? grouping.colors[column] || DEFAULT_COLUMN_COLOR : DEFAULT_COLUMN_COLOR;
+
+          return (
+            <div
+              key={`${grouping.key}:${column || "empty"}`}
+              className={`pipeline-column${isColumnDragOver ? " stage-drag-over" : ""}${
+                isAppDrop ? " app-drop" : ""
+              }`}
+            >
+              <div
+                className={`pipeline-header${canDragColumn ? " draggable" : ""}`}
+                draggable={canDragColumn && !draggedApp}
+                onDragStart={(event) => {
+                  if (!canDragColumn || draggedAppRef.current) return;
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", column);
+                  draggedColumnRef.current = column;
+                }}
+                onDragOver={(event) => {
+                  const currentDraggedColumn = draggedColumnRef.current;
+                  const currentDraggedApp = draggedAppRef.current;
+                  if (canDragColumn && currentDraggedColumn && currentDraggedColumn !== column) {
+                    event.preventDefault();
+                    setColumnDragOver(column);
+                    return;
+                  }
+                  if (currentDraggedApp) {
+                    event.preventDefault();
+                    setDragOverAppColumn(column);
+                    setDragOverAppId(null);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (columnDragOver === column) setColumnDragOver(null);
+                }}
+                onDrop={(event) => {
+                  const currentDraggedColumn = draggedColumnRef.current;
+                  const currentDraggedApp = draggedAppRef.current;
+                  if (canDragColumn && currentDraggedColumn && currentDraggedColumn !== column) {
+                    event.preventDefault();
+                    void handleColumnDrop(column);
+                    return;
+                  }
+                  if (currentDraggedApp) {
+                    event.preventDefault();
+                    void handleAppDrop(column, null);
+                  }
+                }}
+                onDragEnd={() => {
+                  resetColumnDrag();
+                }}
+              >
+                <div className="pipeline-header-title">
+                  <span className="pipeline-drag-handle" aria-hidden="true" />
+                  <span className="tag" style={{ background: columnColor }}>
+                    {columnLabel}
+                  </span>
                 </div>
-              );
-            })}
-          </div>
+                <span>{items.length}</span>
+              </div>
+              <div
+                className="pipeline-cards"
+                onDragOver={(event) => {
+                  if (!draggedAppRef.current) return;
+                  event.preventDefault();
+                  setDragOverAppColumn(column);
+                  setDragOverAppId(null);
+                }}
+                onDrop={(event) => {
+                  if (!draggedAppRef.current) return;
+                  event.preventDefault();
+                  void handleAppDrop(column, null);
+                }}
+              >
+                {items.length === 0 && <div className="empty">{t("No items")}</div>}
+                {items.map((app) => {
+                  const followupState = followupStatus(app.followup_date);
+                  const currentValue = normalizeString(readGroupValue(app, grouping.key));
+                  const currentIndex = columns.indexOf(currentValue);
+                  const leftColumn = currentIndex > 0 ? columns[currentIndex - 1] : null;
+                  const rightColumn = currentIndex >= 0 && currentIndex < columns.length - 1
+                    ? columns[currentIndex + 1]
+                    : null;
+
+                  return (
+                    <div
+                      key={app.id}
+                      className={`pipeline-card${draggedApp?.id === app.id ? " dragging" : ""}${
+                        dragOverAppId === app.id ? " drag-over" : ""
+                      }`}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", String(app.id));
+                        const startColumn = normalizeString(readGroupValue(app, grouping.key));
+                        draggedAppRef.current = { id: app.id, columnValue: startColumn };
+                        setDraggedApp({ id: app.id, columnValue: startColumn });
+                      }}
+                      onDragOver={(event) => {
+                        const currentDraggedApp = draggedAppRef.current;
+                        if (!currentDraggedApp || currentDraggedApp.id === app.id) return;
+                        event.preventDefault();
+                        setDragOverAppId(app.id);
+                        setDragOverAppColumn(column);
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverAppId === app.id) setDragOverAppId(null);
+                      }}
+                      onDrop={(event) => {
+                        if (!draggedAppRef.current) return;
+                        event.preventDefault();
+                        void handleAppDrop(column, app.id);
+                      }}
+                      onDragEnd={() => {
+                        resetAppDrag();
+                      }}
+                    >
+                      <span className="pipeline-card-handle" aria-hidden="true" />
+                      <div className="pipeline-card-title">
+                        <h4>{app.company_name}</h4>
+                        <p>{app.position}</p>
+                      </div>
+                      <div className="pipeline-meta">
+                        <span>{app.outcome}</span>
+                        <span>{formatDateTime(app.interview_datetime)}</span>
+                        <span className="pipeline-score">
+                          <span>{t("Score")}</span>
+                          <StarRating
+                            value={app.my_interview_score ?? null}
+                            size="sm"
+                            step={0.5}
+                            readonly
+                          />
+                        </span>
+                        {followupState === "overdue" && (
+                          <span className="tag tag-overdue">{t("Follow-up overdue")}</span>
+                        )}
+                        {followupState === "soon" && (
+                          <span className="tag tag-soon">{t("Follow-up soon")}</span>
+                        )}
+                      </div>
+                      <div className="pipeline-actions">
+                        <button
+                          className="ghost"
+                          onClick={() => {
+                            if (!leftColumn && leftColumn !== "") return;
+                            void moveAppToColumn(app, leftColumn);
+                          }}
+                          disabled={leftColumn === null}
+                        >
+                          &larr;
+                        </button>
+                        <span>{currentValue || "Sin valor"}</span>
+                        <button
+                          className="ghost"
+                          onClick={() => {
+                            if (!rightColumn && rightColumn !== "") return;
+                            void moveAppToColumn(app, rightColumn);
+                          }}
+                          disabled={rightColumn === null}
+                        >
+                          &rarr;
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     );
   };
 

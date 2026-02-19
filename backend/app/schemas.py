@@ -17,6 +17,8 @@ class DocumentFile(BaseModel):
 class Contact(BaseModel):
     id: str
     name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     information: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -147,3 +149,152 @@ class UpdateInfoOut(BaseModel):
     notes: Optional[str] = None
     checked_at: Optional[datetime] = None
     error: Optional[str] = None
+
+
+class EmailMetadataIn(BaseModel):
+    message_id: str
+    from_address: str
+    to_address: str
+    subject: str
+    date: datetime
+    is_read: bool = False
+    folder: str = "INBOX"
+
+
+class EmailMetadataOut(EmailMetadataIn):
+    contact_id: str
+    body_cached: bool = False
+
+
+class EmailMetadataSyncIn(BaseModel):
+    contact_id: str
+    folder: str = "INBOX"
+    messages: List[EmailMetadataIn] = Field(default_factory=list)
+
+
+class EmailMetadataSyncOut(BaseModel):
+    contact_id: str
+    folder: str
+    cutoff_date: datetime
+    last_synced_at: Optional[datetime] = None
+    inserted: int
+    skipped_existing: int
+    skipped_out_of_window: int
+
+
+class EmailBodyUpsertIn(BaseModel):
+    body: str
+
+
+class EmailBodyOut(BaseModel):
+    message_id: str
+    body: str
+    cached: bool
+
+
+class EmailImapConfigIn(BaseModel):
+    host: str
+    port: int = 993
+    username: str
+    password: str
+    use_ssl: bool = True
+    folder: str = "INBOX"
+
+
+class EmailConnectionTestIn(BaseModel):
+    provider: str = "none"
+    imap: Optional[EmailImapConfigIn] = None
+
+
+class EmailConnectionTestOut(BaseModel):
+    ok: bool
+    provider: str
+    message: str
+
+
+class EmailFoldersListOut(BaseModel):
+    ok: bool
+    provider: str
+    message: str
+    folders: List[str] = Field(default_factory=list)
+
+
+class EmailOAuthStartIn(BaseModel):
+    provider: str
+    client_id: str
+    client_secret: str
+    redirect_uri: Optional[str] = None
+    tenant_id: Optional[str] = None
+    scope: Optional[str] = None
+
+
+class EmailOAuthStartOut(BaseModel):
+    ok: bool
+    provider: str
+    message: str
+    state: str
+    auth_url: str
+
+
+class EmailSendContactIn(BaseModel):
+    name: Optional[str] = None
+    email: str
+    company: Optional[str] = None
+    custom_fields: Dict[str, str] = Field(default_factory=dict)
+
+
+class EmailSendBatchIn(BaseModel):
+    subject_template: str
+    body_template: str
+    contacts: List[EmailSendContactIn] = Field(default_factory=list)
+
+
+class EmailSendContactOut(BaseModel):
+    name: str
+    email: str
+    company: str
+    custom_fields: Dict[str, str] = Field(default_factory=dict)
+
+
+class EmailSendResultItemOut(BaseModel):
+    email: str
+    name: str
+    status: str
+    message: str
+    provider_message_id: Optional[str] = None
+
+
+class EmailSendStatsOut(BaseModel):
+    connected: bool = False
+    sent_by: str
+    sent_today: int
+    remaining_today: int
+    daily_limit: int
+    warning: Optional[str] = None
+
+
+class EmailSendBatchOut(BaseModel):
+    ok: bool
+    batch_id: str
+    sent_by: str
+    total: int
+    sent: int
+    errors: int
+    warning: Optional[str] = None
+    daily_limit: int
+    sent_today: int
+    remaining_today: int
+    results: List[EmailSendResultItemOut] = Field(default_factory=list)
+
+
+class GmailSendIn(BaseModel):
+    to: str
+    subject: str
+    body: str
+    from_email: Optional[str] = None
+
+
+class GmailSendOut(BaseModel):
+    ok: bool
+    message: str
+    provider_message_id: Optional[str] = None

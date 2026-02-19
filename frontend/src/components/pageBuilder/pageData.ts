@@ -62,6 +62,20 @@ const BLOCK_PRESET_LIST = [
     layout: { colSpan: 60 }
   }),
   preset({
+    id: "todoTable.default",
+    type: "todoTable",
+    props: {
+      title: "To-Do List",
+      description: "Manage preparation tasks linked to each application.",
+      variant: "todo",
+      searchPlaceholder: "Search to-dos...",
+      addActionLabel: "Add Row",
+      customColumns: ["Task", "Due Date", "Status"],
+      customRows: [["", "", ""]]
+    },
+    layout: { colSpan: 60 }
+  }),
+  preset({
     id: "informationalTable.default",
     type: "informationalTable",
     props: {
@@ -105,6 +119,22 @@ const BLOCK_PRESET_LIST = [
     props: {
       title: "Pipeline",
       description: "Track stages as opportunities move."
+    },
+    layout: { colSpan: 60 }
+  }),
+  preset({
+    id: "email.default",
+    type: "email",
+    props: {
+      title: "Correo",
+      description: "Bandeja sincronizada por metadatos y cuerpo bajo demanda.",
+      contactId: "",
+      folder: "INBOX",
+      cacheSize: 50,
+      sendSubjectTemplate: "Hola {{Nombre}}, seguimiento de candidatura en {{Empresa}}",
+      sendBodyTemplate:
+        "Hola {{Nombre}},\n\nTe escribo para dar seguimiento al proceso con {{Empresa}}.\n\nGracias por tu tiempo.",
+      sendContactLimit: 500
     },
     layout: { colSpan: 60 }
   }),
@@ -309,7 +339,7 @@ const BLOCK_PRESET_LIST = [
   }),
   preset({
     id: "calendar.todo",
-    type: "editableTable",
+    type: "todoTable",
     props: {
       title: "To-Do List",
       description: "Manage preparation tasks linked to each application.",
@@ -329,11 +359,13 @@ export const DEFAULT_PRESET_ID_BY_BLOCK_TYPE: Record<PageBlockType, string> = {
   text: "text.default",
   titleDescription: "titleDescription.default",
   editableTable: "editableTable.default",
+  todoTable: "todoTable.default",
   informationalTable: "informationalTable.default",
   calendar: "calendar.default",
   chart: "chart.default",
   kpi: "kpi.default",
-  pipeline: "pipeline.default"
+  pipeline: "pipeline.default",
+  email: "email.default"
 };
 
 const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: string }> = {
@@ -347,7 +379,11 @@ const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: 
   },
   editableTable: {
     label: "Editable table",
-    description: "Editable table area (Tracker / To-do)."
+    description: "Editable table area (Tracker / custom)."
+  },
+  todoTable: {
+    label: "To-Do table",
+    description: "To-do management table block."
   },
   informationalTable: {
     label: "Informational table",
@@ -368,6 +404,10 @@ const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: 
   pipeline: {
     label: "Pipeline",
     description: "Pipeline board with editable heading."
+  },
+  email: {
+    label: "Correo",
+    description: "Correo con sync de metadatos y cache de cuerpo."
   }
 };
 
@@ -379,8 +419,8 @@ export const PAGE_BLOCK_LIBRARY: PageBlockLibraryEntry[] = [
     description: BLOCK_LIBRARY_LABELS[type].description
   })),
   {
-    id: "editableTable.todo",
-    type: "editableTable",
+    id: "todoTable.calendar",
+    type: "todoTable",
     label: "To-Do List",
     description: "Editable table preset for to-do management.",
     presetId: "calendar.todo"
@@ -469,7 +509,7 @@ const PAGE_TEMPLATE_LIST: PageTemplateDefinition[] = [
     blocks: [
       templateBlock({ id: "calendar:alerts", type: "informationalTable", presetId: "calendar.alerts" }),
       templateBlock({ id: "calendar:month", type: "calendar", presetId: "calendar.month" }),
-      templateBlock({ id: "calendar:todo", type: "editableTable", presetId: "calendar.todo" })
+      templateBlock({ id: "calendar:todo", type: "todoTable", presetId: "calendar.todo" })
     ]
   }
 ];

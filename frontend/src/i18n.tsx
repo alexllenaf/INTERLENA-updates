@@ -81,7 +81,10 @@ const ES: Record<string, string> = {
 
   "No contacts yet.": "Aun no hay contactos.",
   "Remove contact": "Eliminar contacto",
+  "Edit contact": "Editar contacto",
   "Name": "Nombre",
+  "First name": "Nombre",
+  "Last name": "Apellidos",
   "Information": "Informacion",
   "Email": "Email",
   "Phone": "Telefono",

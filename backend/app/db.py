@@ -12,7 +12,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from .config import get_settings
-from .models import Application, Base, Setting, View
+from .models import Application, Base, EmailMessage, EmailSendLog, EmailSyncCursor, Setting, View
 
 settings = get_settings()
 
@@ -116,6 +116,9 @@ def init_db() -> None:
     _ensure_columns(engine, "applications", Application.__table__.columns)
     _ensure_columns(engine, "views", View.__table__.columns)
     _ensure_columns(engine, "settings", Setting.__table__.columns)
+    _ensure_columns(engine, "email_messages", EmailMessage.__table__.columns)
+    _ensure_columns(engine, "email_sync_cursors", EmailSyncCursor.__table__.columns)
+    _ensure_columns(engine, "email_send_logs", EmailSendLog.__table__.columns)
     _ensure_indexes(engine)
     _backfill_application_ids(engine)
     _backfill_defaults(engine)

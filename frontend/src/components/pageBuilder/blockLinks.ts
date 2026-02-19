@@ -22,6 +22,7 @@ export type BlockLinksMap = Record<string, string>;
 export const TODO_SOURCE_TABLE_LINK_KEY = "todo.sourceTable";
 export const KPI_SOURCE_TABLE_LINK_KEY = "kpi.sourceTable";
 export const CHART_SOURCE_TABLE_LINK_KEY = "chart.sourceTable";
+export const PIPELINE_SOURCE_TABLE_LINK_KEY = "pipeline.sourceTable";
 
 export const normalizeBlockLinks = (raw: unknown): BlockLinksMap => {
   if (!isRecord(raw)) return {};
@@ -196,11 +197,13 @@ const editableTableHasTodoColumn = (target: BlockTargetSnapshot, settings: unkno
 
 export const collectEditableTableTargets = (
   settings: unknown,
-  opts?: { excludeVariants?: string[] }
+  opts?: { excludeVariants?: string[]; excludeTypes?: string[] }
 ): EditableTableTarget[] => {
   const exclude = new Set((opts?.excludeVariants || []).map((value) => value.trim()).filter(Boolean));
+  const excludeTypes = new Set((opts?.excludeTypes || []).map((value) => value.trim()).filter(Boolean));
   return collectBlockTargets(settings)
-    .filter((item) => item.type === "editableTable")
+    .filter((item) => item.type === "editableTable" || item.type === "todoTable")
+    .filter((item) => !excludeTypes.has(item.type))
     .filter((item) => !item.variant || !exclude.has(item.variant))
     .map((item) => ({
       ...item,

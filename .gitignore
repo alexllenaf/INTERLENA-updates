@@ -1,6 +1,11 @@
 .DS_Store
 __pycache__/
 *.pyc
+.env
+.env.local
+backend/.env
+backend/.env.local
+.tokens.json
 data/
 00_Outdated/
 backend/build/

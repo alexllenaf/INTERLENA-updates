@@ -17,6 +17,37 @@ export type BrandProfile = {
   avatarAlt: string;
 };
 
+export type ImapEmailSyncSettings = {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  use_ssl: boolean;
+  folder: string;
+};
+
+export type EmailSyncSettings = {
+  provider: "none" | "imap" | "oauth_google" | "oauth_microsoft";
+  read_enabled?: boolean;
+  imap: ImapEmailSyncSettings;
+  oauth?: {
+    providers?: Record<
+      string,
+      {
+        client_id?: string;
+        client_secret?: string;
+        redirect_uri?: string;
+        tenant_id?: string;
+        access_token?: string;
+        refresh_token?: string;
+        token_type?: string;
+        scope?: string;
+        expires_at?: string;
+      }
+    >;
+  };
+};
+
 export type Settings = {
   stages: string[];
   outcomes: string[];
@@ -34,6 +65,7 @@ export type Settings = {
   custom_properties: CustomProperty[];
   brand_profile?: BrandProfile;
   page_configs?: Record<string, unknown>;
+  email_sync?: EmailSyncSettings;
 };
 
 export type UpdateInfo = {
@@ -57,6 +89,8 @@ export type DocumentFile = {
 export type Contact = {
   id: string;
   name: string;
+  first_name?: string;
+  last_name?: string;
   information?: string;
   email?: string;
   phone?: string;
@@ -123,4 +157,122 @@ export type View = {
   config: Record<string, unknown>;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type EmailMetadata = {
+  message_id: string;
+  contact_id: string;
+  from_address: string;
+  to_address: string;
+  subject: string;
+  date: string;
+  is_read: boolean;
+  folder: string;
+  body_cached: boolean;
+};
+
+export type EmailMetadataInput = {
+  message_id: string;
+  from_address: string;
+  to_address: string;
+  subject: string;
+  date: string;
+  is_read: boolean;
+  folder?: string;
+};
+
+export type EmailMetadataSyncResult = {
+  contact_id: string;
+  folder: string;
+  cutoff_date: string;
+  last_synced_at?: string | null;
+  inserted: number;
+  skipped_existing: number;
+  skipped_out_of_window: number;
+};
+
+export type EmailBodyResult = {
+  message_id: string;
+  body: string;
+  cached: boolean;
+};
+
+export type EmailConnectionTestInput = {
+  provider: "none" | "imap" | "oauth_google" | "oauth_microsoft";
+  imap?: {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    use_ssl: boolean;
+    folder?: string;
+  };
+};
+
+export type EmailOAuthStartInput = {
+  provider: "oauth_google" | "oauth_microsoft";
+  client_id: string;
+  client_secret: string;
+  redirect_uri?: string;
+  tenant_id?: string;
+  scope?: string;
+};
+
+export type EmailOAuthStartResult = {
+  ok: boolean;
+  provider: string;
+  message: string;
+  state: string;
+  auth_url: string;
+};
+
+export type EmailConnectionTestResult = {
+  ok: boolean;
+  provider: string;
+  message: string;
+};
+
+export type EmailFoldersListResult = {
+  ok: boolean;
+  provider: string;
+  message: string;
+  folders: string[];
+};
+
+export type EmailSendContact = {
+  name: string;
+  email: string;
+  company: string;
+  custom_fields: Record<string, string>;
+};
+
+export type EmailSendStats = {
+  connected?: boolean;
+  sent_by: string;
+  sent_today: number;
+  remaining_today: number;
+  daily_limit: number;
+  warning?: string | null;
+};
+
+export type EmailSendResultItem = {
+  email: string;
+  name: string;
+  status: string;
+  message: string;
+  provider_message_id?: string | null;
+};
+
+export type EmailSendBatchResult = {
+  ok: boolean;
+  batch_id: string;
+  sent_by: string;
+  total: number;
+  sent: number;
+  errors: number;
+  warning?: string | null;
+  daily_limit: number;
+  sent_today: number;
+  remaining_today: number;
+  results: EmailSendResultItem[];
 };

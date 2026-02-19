@@ -78,6 +78,44 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "avatarSrc": "/brand-avatar.svg",
         "avatarAlt": "Foto de perfil",
     },
+    "email_sync": {
+        "provider": "none",
+        "read_enabled": False,
+        "imap": {
+            "host": "",
+            "port": 993,
+            "username": "",
+            "password": "",
+            "use_ssl": True,
+            "folder": "INBOX",
+        },
+        "oauth": {
+            "providers": {
+                "oauth_google": {
+                    "client_id": "",
+                    "client_secret": "",
+                    "redirect_uri": "http://127.0.0.1:8000/api/email/oauth/callback/oauth_google",
+                    "tenant_id": "",
+                    "access_token": "",
+                    "refresh_token": "",
+                    "token_type": "Bearer",
+                    "scope": "",
+                    "expires_at": "",
+                },
+                "oauth_microsoft": {
+                    "client_id": "",
+                    "client_secret": "",
+                    "redirect_uri": "http://127.0.0.1:8000/api/email/oauth/callback/oauth_microsoft",
+                    "tenant_id": "common",
+                    "access_token": "",
+                    "refresh_token": "",
+                    "token_type": "Bearer",
+                    "scope": "",
+                    "expires_at": "",
+                },
+            }
+        },
+    },
 }
 
 

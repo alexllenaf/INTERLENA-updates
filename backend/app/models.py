@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -61,3 +61,54 @@ class Setting(Base):
 
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False)
+
+
+class EmailMessage(Base):
+    __tablename__ = "email_messages"
+    __table_args__ = (
+        Index("ix_email_messages_contact_id", "contact_id"),
+        Index("ix_email_messages_date", "date"),
+        Index("ix_email_messages_contact_date", "contact_id", "date"),
+    )
+
+    message_id = Column(String, primary_key=True, index=True)
+    contact_id = Column(String, nullable=False)
+    from_address = Column(String, nullable=False)
+    to_address = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    date = Column(DateTime, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+    folder = Column(String, nullable=False)
+    body = Column(Text)
+    body_downloaded_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class EmailSyncCursor(Base):
+    __tablename__ = "email_sync_cursors"
+
+    contact_id = Column(String, primary_key=True)
+    folder = Column(String, primary_key=True)
+    last_synced_at = Column(DateTime, nullable=False)
+
+
+class EmailSendLog(Base):
+    __tablename__ = "email_send_logs"
+    __table_args__ = (
+        Index("ix_email_send_logs_sent_by_created_at", "sent_by", "created_at"),
+        Index("ix_email_send_logs_batch_id", "batch_id"),
+        Index("ix_email_send_logs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(String, nullable=False)
+    sent_by = Column(String, nullable=False)
+    recipient_name = Column(String)
+    recipient_email = Column(String, nullable=False)
+    company = Column(String)
+    subject = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    error_message = Column(Text)
+    provider_message_id = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

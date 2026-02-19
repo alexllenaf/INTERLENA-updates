@@ -17,6 +17,44 @@ from typing import Iterable
 DESKTOP_FRONTEND_PORT = 5173
 
 
+def _load_env_file(env_path: Path) -> dict[str, str]:
+    loaded: dict[str, str] = {}
+    if not env_path.exists() or not env_path.is_file():
+        return loaded
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return loaded
+
+    for line in lines:
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        loaded[key] = value
+    return loaded
+
+
+def _build_runtime_env(project_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    candidates = [
+        project_root / ".env",
+        project_root / ".env.local",
+        project_root / "backend" / ".env",
+        project_root / "backend" / ".env.local",
+    ]
+    for candidate in candidates:
+        for key, value in _load_env_file(candidate).items():
+            env.setdefault(key, value)
+    return env
+
+
 def _pick_port(
     preferred: int | None = None,
     start: int = 8501,
@@ -234,6 +272,29 @@ def _kill_pids(pids: list[int], sig: signal.Signals) -> list[int]:
         except OSError:
             continue
     return killed
+
+
+def _force_kill_port_listeners(port: int) -> list[int]:
+    listener_pids = _listening_pids(port)
+    if not listener_pids:
+        return []
+
+    _kill_pids(listener_pids, signal.SIGTERM)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        if _is_port_free(port):
+            return listener_pids
+        time.sleep(0.1)
+
+    remaining = _listening_pids(port)
+    if remaining:
+        _kill_pids(remaining, signal.SIGKILL)
+        deadline = time.time() + 1.5
+        while time.time() < deadline:
+            if _is_port_free(port):
+                break
+            time.sleep(0.1)
+    return listener_pids
 
 
 def _cleanup_desktop_backend_processes(port: int, project_root: Path) -> list[int]:
@@ -484,12 +545,15 @@ def _run_streamlit(extra_args: list[str]) -> None:
 
 def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
     root = Path(__file__).resolve().parent
+    backend_dir = root / "backend"
     frontend_dir = root / "frontend"
-    backend_bin = root / "backend" / "dist" / "interview-atlas-backend"
 
     if not (frontend_dir / "package.json").exists():
         raise SystemExit("frontend/package.json not found. Did you generate the React app?")
+    if not (backend_dir / "app" / "main.py").exists():
+        raise SystemExit("backend/app/main.py not found. Did you generate the FastAPI backend?")
 
+    _ensure_backend_deps(backend_dir, allow_install=not skip_install)
     _ensure_frontend_deps(frontend_dir, allow_install=not skip_install)
     _require_command(
         "cargo",
@@ -521,22 +585,50 @@ def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
         )
 
     if not _is_port_free(backend_port):
+        forced = _force_kill_port_listeners(backend_port)
+        if forced:
+            print(
+                f"Port {backend_port} was busy; terminated listener PID(s): "
+                + ", ".join(str(pid) for pid in sorted(set(forced)))
+            )
+
+    if not _is_port_free(backend_port):
         listeners = _listening_processes(backend_port)
         msg = [
-            f"Desktop backend port {backend_port} is already in use.",
-            "Close any running Interview Atlas app (or any process using that port) and retry.",
+            f"Desktop backend port {backend_port} is still in use after automatic kill attempt.",
+            "Stop the remaining process manually and retry.",
         ]
         if listeners:
             msg.extend(["", "Port listeners:", listeners])
         raise SystemExit("\n".join(msg))
 
-    _ensure_backend_sidecar_current(root / "backend", backend_bin)
-
-    env = os.environ.copy()
+    env = _build_runtime_env(root)
     env["APP_PORT"] = str(backend_port)
+    env.setdefault("GOOGLE_OAUTH_PORT", str(backend_port))
+    backend_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(backend_port),
+    ]
+    backend_proc = subprocess.Popen(backend_cmd, cwd=backend_dir, env=env)
+    if not _wait_for_port(backend_port, timeout_s=20.0):
+        backend_proc.terminate()
+        raise SystemExit(f"Desktop backend did not become ready on http://127.0.0.1:{backend_port}")
 
-    # Starts the Tauri desktop app in dev mode. Vite runs via beforeDevCommand in tauri.conf.json.
-    raise SystemExit(subprocess.call(["npm", "run", "tauri:dev"], cwd=frontend_dir, env=env))
+    tauri_proc = subprocess.Popen(["npm", "run", "tauri:dev"], cwd=frontend_dir, env=env)
+    try:
+        raise SystemExit(tauri_proc.wait())
+    except KeyboardInterrupt:
+        tauri_proc.terminate()
+        raise
+    finally:
+        if backend_proc.poll() is None:
+            backend_proc.terminate()
 
 
 def _run_fullstack(
@@ -561,6 +653,10 @@ def _run_fullstack(
     backend_port = _pick_port(backend_port, start=8000, end=8020)
     frontend_port = _pick_port(frontend_port, start=5173, end=5190)
 
+    shared_env = _build_runtime_env(root)
+    shared_env["APP_PORT"] = str(backend_port)
+    shared_env.setdefault("GOOGLE_OAUTH_PORT", str(backend_port))
+
     backend_cmd = [
         sys.executable,
         "-m",
@@ -570,7 +666,7 @@ def _run_fullstack(
         "--port",
         str(backend_port),
     ]
-    backend_proc = subprocess.Popen(backend_cmd, cwd=backend_dir)
+    backend_proc = subprocess.Popen(backend_cmd, cwd=backend_dir, env=shared_env)
 
     frontend_cmd = [
         "npm",
@@ -582,7 +678,7 @@ def _run_fullstack(
         "--port",
         str(frontend_port),
     ]
-    frontend_proc = subprocess.Popen(frontend_cmd, cwd=frontend_dir)
+    frontend_proc = subprocess.Popen(frontend_cmd, cwd=frontend_dir, env=shared_env)
 
     url = f"http://127.0.0.1:{frontend_port}"
     if _wait_for_port(frontend_port, timeout_s=25.0) and open_browser:

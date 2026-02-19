@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAppData } from "../../state";
 // Diagnostic traces (flag-gated) for rehydrate/flush lifecycle.
 import { summarizePageConfig, tracePageConfig } from "../../pageConfigDebug";
-import PageEditor from "./PageEditor";
+import PageEditor, { type CrossPageDropPayload } from "./PageEditor";
 import { BlockSlotResolver } from "./blockRegistry";
 import { createPageConfigFromTemplate } from "./defaultPages";
 import {
@@ -12,7 +12,7 @@ import {
   readPageConfig,
   writePageConfig
 } from "./pageConfigStore";
-import { PageBlockConfig, PageBlockType, PageConfig } from "./types";
+import { PAGE_CONFIG_VERSION, PageBlockConfig, PageBlockType, PageConfig } from "./types";
 
 type Props = {
   pageId: string;
@@ -250,11 +250,91 @@ const PageBuilderPage: React.FC<Props> = ({
     [pageId, scheduleFlushPageConfig, trace]
   );
 
+  const handleDropFromAnotherPage = useCallback(
+    (payload: CrossPageDropPayload) => {
+      if (payload.sourcePageId === pageId) {
+        handlePageConfigChange({
+          ...pageConfigRef.current,
+          blocks: payload.nextBlocks
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const targetNext: PageConfig = {
+        ...pageConfigRef.current,
+        updated_at: nowIso,
+        blocks: payload.nextBlocks
+      };
+
+      setPageConfig(targetNext);
+      pageConfigRef.current = targetNext;
+      const targetJson = JSON.stringify(targetNext);
+      configLocalJsonRef.current = targetJson;
+      persistPageConfigLocal(pageId, targetNext);
+
+      const currentSettings = settingsRef.current;
+      if (!currentSettings) {
+        trace("cross-page-drop:missing-settings", {
+          sourcePageId: payload.sourcePageId,
+          sourceBlockId: payload.sourceBlockId
+        });
+        scheduleFlushPageConfig(targetNext);
+        return;
+      }
+
+      const sourceFallback: PageConfig = {
+        id: payload.sourcePageId,
+        version: PAGE_CONFIG_VERSION,
+        blocks: []
+      };
+      const sourceCurrent = readPageConfig(currentSettings, payload.sourcePageId, sourceFallback);
+      const sourceNext: PageConfig = {
+        ...sourceCurrent,
+        updated_at: nowIso,
+        blocks: sourceCurrent.blocks.filter((block) => block.id !== payload.sourceBlockId)
+      };
+
+      let nextSettings = writePageConfig(currentSettings, payload.sourcePageId, sourceNext);
+      nextSettings = writePageConfig(nextSettings, pageId, targetNext);
+      settingsRef.current = nextSettings;
+
+      trace("cross-page-drop:apply", {
+        sourcePageId: payload.sourcePageId,
+        sourceBlockId: payload.sourceBlockId,
+        targetPageId: pageId,
+        targetConfig: summarizePageConfig(targetNext),
+        sourceConfig: summarizePageConfig(sourceNext)
+      });
+
+      void saveSettingsRef.current({
+        page_configs: nextSettings.page_configs
+      }).then((updated) => {
+        if (!updated) {
+          trace("cross-page-drop:save-returned-null", {
+            sourcePageId: payload.sourcePageId,
+            sourceBlockId: payload.sourceBlockId
+          });
+          scheduleFlushPageConfig(targetNext);
+          return;
+        }
+        configSavedJsonRef.current = targetJson;
+        trace("cross-page-drop:save-success", {
+          sourcePageId: payload.sourcePageId,
+          sourceBlockId: payload.sourceBlockId,
+          targetPageId: pageId
+        });
+      });
+    },
+    [handlePageConfigChange, pageId, scheduleFlushPageConfig, trace]
+  );
+
   return (
     <PageEditor
       pageId={pageId}
       pageConfig={pageConfig}
       onChange={handlePageConfigChange}
+      onDropFromAnotherPage={handleDropFromAnotherPage}
       className={className}
       resolveSlot={resolveSlot}
       resolveBlockProps={resolveBlockProps}

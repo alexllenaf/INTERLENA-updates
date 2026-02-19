@@ -57,6 +57,36 @@ La app abrirá en `http://localhost:5173` y se comunica con el backend en `http:
 ## Notas
 - 100% local, sin telemetría.
 
+## Correo: sync incremental + cuerpo bajo demanda
+El backend soporta sincronización de metadatos de correo y descarga del cuerpo al abrir un mensaje.
+
+- Metadatos (SQLite): `message_id`, `from_address`, `to_address`, `subject`, `date`, `is_read`, `folder`.
+- Ventana de sync: últimos 6 meses (`180` días).
+- Incremental: inserta solo mensajes nuevos (`message_id` único).
+- Cuerpo: cuando se abre un correo y no está cacheado, intenta descargarlo del proveedor y lo guarda una sola vez.
+
+Configuración de proveedor IMAP en `settings` (clave `email_sync`):
+
+```json
+{
+	"email_sync": {
+		"provider": "imap",
+		"imap": {
+			"host": "imap.gmail.com",
+			"port": 993,
+			"username": "tu_usuario",
+			"password": "tu_app_password",
+			"use_ssl": true
+		}
+	}
+}
+```
+
+Notas rápidas:
+- Gmail: usa App Password con 2FA y `host=imap.gmail.com`.
+- Outlook: `host=outlook.office365.com` y puerto `993`.
+- El lookup usa cabecera `Message-ID`, por lo que el `message_id` sincronizado debe corresponder al del proveedor.
+
 ## Actualizaciones (macOS)
 - Publica `latest.json` + `Interview.Atlas.app.tar.gz` + `Interview.Atlas.app.tar.gz.sig` para el updater de Tauri.
 - Publica `Interview.Atlas.dmg` (compatibilidad) y también `Interview.Atlas-arm64.dmg` + `Interview.Atlas-x64.dmg` para descarga manual según arquitectura.

@@ -9,36 +9,49 @@ type ContactsEditorProps = {
   onCommit: (next: Contact[]) => void;
 };
 
+type ContactDraft = {
+  first_name: string;
+  last_name: string;
+  information: string;
+  email: string;
+  phone: string;
+};
+
+const emptyDraft = (): ContactDraft => ({
+  first_name: "",
+  last_name: "",
+  information: "",
+  email: "",
+  phone: "",
+});
+
+const buildName = (first: string, last: string): string =>
+  [first, last].filter(Boolean).join(" ");
+
 const ContactsEditor: React.FC<ContactsEditorProps> = ({ contacts, onCommit }) => {
   const { t } = useI18n();
   const list = contacts ?? [];
-  const [draft, setDraft] = useState({
-    name: "",
-    information: "",
-    email: "",
-    phone: ""
-  });
+  const [draft, setDraft] = useState<ContactDraft>(emptyDraft());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<ContactDraft>(emptyDraft());
 
-  const resetDraft = () =>
-    setDraft({
-      name: "",
-      information: "",
-      email: "",
-      phone: ""
-    });
+  const resetDraft = () => setDraft(emptyDraft());
 
   const handleAdd = () => {
-    const name = draft.name.trim();
-    if (!name) return;
+    const firstName = draft.first_name.trim();
+    if (!firstName) return;
+    const lastName = draft.last_name.trim();
     const next: Contact[] = [
       ...list,
       {
         id: generateId(),
-        name,
+        name: buildName(firstName, lastName),
+        first_name: firstName,
+        last_name: lastName || undefined,
         information: draft.information.trim() || undefined,
         email: draft.email.trim() || undefined,
-        phone: draft.phone.trim() || undefined
-      }
+        phone: draft.phone.trim() || undefined,
+      },
     ];
     onCommit(next);
     resetDraft();
@@ -50,48 +63,150 @@ const ContactsEditor: React.FC<ContactsEditorProps> = ({ contacts, onCommit }) =
     onCommit(next);
   };
 
+  const startEdit = (contact: Contact) => {
+    setEditingId(contact.id);
+    setEditDraft({
+      first_name: contact.first_name ?? contact.name ?? "",
+      last_name: contact.last_name ?? "",
+      information: contact.information ?? "",
+      email: contact.email ?? "",
+      phone: contact.phone ?? "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(emptyDraft());
+  };
+
+  const saveEdit = () => {
+    if (!editingId) return;
+    const firstName = editDraft.first_name.trim();
+    if (!firstName) return;
+    const lastName = editDraft.last_name.trim();
+    const next = list.map((contact) =>
+      contact.id === editingId
+        ? {
+            ...contact,
+            name: buildName(firstName, lastName),
+            first_name: firstName,
+            last_name: lastName || undefined,
+            information: editDraft.information.trim() || undefined,
+            email: editDraft.email.trim() || undefined,
+            phone: editDraft.phone.trim() || undefined,
+          }
+        : contact
+    );
+    onCommit(next);
+    cancelEdit();
+  };
+
   return (
     <div className="contacts-editor">
       <div className="contacts-list">
         {list.length === 0 && <span className="contacts-empty">{t("No contacts yet.")}</span>}
-        {list.map((contact) => (
-          <div className="contact-item" key={contact.id}>
-            <div className="contact-name">{contact.name}</div>
-            <div className="contact-meta">
-              {contact.information && <span>{contact.information}</span>}
-              {contact.email && <span>{contact.email}</span>}
-              {contact.phone && <span>{contact.phone}</span>}
+        {list.map((contact) =>
+          editingId === contact.id ? (
+            <div className="contact-item contact-item-editing" key={contact.id}>
+              <div className="contacts-edit-form">
+                <input
+                  value={editDraft.first_name}
+                  onChange={(e) => setEditDraft((p) => ({ ...p, first_name: e.target.value }))}
+                  placeholder={t("First name")}
+                  autoFocus
+                />
+                <input
+                  value={editDraft.last_name}
+                  onChange={(e) => setEditDraft((p) => ({ ...p, last_name: e.target.value }))}
+                  placeholder={t("Last name")}
+                />
+                <input
+                  value={editDraft.information}
+                  onChange={(e) => setEditDraft((p) => ({ ...p, information: e.target.value }))}
+                  placeholder={t("Information")}
+                />
+                <input
+                  value={editDraft.email}
+                  onChange={(e) => setEditDraft((p) => ({ ...p, email: e.target.value }))}
+                  placeholder={t("Email")}
+                />
+                <input
+                  value={editDraft.phone}
+                  onChange={(e) => setEditDraft((p) => ({ ...p, phone: e.target.value }))}
+                  placeholder={t("Phone")}
+                />
+                <div className="contacts-edit-actions">
+                  <button className="ghost small" type="button" onClick={cancelEdit}>
+                    {t("Cancel")}
+                  </button>
+                  <button className="primary small" type="button" onClick={saveEdit}>
+                    {t("Save")}
+                  </button>
+                </div>
+              </div>
             </div>
-            <button
-              className="contact-remove"
-              type="button"
-              onClick={() => handleRemove(contact.id)}
-              aria-label={t("Remove contact")}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+          ) : (
+            <div className="contact-item" key={contact.id}>
+              <button
+                className="contact-edit-area"
+                type="button"
+                onClick={() => startEdit(contact)}
+                title={t("Edit contact")}
+              >
+                <div className="contact-name">{contact.name}</div>
+                <div className="contact-meta">
+                  {contact.information && <span>{contact.information}</span>}
+                  {contact.email && <span>{contact.email}</span>}
+                  {contact.phone && <span>{contact.phone}</span>}
+                </div>
+              </button>
+              <div className="contact-actions">
+                <button
+                  className="contact-action-btn"
+                  type="button"
+                  onClick={() => startEdit(contact)}
+                  aria-label={t("Edit contact")}
+                  title={t("Edit contact")}
+                >
+                  ✎
+                </button>
+                <button
+                  className="contact-remove"
+                  type="button"
+                  onClick={() => handleRemove(contact.id)}
+                  aria-label={t("Remove contact")}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )
+        )}
       </div>
       <div className="contacts-form">
         <input
-          value={draft.name}
-          onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
-          placeholder={t("Name")}
+          value={draft.first_name}
+          onChange={(e) => setDraft((p) => ({ ...p, first_name: e.target.value }))}
+          placeholder={t("First name")}
+        />
+        <input
+          value={draft.last_name}
+          onChange={(e) => setDraft((p) => ({ ...p, last_name: e.target.value }))}
+          placeholder={t("Last name")}
         />
         <input
           value={draft.information}
-          onChange={(event) => setDraft((prev) => ({ ...prev, information: event.target.value }))}
+          onChange={(e) => setDraft((p) => ({ ...p, information: e.target.value }))}
           placeholder={t("Information")}
         />
         <input
           value={draft.email}
-          onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))}
+          onChange={(e) => setDraft((p) => ({ ...p, email: e.target.value }))}
           placeholder={t("Email")}
         />
         <input
           value={draft.phone}
-          onChange={(event) => setDraft((prev) => ({ ...prev, phone: event.target.value }))}
+          onChange={(e) => setDraft((p) => ({ ...p, phone: e.target.value }))}
           placeholder={t("Phone")}
         />
         <button className="primary small" type="button" onClick={handleAdd}>

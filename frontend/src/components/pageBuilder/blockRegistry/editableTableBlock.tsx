@@ -19,12 +19,6 @@ import {
   type PageBlockConfig,
   type PageBlockPropsMap
 } from "../types";
-import {
-  TODO_SOURCE_TABLE_LINK_KEY,
-  collectEditableTableTargets,
-  getBlockLink,
-  patchBlockLink
-} from "../blockLinks";
 import { getTableSchema } from "../tableSchemaRegistry";
 import { createSlotContext, renderHeader } from "./shared";
 import { type BlockDefinition, type BlockRenderContext, type BlockRenderMode } from "./types";
@@ -548,7 +542,9 @@ const resolveEffectiveTableModel = (
   };
 };
 
-type DefaultEditableTableProps = {
+export const resolveEditableTableModel = resolveEffectiveTableModel;
+
+export type DefaultEditableTableProps = {
   block: PageBlockConfig<"editableTable">;
   mode: BlockRenderMode;
   settings?: unknown;
@@ -594,7 +590,7 @@ type ColumnMenuEntry =
       action?: () => void;
     };
 
-const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
+export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   block,
   mode,
   settings,
@@ -2524,7 +2520,6 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
 }) => {
   const { settings, saveSettings } = useAppData();
   const [isTableExpanded, setIsTableExpanded] = useState(false);
-  const [isTodoLinkModalOpen, setIsTodoLinkModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isTableExpanded) return;
@@ -2536,28 +2531,6 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [isTableExpanded]);
-
-  const linkTargets = useMemo(
-    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"] }),
-    [settings]
-  );
-  const linkedTableId = getBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY);
-  const linkedTableTarget = linkedTableId
-    ? linkTargets.find((target) => target.blockId === linkedTableId) || null
-    : null;
-
-  const openTodoLinkPicker = () => {
-    setIsTodoLinkModalOpen(true);
-  };
-
-  const setTodoLinkedTable = (nextBlockId?: string | null) => {
-    patchBlockProps(
-      patchBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY, nextBlockId) as Partial<
-        PageBlockPropsMap["editableTable"]
-      >
-    );
-    setIsTodoLinkModalOpen(false);
-  };
 
   const density = settings?.table_density || "comfortable";
   const blockMenuActions = useMemo(() => {
@@ -2580,18 +2553,8 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
         }
       }
     ];
-    if (mode === "edit" && block.props.variant === "todo") {
-      const linkLabel = linkedTableTarget
-        ? `Tabla vinculada: ${linkedTableTarget.title}`
-        : "Vincular con tabla editable";
-      actions.push({
-        key: `todo-link-table-${block.id}`,
-        label: linkLabel,
-        onClick: openTodoLinkPicker
-      });
-    }
     return [...actions, ...baseActions];
-  }, [block.id, block.props.variant, density, linkedTableTarget, menuActions, mode, openTodoLinkPicker, saveSettings]);
+  }, [block.id, density, menuActions, saveSettings]);
 
   const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
   const actions = block.props.actionsSlotId ? resolveSlot?.(block.props.actionsSlotId, block, slotContext) : null;
@@ -2642,68 +2605,6 @@ const EditableTableBlockPanel: React.FC<BlockRenderContext<"editableTable">> = (
           fallbackTable
         )}
       </BlockPanel>
-      {isTodoLinkModalOpen &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setIsTodoLinkModalOpen(false)}>
-            <div className="modal" onClick={(event) => event.stopPropagation()}>
-              <header className="modal-header">
-                <div>
-                  <h2>Vincular tabla editable</h2>
-                  <p>Selecciona la tabla por titulo.</p>
-                </div>
-                <button className="ghost" type="button" onClick={() => setIsTodoLinkModalOpen(false)} aria-label="Close">
-                  ×
-                </button>
-              </header>
-              <div className="todo-link-modal-body">
-                {linkTargets.length === 0 ? (
-                  <div className="empty">No hay tablas editables disponibles.</div>
-                ) : (
-                  <div className="todo-link-table-wrap">
-                    <table className="table todo-link-table">
-                      <thead>
-                        <tr>
-                          <th>Titulo</th>
-                          <th>Pagina</th>
-                          <th>To-Do</th>
-                          <th>Accion</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {linkTargets.map((target) => {
-                          const isActive = target.blockId === linkedTableId;
-                          return (
-                            <tr key={target.blockId} className={isActive ? "is-active" : undefined}>
-                              <td>{target.title}</td>
-                              <td>{target.pageId}</td>
-                              <td>{target.hasTodoColumn ? "Si" : "No"}</td>
-                              <td className="todo-link-action-cell">
-                                <button
-                                  className={isActive ? "ghost" : "primary"}
-                                  type="button"
-                                  onClick={() => setTodoLinkedTable(target.blockId)}
-                                >
-                                  {isActive ? "Vinculada" : "Vincular"}
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                <div className="todo-link-footer">
-                  <button className="ghost" type="button" onClick={() => setTodoLinkedTable(null)}>
-                    Sin vinculo
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
       {usesFallbackTable &&
         isTableExpanded &&
         typeof document !== "undefined" &&

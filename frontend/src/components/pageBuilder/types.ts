@@ -6,11 +6,13 @@ export const PAGE_BLOCK_TYPES = [
   "text",
   "titleDescription",
   "editableTable",
+  "todoTable",
   "informationalTable",
   "calendar",
   "chart",
   "kpi",
-  "pipeline"
+  "pipeline",
+  "email"
 ] as const;
 
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
@@ -62,6 +64,10 @@ export type EditableTableBlockProps = LinkableBlockProps & {
   actionsSlotId?: string;
   toolbarSlotId?: string;
   contentSlotId?: string;
+};
+
+export type TodoTableBlockProps = Omit<EditableTableBlockProps, "variant"> & {
+  variant?: "todo";
 };
 
 export type EditableTableColumnKind =
@@ -148,17 +154,32 @@ export type PipelineBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contentSlotId?: string;
+  sourceColumn?: string;
+};
+
+export type EmailBlockProps = LinkableBlockProps & {
+  title: string;
+  description: string;
+  contactId: string;
+  folder: string;
+  cacheSize: number;
+  sendSubjectTemplate?: string;
+  sendBodyTemplate?: string;
+  sendContactLimit?: number;
+  contentSlotId?: string;
 };
 
 export type PageBlockPropsMap = {
   text: TextBlockProps;
   titleDescription: TitleDescriptionBlockProps;
   editableTable: EditableTableBlockProps;
+  todoTable: TodoTableBlockProps;
   informationalTable: InformationalTableBlockProps;
   calendar: CalendarBlockProps;
   chart: ChartBlockProps;
   kpi: KpiBlockProps;
   pipeline: PipelineBlockProps;
+  email: EmailBlockProps;
 };
 
 export type PageBlockConfig<TType extends PageBlockType = PageBlockType> = {

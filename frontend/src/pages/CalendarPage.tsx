@@ -514,7 +514,7 @@ const CalendarPage: React.FC = () => {
   const todoColumnMenuCloseTimerRef = useRef<number | null>(null);
 
   const editableTableTargets = useMemo(
-    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"] }),
+    () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
     [settings]
   );
 
@@ -571,10 +571,7 @@ const CalendarPage: React.FC = () => {
 
   const resolveTodoSourceAccess = useCallback(
     (block?: PageBlockConfig | null): TodoSourceAccess => {
-      const explicitLinkId =
-        block?.type === "editableTable"
-          ? getBlockLink((block as PageBlockConfig<"editableTable">).props, TODO_SOURCE_TABLE_LINK_KEY)
-          : null;
+      const explicitLinkId = block ? getBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY) : null;
       const explicitTarget = explicitLinkId
         ? editableTableTargets.find((target) => target.blockId === explicitLinkId) || null
         : null;
@@ -2740,9 +2737,13 @@ const CalendarPage: React.FC = () => {
 
   const resolveCalendarBlockProps = useCallback(
     (block: PageBlockConfig) => {
-      if (block.type !== "editableTable") return null;
-      const tableBlock = block as PageBlockConfig<"editableTable">;
-      if (tableBlock.props.variant !== "todo") return null;
+      if (
+        block.type !== "todoTable" &&
+        !(block.type === "editableTable" && (block as PageBlockConfig<"editableTable">).props.variant === "todo")
+      ) {
+        return null;
+      }
+      const tableBlock = block as PageBlockConfig<"todoTable">;
       const source = resolveTodoSourceAccess(block);
       return {
         description: source.hasSource
@@ -2757,9 +2758,13 @@ const CalendarPage: React.FC = () => {
 
   const resolveCalendarDuplicateProps = useCallback(
     (block: PageBlockConfig) => {
-      if (block.type !== "editableTable") return null;
-      const tableBlock = block as PageBlockConfig<"editableTable">;
-      if (tableBlock.props.variant !== "todo") return null;
+      if (
+        block.type !== "todoTable" &&
+        !(block.type === "editableTable" && (block as PageBlockConfig<"editableTable">).props.variant === "todo")
+      ) {
+        return null;
+      }
+      const tableBlock = block as PageBlockConfig<"todoTable">;
 
       const sourceColumns = visibleTodoColumns.filter((col) => col !== "actions");
       const usedNames = new Set<string>();
@@ -2783,7 +2788,7 @@ const CalendarPage: React.FC = () => {
       );
 
       return {
-        variant: tableBlock.props.variant || "todo",
+        variant: "todo",
         title: tableBlock.props.title || "To-Do List",
         description: tableBlock.props.description || "",
         searchPlaceholder: tableBlock.props.searchPlaceholder || t("Search to-dos..."),
