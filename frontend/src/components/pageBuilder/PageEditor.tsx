@@ -404,12 +404,14 @@ const PageEditor: React.FC<Props> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const droppedRef = useRef(false);
   dragRef.current = drag;
 
   const dragPreview = useMemo(() => computeDragPreview(pageConfig, drag), [pageConfig, drag]);
 
   useEffect(() => {
     if (drag) return;
+    if (droppedRef.current) return;
     const shared = getCrossPageDragState();
     if (!shared || !shared.active) return;
     if (Date.now() - shared.updatedAt > SHARED_DRAG_STALE_MS) {
@@ -516,33 +518,37 @@ const PageEditor: React.FC<Props> = ({
     };
 
     const finishDrag = (event: PointerEvent) => {
-      if (!drag || drag.pointerId !== event.pointerId) return;
+      const current = dragRef.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      droppedRef.current = true;
       setDrag(null);
       clearCrossPageDragState();
-      if (!drag.active || drag.invalid) return;
-      const isSamePage = drag.sourcePageId === pageId;
-      const sourceStillExists = pageConfig.blocks.some((block) => block.id === drag.blockId);
+      // Reset the dropped flag after a tick so future drags work normally.
+      queueMicrotask(() => { droppedRef.current = false; });
+      if (!current.active || current.invalid) return;
+      const isSamePage = current.sourcePageId === pageId;
+      const sourceStillExists = pageConfig.blocks.some((block) => block.id === current.blockId);
       if (isSamePage && !sourceStillExists) return;
 
       const withoutDragged = isSamePage
-        ? pageConfig.blocks.filter((block) => block.id !== drag.blockId)
+        ? pageConfig.blocks.filter((block) => block.id !== current.blockId)
         : pageConfig.blocks;
-      const insertion = clamp(drag.insertionIndex, 0, withoutDragged.length);
+      const insertion = clamp(current.insertionIndex, 0, withoutDragged.length);
       const ordered = [...withoutDragged];
       const usedIds = new Set(ordered.map((block) => block.id));
       const droppedBlock =
-        !isSamePage && usedIds.has(drag.dragBlock.id)
+        !isSamePage && usedIds.has(current.dragBlock.id)
           ? {
-              ...drag.dragBlock,
-              id: createUniqueBlockId(drag.dragBlock.type, usedIds)
+              ...current.dragBlock,
+              id: createUniqueBlockId(current.dragBlock.type, usedIds)
             }
-          : drag.dragBlock;
+          : current.dragBlock;
       ordered.splice(insertion, 0, droppedBlock);
 
       const items: PackItem[] = ordered.map((block) => ({
         id: block.id,
         span: clampColSpan(block.layout.colSpan),
-        preferredCol: block.id === droppedBlock.id ? drag.targetColStart : block.layout.colStart || 1
+        preferredCol: block.id === droppedBlock.id ? current.targetColStart : block.layout.colStart || 1
       }));
       const packed = packGridItems(items);
       const nextBlocks = applyPackedLayout(ordered, packed);
@@ -551,17 +557,20 @@ const PageEditor: React.FC<Props> = ({
         return;
       }
       onDropFromAnotherPage?.({
-        sourcePageId: drag.sourcePageId,
-        sourceBlockId: drag.blockId,
+        sourcePageId: current.sourcePageId,
+        sourceBlockId: current.blockId,
         block: droppedBlock,
         nextBlocks
       });
     };
 
     const cancelDrag = (event: PointerEvent) => {
-      if (!drag || drag.pointerId !== event.pointerId) return;
+      const current = dragRef.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      droppedRef.current = true;
       setDrag(null);
       clearCrossPageDragState();
+      queueMicrotask(() => { droppedRef.current = false; });
     };
 
     window.addEventListener("pointermove", handlePointerMove, { passive: true });

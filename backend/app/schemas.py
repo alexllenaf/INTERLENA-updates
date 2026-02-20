@@ -251,6 +251,8 @@ class EmailSendBatchIn(BaseModel):
 
 class EmailSendContactOut(BaseModel):
     name: str
+    first_name: str = ""
+    last_name: str = ""
     email: str
     company: str
     custom_fields: Dict[str, str] = Field(default_factory=dict)

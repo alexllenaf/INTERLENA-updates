@@ -241,6 +241,8 @@ export type EmailFoldersListResult = {
 
 export type EmailSendContact = {
   name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   company: string;
   custom_fields: Record<string, string>;
@@ -253,6 +255,11 @@ export type EmailSendStats = {
   remaining_today: number;
   daily_limit: number;
   warning?: string | null;
+};
+
+export type GoogleAccount = {
+  email: string;
+  active: boolean;
 };
 
 export type EmailSendResultItem = {

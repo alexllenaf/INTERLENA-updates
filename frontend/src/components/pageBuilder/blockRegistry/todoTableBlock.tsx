@@ -2,6 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { useAppData } from "../../../state";
 import { type Application, type CustomProperty } from "../../../types";
+import {
+  TRACKER_BASE_COLUMN_ORDER,
+  TRACKER_COLUMN_LABELS
+} from "../../../shared/columnSchema";
+import {
+  isRecord,
+  normalizeString,
+  normalizeStringArray,
+  normalizeCustomProperties
+} from "../../../shared/normalize";
 import BlockPanel from "../../BlockPanel";
 import {
   TODO_SOURCE_TABLE_LINK_KEY,
@@ -24,103 +34,6 @@ type TodoBlockMenuAction = {
 type TodoLinkedTableModel = {
   columns: string[];
   rows: string[][];
-};
-
-const TRACKER_BASE_COLUMN_ORDER = [
-  "company_name",
-  "position",
-  "job_type",
-  "location",
-  "stage",
-  "outcome",
-  "application_date",
-  "interview_datetime",
-  "followup_date",
-  "interview_rounds",
-  "interview_type",
-  "interviewers",
-  "company_score",
-  "contacts",
-  "last_round_cleared",
-  "total_rounds",
-  "my_interview_score",
-  "improvement_areas",
-  "skill_to_upgrade",
-  "job_description",
-  "notes",
-  "todo_items",
-  "documents_links",
-  "favorite"
-];
-
-const TRACKER_COLUMN_LABELS: Record<string, string> = {
-  company_name: "Company",
-  position: "Position",
-  job_type: "Job Type",
-  location: "Location",
-  stage: "Stage",
-  outcome: "Outcome",
-  application_date: "Application Date",
-  interview_datetime: "Interview",
-  followup_date: "Follow-Up",
-  interview_rounds: "Interview Rounds",
-  interview_type: "Interview Type",
-  interviewers: "Interviewers",
-  company_score: "Company Score",
-  contacts: "Contacts",
-  last_round_cleared: "Last Round Cleared",
-  total_rounds: "Total Rounds",
-  my_interview_score: "Interview Score",
-  improvement_areas: "Improvement Areas",
-  skill_to_upgrade: "Skill To Upgrade",
-  job_description: "Job Description",
-  notes: "Notes",
-  todo_items: "To-Do Items",
-  documents_links: "Documents / Links",
-  favorite: "Favorite"
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const normalizeString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-
-const normalizeStringArray = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => normalizeString(item))
-    .filter(Boolean);
-};
-
-const normalizeCustomProperties = (value: unknown): CustomProperty[] => {
-  if (!Array.isArray(value)) return [];
-  const out: CustomProperty[] = [];
-  value.forEach((entry) => {
-    if (!isRecord(entry)) return;
-    const key = normalizeString(entry.key);
-    if (!key) return;
-    const name = normalizeString(entry.name);
-    const typeRaw = normalizeString(entry.type);
-    const type =
-      typeRaw === "select" ||
-      typeRaw === "text" ||
-      typeRaw === "number" ||
-      typeRaw === "date" ||
-      typeRaw === "checkbox" ||
-      typeRaw === "rating" ||
-      typeRaw === "contacts" ||
-      typeRaw === "links" ||
-      typeRaw === "documents"
-        ? typeRaw
-        : "text";
-    out.push({
-      key,
-      name: name || key,
-      type,
-      options: []
-    });
-  });
-  return out;
 };
 
 const createUniqueLabel = (label: string, used: Set<string>): string => {

@@ -2435,7 +2435,12 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                 {columns.map((column, colIndex) => (
                   <div className="field" key={`${block.id}-detail-${detailRowIndex}-${colIndex}`}>
                     <label>{column || `Column ${colIndex + 1}`}</label>
-                    <input value={rows[detailRowIndex][colIndex] || ""} readOnly />
+                    {renderTypedCellByColumn({
+                      column,
+                      rawValue: rows[detailRowIndex][colIndex] || "",
+                      canEditCell: false,
+                      onCommit: () => {}
+                    })}
                   </div>
                 ))}
               </div>

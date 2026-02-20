@@ -1,6 +1,7 @@
 import React from "react";
 
 import { openExternal, saveBlobAsFile } from "../../api";
+import ContactsManagerModal from "../ContactsManagerModal";
 import StarRating from "../StarRating";
 import DocumentsDropzone from "../DocumentsDropzone";
 import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../TableCells";
@@ -902,272 +903,41 @@ type ContactsTypeCellProps = {
   onCommit: (next: Contact[]) => void;
 };
 
-type ContactCellDraft = {
-  first_name: string;
-  last_name: string;
-  information: string;
-  email: string;
-  phone: string;
-};
-
-const emptyCellDraft = (): ContactCellDraft => ({
-  first_name: "",
-  last_name: "",
-  information: "",
-  email: "",
-  phone: "",
-});
-
-const buildContactName = (first: string, last: string): string =>
-  [first, last].filter(Boolean).join(" ");
-
 const ContactsTypeCell: React.FC<ContactsTypeCellProps> = ({ contacts, canEdit, onCommit }) => {
-  const [open, setOpen] = React.useState(false);
-  const [draft, setDraft] = React.useState<ContactCellDraft>(emptyCellDraft());
-  const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [editDraft, setEditDraft] = React.useState<ContactCellDraft>(emptyCellDraft());
-
-  const resetDraft = () => setDraft(emptyCellDraft());
-
-  const handleAdd = () => {
-    const firstName = draft.first_name.trim();
-    if (!firstName) return;
-    const lastName = draft.last_name.trim();
-    onCommit([
-      ...contacts,
-      {
-        id: generateId(),
-        name: buildContactName(firstName, lastName),
-        first_name: firstName,
-        last_name: lastName || undefined,
-        information: draft.information.trim() || undefined,
-        email: draft.email.trim() || undefined,
-        phone: draft.phone.trim() || undefined,
-      },
-    ]);
-    resetDraft();
-    setOpen(false);
-  };
-
-  const handleRemove = (id: string) => {
-    if (!canEdit) return;
-    const next = contacts.filter((contact) => contact.id !== id);
-    if (next.length === contacts.length) return;
-    onCommit(next);
-  };
-
-  const startEdit = (contact: Contact) => {
-    if (!canEdit) return;
-    setEditingId(contact.id);
-    setEditDraft({
-      first_name: contact.first_name ?? contact.name ?? "",
-      last_name: contact.last_name ?? "",
-      information: contact.information ?? "",
-      email: contact.email ?? "",
-      phone: contact.phone ?? "",
-    });
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditDraft(emptyCellDraft());
-  };
-
-  const saveEdit = () => {
-    if (!editingId) return;
-    const firstName = editDraft.first_name.trim();
-    if (!firstName) return;
-    const lastName = editDraft.last_name.trim();
-    const next = contacts.map((contact) =>
-      contact.id === editingId
-        ? {
-            ...contact,
-            name: buildContactName(firstName, lastName),
-            first_name: firstName,
-            last_name: lastName || undefined,
-            information: editDraft.information.trim() || undefined,
-            email: editDraft.email.trim() || undefined,
-            phone: editDraft.phone.trim() || undefined,
-          }
-        : contact
-    );
-    onCommit(next);
-    cancelEdit();
-  };
+  const [modalOpen, setModalOpen] = React.useState(false);
 
   return (
     <div className="contacts-cell">
-      <div className="contacts-list">
-        {contacts.length === 0 && <span className="contacts-empty">No contacts yet.</span>}
-        {contacts.map((contact) =>
-          editingId === contact.id ? (
-            <div className="contact-item contact-item-editing" key={contact.id}>
-              <div className="contacts-popover" style={{ position: "relative", top: 0, left: 0, width: "100%", boxShadow: "none", border: "none", padding: 0 }}>
-                <label>
-                  First name
-                  <input
-                    value={editDraft.first_name}
-                    onChange={(e) => setEditDraft((p) => ({ ...p, first_name: e.target.value }))}
-                    placeholder="First name"
-                    autoFocus
-                  />
-                </label>
-                <label>
-                  Last name
-                  <input
-                    value={editDraft.last_name}
-                    onChange={(e) => setEditDraft((p) => ({ ...p, last_name: e.target.value }))}
-                    placeholder="Last name"
-                  />
-                </label>
-                <label>
-                  Information
-                  <input
-                    value={editDraft.information}
-                    onChange={(e) => setEditDraft((p) => ({ ...p, information: e.target.value }))}
-                    placeholder="Role, LinkedIn, etc."
-                  />
-                </label>
-                <label>
-                  Email
-                  <input
-                    value={editDraft.email}
-                    onChange={(e) => setEditDraft((p) => ({ ...p, email: e.target.value }))}
-                    placeholder="name@email.com"
-                  />
-                </label>
-                <label>
-                  Phone
-                  <input
-                    value={editDraft.phone}
-                    onChange={(e) => setEditDraft((p) => ({ ...p, phone: e.target.value }))}
-                    placeholder="+34 ..."
-                  />
-                </label>
-                <div className="contacts-popover-actions">
-                  <button className="ghost small" type="button" onClick={cancelEdit}>
-                    Cancel
-                  </button>
-                  <button className="primary small" type="button" onClick={saveEdit}>
-                    Save
-                  </button>
-                </div>
-              </div>
+      <div
+        className={`contacts-list${canEdit ? " contacts-list-clickable" : ""}`}
+        onClick={canEdit ? () => setModalOpen(true) : undefined}
+        role={canEdit ? "button" : undefined}
+        tabIndex={canEdit ? 0 : undefined}
+        onKeyDown={canEdit ? (e) => { if (e.key === "Enter" || e.key === " ") setModalOpen(true); } : undefined}
+      >
+        {contacts.length === 0 && <span className="contacts-empty">Sin contactos</span>}
+        {contacts.map((contact) => (
+          <div className="contact-item" key={contact.id}>
+            <div className="contact-name">{contact.name}</div>
+            <div className="contact-meta">
+              {contact.information && <span>{contact.information}</span>}
+              {contact.email && <span>{contact.email}</span>}
+              {contact.phone && <span>{contact.phone}</span>}
             </div>
-          ) : (
-            <div className="contact-item" key={contact.id}>
-              {canEdit ? (
-                <button
-                  className="contact-edit-area"
-                  type="button"
-                  onClick={() => startEdit(contact)}
-                  title="Edit contact"
-                >
-                  <div className="contact-name">{contact.name}</div>
-                  <div className="contact-meta">
-                    {contact.information && <span>{contact.information}</span>}
-                    {contact.email && <span>{contact.email}</span>}
-                    {contact.phone && <span>{contact.phone}</span>}
-                  </div>
-                </button>
-              ) : (
-                <>
-                  <div className="contact-name">{contact.name}</div>
-                  <div className="contact-meta">
-                    {contact.information && <span>{contact.information}</span>}
-                    {contact.email && <span>{contact.email}</span>}
-                    {contact.phone && <span>{contact.phone}</span>}
-                  </div>
-                </>
-              )}
-              {canEdit && (
-                <div className="contact-actions">
-                  <button
-                    className="contact-action-btn"
-                    type="button"
-                    onClick={() => startEdit(contact)}
-                    aria-label="Edit contact"
-                    title="Edit contact"
-                  >
-                    ✎
-                  </button>
-                  <button
-                    className="contact-remove"
-                    type="button"
-                    onClick={() => handleRemove(contact.id)}
-                    aria-label="Remove contact"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-            </div>
-          )
-        )}
+          </div>
+        ))}
       </div>
       {canEdit && (
-        <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-          Add contact
+        <button className="link-button" type="button" onClick={() => setModalOpen(true)}>
+          + Añadir contacto
         </button>
       )}
-      {canEdit && open && (
-        <div className="contacts-popover">
-          <label>
-            First name
-            <input
-              value={draft.first_name}
-              onChange={(e) => setDraft((p) => ({ ...p, first_name: e.target.value }))}
-              placeholder="First name"
-            />
-          </label>
-          <label>
-            Last name
-            <input
-              value={draft.last_name}
-              onChange={(e) => setDraft((p) => ({ ...p, last_name: e.target.value }))}
-              placeholder="Last name"
-            />
-          </label>
-          <label>
-            Information
-            <input
-              value={draft.information}
-              onChange={(e) => setDraft((p) => ({ ...p, information: e.target.value }))}
-              placeholder="Role, LinkedIn, etc."
-            />
-          </label>
-          <label>
-            Email
-            <input
-              value={draft.email}
-              onChange={(e) => setDraft((p) => ({ ...p, email: e.target.value }))}
-              placeholder="name@email.com"
-            />
-          </label>
-          <label>
-            Phone
-            <input
-              value={draft.phone}
-              onChange={(e) => setDraft((p) => ({ ...p, phone: e.target.value }))}
-              placeholder="+34 ..."
-            />
-          </label>
-          <div className="contacts-popover-actions">
-            <button
-              className="ghost small"
-              type="button"
-              onClick={() => {
-                resetDraft();
-                setOpen(false);
-              }}
-            >
-              Cancel
-            </button>
-            <button className="primary small" type="button" onClick={handleAdd}>
-              Add
-            </button>
-          </div>
-        </div>
+      {modalOpen && (
+        <ContactsManagerModal
+          contacts={contacts}
+          onCommit={onCommit}
+          onClose={() => setModalOpen(false)}
+        />
       )}
     </div>
   );

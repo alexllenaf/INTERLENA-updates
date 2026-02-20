@@ -28,954 +28,46 @@ import {
   toDateInputValue,
   toDateTimeLocalValue
 } from "../utils";
-
-const BASE_COLUMN_ORDER = [
-  "company_name",
-  "position",
-  "job_type",
-  "location",
-  "stage",
-  "outcome",
-  "application_date",
-  "interview_datetime",
-  "followup_date",
-  "interview_rounds",
-  "interview_type",
-  "interviewers",
-  "company_score",
-  "contacts",
-  "last_round_cleared",
-  "total_rounds",
-  "my_interview_score",
-  "improvement_areas",
-  "skill_to_upgrade",
-  "job_description",
-  "notes",
-  "todo_items",
-  "documents_links",
-  "favorite"
-];
-
-const COLUMN_LABELS: Record<string, string> = {
-  company_name: "Company",
-  position: "Position",
-  job_type: "Job Type",
-  location: "Location",
-  stage: "Stage",
-  outcome: "Outcome",
-  application_date: "Application Date",
-  interview_datetime: "Interview",
-  followup_date: "Follow-Up",
-  interview_rounds: "Interview Rounds",
-  interview_type: "Interview Type",
-  interviewers: "Interviewers",
-  company_score: "Company Score",
-  contacts: "Contacts",
-  last_round_cleared: "Last Round Cleared",
-  total_rounds: "Total Rounds",
-  my_interview_score: "Interview Score",
-  improvement_areas: "Improvement Areas",
-  skill_to_upgrade: "Skill To Upgrade",
-  job_description: "Job Description",
-  notes: "Notes",
-  todo_items: "To-Do Items",
-  documents_links: "Documents / Links",
-  favorite: "Favorite"
-};
-
-const COLUMN_TYPES: Record<string, string> = {
-  company_name: "Text",
-  position: "Text",
-  job_type: "Select",
-  location: "Text",
-  stage: "Select",
-  outcome: "Select",
-  application_date: "Date",
-  interview_datetime: "Date & Time",
-  followup_date: "Date",
-  interview_rounds: "Number",
-  interview_type: "Text",
-  interviewers: "Text",
-  company_score: "Rating",
-  contacts: "Contacts",
-  last_round_cleared: "Text",
-  total_rounds: "Number",
-  my_interview_score: "Rating",
-  improvement_areas: "Long Text",
-  skill_to_upgrade: "Long Text",
-  job_description: "Long Text",
-  notes: "Long Text",
-  todo_items: "To-Do Items",
-  documents_links: "Text",
-  favorite: "Checkbox"
-};
-
-const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  company_name: 200,
-  position: 190,
-  job_type: 150,
-  location: 160,
-  stage: 140,
-  outcome: 140,
-  application_date: 160,
-  interview_datetime: 180,
-  followup_date: 160,
-  interview_rounds: 150,
-  interview_type: 160,
-  interviewers: 200,
-  company_score: 160,
-  contacts: 260,
-  last_round_cleared: 170,
-  total_rounds: 150,
-  my_interview_score: 150,
-  improvement_areas: 220,
-  skill_to_upgrade: 220,
-  job_description: 240,
-  notes: 240,
-  todo_items: 300,
-  documents_links: 220,
-  favorite: 100
-};
-
-const DEFAULT_COLUMN_WIDTH = 160;
-const SELECTION_COLUMN_WIDTH = 22;
-const ACTIONS_COLUMN_WIDTH = 96;
-const COLUMN_MENU_WIDTH = 240;
-const COLUMN_MENU_GUTTER = 12;
-const COLUMN_MENU_OFFSET = 6;
-const COLUMN_MENU_X_OFFSET = -6;
-const COLUMN_MENU_HEIGHT_ESTIMATE = 420;
-const COLUMN_MENU_ANIM_MS = 160;
-
-type ColumnMenuView = "root" | "type" | "filter" | "sort" | "group" | "calculate";
-
-type ColumnCalcOp =
-  | "none"
-  | "count"
-  | "count_values"
-  | "count_empty"
-  | "unique"
-  | "sum"
-  | "avg"
-  | "min"
-  | "max"
-  | "checked"
-  | "unchecked";
-
-const DEFAULT_OPTION_COLOR = "#E2E8F0";
-const TODO_STATUS_SELECT_OPTIONS: SelectOption[] = TODO_STATUSES.map((status) => ({
-  label: status,
-  color: TODO_STATUS_PILL_COLORS[status]
-}));
-
-type CheckboxCellProps = {
-  checked: boolean;
-  onCommit: (next: boolean) => void;
-};
-
-const CheckboxCell: React.FC<CheckboxCellProps> = ({ checked, onCommit }) => (
-  <input
-    className="cell-checkbox"
-    type="checkbox"
-    checked={checked}
-    onChange={(event) => onCommit(event.target.checked)}
-  />
-);
-
-type NumberCellProps = {
-  value?: number | null;
-  step?: number;
-  min?: number;
-  max?: number;
-  onCommit: (next: number | null) => void;
-};
-
-const NumberCell: React.FC<NumberCellProps> = ({ value, step, min, max, onCommit }) => {
-  const [draft, setDraft] = useState(
-    value === null || value === undefined ? "" : String(value)
-  );
-
-  useEffect(() => {
-    setDraft(value === null || value === undefined ? "" : String(value));
-  }, [value]);
-
-  const commit = () => {
-    const trimmed = draft.trim();
-    if (!trimmed) {
-      if (value !== null && value !== undefined) onCommit(null);
-      return;
-    }
-    const parsed = Number(trimmed);
-    if (Number.isNaN(parsed)) {
-      setDraft(value === null || value === undefined ? "" : String(value));
-      return;
-    }
-    if (parsed === value) return;
-    onCommit(parsed);
-  };
-
-  return (
-    <input
-      className="cell-number"
-      type="number"
-      value={draft}
-      step={step}
-      min={min}
-      max={max}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          setDraft(value === null || value === undefined ? "" : String(value));
-        }
-      }}
-    />
-  );
-};
-
-type TodoItemsCellProps = {
-  items?: TodoItem[] | null;
-  onCommit: (next: TodoItem[]) => void;
-};
-
-const TodoItemsCell: React.FC<TodoItemsCellProps> = ({ items, onCommit }) => {
-  const list = items ?? [];
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({
-    task: "",
-    due_date: "",
-    status: "Not started"
-  });
-
-  const pendingCount = list.filter((item) => normalizeTodoStatus(item.status) !== "Done").length;
-
-  const updateTodo = (id: string, patch: Partial<TodoItem>) => {
-    const next = list.map((item) => {
-      if (item.id !== id) return item;
-      const merged = { ...item, ...patch };
-      return {
-        ...merged,
-        task: (merged.task || "").trim(),
-        due_date: merged.due_date ? toDateInputValue(merged.due_date) : undefined,
-        status: normalizeTodoStatus(merged.status)
-      };
-    });
-    onCommit(next);
-  };
-
-  const removeTodo = (id: string) => {
-    const next = list.filter((item) => item.id !== id);
-    if (next.length === list.length) return;
-    onCommit(next);
-  };
-
-  const addTodo = () => {
-    const task = draft.task.trim();
-    if (!task) return;
-    onCommit([
-      ...list,
-      {
-        id: generateId(),
-        task,
-        due_date: draft.due_date || undefined,
-        status: normalizeTodoStatus(draft.status)
-      }
-    ]);
-    setDraft({ task: "", due_date: "", status: "Not started" });
-  };
-
-  return (
-    <div className="todo-items-cell">
-      <div className="todo-items-summary">
-        {list.length === 0 ? (
-          <span className="todo-items-empty">No to-do items yet.</span>
-        ) : (
-          <span>{`${list.length} item${list.length === 1 ? "" : "s"} • ${pendingCount} pending`}</span>
-        )}
-      </div>
-      <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-        {open ? "Close to-dos" : "Add to-do"}
-      </button>
-      {open && (
-        <div className="todo-items-popover">
-          {list.length === 0 ? (
-            <div className="todo-items-empty">No to-do items yet.</div>
-          ) : (
-            <table className="table todo-table todo-items-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Due Date</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((item) => {
-                  const status = normalizeTodoStatus(item.status);
-                  return (
-                    <tr key={item.id} className={status === "Done" ? "todo-completed" : undefined}>
-                      <td>
-                        <TextCell
-                          value={item.task || ""}
-                          onCommit={(next) => updateTodo(item.id, { task: next })}
-                        />
-                      </td>
-                      <td>
-                        <DateCell
-                          value={item.due_date || ""}
-                          onCommit={(next) => updateTodo(item.id, { due_date: next || undefined })}
-                        />
-                      </td>
-                      <td>
-                        <SelectCell
-                          value={status}
-                          options={TODO_STATUS_SELECT_OPTIONS}
-                          onCommit={(next) => updateTodo(item.id, { status: normalizeTodoStatus(next) })}
-                        />
-                      </td>
-                      <td>
-                        <button className="ghost small" type="button" onClick={() => removeTodo(item.id)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-          <div className="todo-items-add-row">
-            <input
-              className="cell-input"
-              placeholder="New task"
-              value={draft.task}
-              onChange={(event) => setDraft((prev) => ({ ...prev, task: event.target.value }))}
-            />
-            <input
-              className="cell-date"
-              type="date"
-              value={draft.due_date}
-              onChange={(event) => setDraft((prev) => ({ ...prev, due_date: event.target.value }))}
-            />
-            <select
-              className={`cell-select todo-status ${TODO_STATUS_CLASS[normalizeTodoStatus(draft.status)]}`}
-              value={draft.status}
-              onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
-            >
-              {TODO_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-            <button className="primary small" type="button" onClick={addTodo}>
-              Add
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-type ContactsCellProps = {
-  contacts?: Contact[] | null;
-  onCommit: (next: Contact[]) => void;
-};
-
-const ContactsCell: React.FC<ContactsCellProps> = ({ contacts, onCommit }) => {
-  const list = contacts ?? [];
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({
-    name: "",
-    information: "",
-    email: "",
-    phone: ""
-  });
-
-  const resetDraft = () =>
-    setDraft({
-      name: "",
-      information: "",
-      email: "",
-      phone: ""
-    });
-
-  const handleAdd = () => {
-    const name = draft.name.trim();
-    if (!name) return;
-    const next: Contact[] = [
-      ...list,
-      {
-        id: generateId(),
-        name,
-        information: draft.information.trim() || undefined,
-        email: draft.email.trim() || undefined,
-        phone: draft.phone.trim() || undefined
-      }
-    ];
-    onCommit(next);
-    resetDraft();
-    setOpen(false);
-  };
-
-  const handleRemove = (id: string) => {
-    const next = list.filter((contact) => contact.id !== id);
-    if (next.length === list.length) return;
-    onCommit(next);
-  };
-
-  return (
-    <div className="contacts-cell">
-      <div className="contacts-list">
-        {list.length === 0 && <span className="contacts-empty">No contacts yet.</span>}
-        {list.map((contact) => (
-          <div className="contact-item" key={contact.id}>
-            <div className="contact-name">{contact.name}</div>
-            <div className="contact-meta">
-              {contact.information && <span>{contact.information}</span>}
-              {contact.email && <span>{contact.email}</span>}
-              {contact.phone && <span>{contact.phone}</span>}
-            </div>
-            <button
-              className="contact-remove"
-              type="button"
-              onClick={() => handleRemove(contact.id)}
-              aria-label="Remove contact"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-        Add contact
-      </button>
-      {open && (
-        <div className="contacts-popover">
-          <label>
-            Name
-            <input
-              value={draft.name}
-              onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="Name"
-            />
-          </label>
-          <label>
-            Information
-            <input
-              value={draft.information}
-              onChange={(event) => setDraft((prev) => ({ ...prev, information: event.target.value }))}
-              placeholder="Role, LinkedIn, etc."
-            />
-          </label>
-          <label>
-            Email
-            <input
-              value={draft.email}
-              onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))}
-              placeholder="name@email.com"
-            />
-          </label>
-          <label>
-            Phone
-            <input
-              value={draft.phone}
-              onChange={(event) => setDraft((prev) => ({ ...prev, phone: event.target.value }))}
-              placeholder="+34 ..."
-            />
-          </label>
-          <div className="contacts-popover-actions">
-            <button
-              className="ghost small"
-              type="button"
-              onClick={() => {
-                resetDraft();
-                setOpen(false);
-              }}
-            >
-              Cancel
-            </button>
-            <button className="primary small" type="button" onClick={handleAdd}>
-              Add
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-type LinkItem = {
-  id: string;
-  label: string;
-  url: string;
-};
-
-const parseJsonArraySafe = (raw: string): unknown[] => {
-  const trimmed = raw.trim();
-  if (!trimmed) return [];
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const parseContactsPropValue = (raw: string): Contact[] => {
-  const arr = parseJsonArraySafe(raw);
-  const list: Contact[] = [];
-  arr.forEach((item) => {
-    if (!item || typeof item !== "object") return;
-    const obj = item as Record<string, unknown>;
-    const name = typeof obj.name === "string" ? obj.name.trim() : "";
-    if (!name) return;
-    const id = typeof obj.id === "string" && obj.id.trim() ? obj.id : generateId();
-    const information = typeof obj.information === "string" ? obj.information.trim() : "";
-    const email = typeof obj.email === "string" ? obj.email.trim() : "";
-    const phone = typeof obj.phone === "string" ? obj.phone.trim() : "";
-    list.push({
-      id,
-      name,
-      information: information || undefined,
-      email: email || undefined,
-      phone: phone || undefined
-    });
-  });
-  return list;
-};
-
-const parseLinksPropValue = (raw: string): LinkItem[] => {
-  const arr = parseJsonArraySafe(raw);
-  const list: LinkItem[] = [];
-  arr.forEach((item) => {
-    if (!item || typeof item !== "object") return;
-    const obj = item as Record<string, unknown>;
-    const urlRaw =
-      typeof obj.url === "string"
-        ? obj.url
-        : typeof obj.href === "string"
-          ? obj.href
-          : typeof obj.link === "string"
-            ? obj.link
-            : "";
-    const url = normalizeUrl(urlRaw);
-    if (!url) return;
-    const labelRaw =
-      typeof obj.label === "string"
-        ? obj.label
-        : typeof obj.name === "string"
-          ? obj.name
-          : "";
-    const label = labelRaw.trim() || guessLinkLabel(url);
-    const id = typeof obj.id === "string" && obj.id.trim() ? obj.id : generateId();
-    list.push({ id, label, url });
-  });
-  return list;
-};
-
-const parseDocumentsPropValue = (raw: string): string[] => {
-  const arr = parseJsonArraySafe(raw);
-  const ids: string[] = [];
-  arr.forEach((item) => {
-    if (typeof item === "string") {
-      const cleaned = item.trim();
-      if (cleaned) ids.push(cleaned);
-      return;
-    }
-    if (item && typeof item === "object") {
-      const obj = item as Record<string, unknown>;
-      const id = typeof obj.id === "string" ? obj.id.trim() : "";
-      if (id) ids.push(id);
-    }
-  });
-  return Array.from(new Set(ids));
-};
-
-type LinksCellProps = {
-  links?: LinkItem[] | null;
-  onCommit: (next: LinkItem[]) => void;
-};
-
-const normalizeUrl = (raw: string): string => {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
-};
-
-const guessLinkLabel = (url: string): string => {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\\./i, "");
-    return host || url;
-  } catch {
-    return url;
-  }
-};
-
-const LinksCell: React.FC<LinksCellProps> = ({ links, onCommit }) => {
-  const list = links ?? [];
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ label: "", url: "" });
-
-  const resetDraft = () => setDraft({ label: "", url: "" });
-
-  const handleAdd = () => {
-    const url = normalizeUrl(draft.url);
-    if (!url) return;
-    const label = draft.label.trim() || guessLinkLabel(url);
-    const next: LinkItem[] = [...list, { id: generateId(), label, url }];
-    onCommit(next);
-    resetDraft();
-    setOpen(false);
-  };
-
-  const handleRemove = (id: string) => {
-    const next = list.filter((link) => link.id !== id);
-    if (next.length === list.length) return;
-    onCommit(next);
-  };
-
-  return (
-    <div className="links-cell">
-      <div className="links-list">
-        {list.length === 0 && <span className="links-empty">—</span>}
-        {list.map((link) => (
-          <div className="link-item" key={link.id}>
-            <button
-              className="link-open"
-              type="button"
-              onClick={() => void openExternal(link.url)}
-              title={link.url}
-            >
-              <div className="link-label">{link.label}</div>
-              <div className="link-meta">{link.url}</div>
-            </button>
-            <button
-              className="link-remove"
-              type="button"
-              onClick={() => handleRemove(link.id)}
-              aria-label="Remove link"
-              title="Remove"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-        + Add link
-      </button>
-      {open && (
-        <div className="links-popover">
-          <label>
-            Label
-            <input
-              value={draft.label}
-              onChange={(event) => setDraft((prev) => ({ ...prev, label: event.target.value }))}
-              placeholder="Website, job post, ..."
-            />
-          </label>
-          <label>
-            URL
-            <input
-              value={draft.url}
-              onChange={(event) => setDraft((prev) => ({ ...prev, url: event.target.value }))}
-              placeholder="https://..."
-            />
-          </label>
-          <div className="links-popover-actions">
-            <button
-              className="ghost small"
-              type="button"
-              onClick={() => {
-                resetDraft();
-                setOpen(false);
-              }}
-            >
-              Cancel
-            </button>
-            <button className="primary small" type="button" onClick={handleAdd}>
-              Add
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-type DocumentsPropertyCellProps = {
-  files: DocumentFile[];
-  selectedIds: string[];
-  onCommit: (nextIds: string[]) => void;
-  onUploadAndAttach: (files: File[], signal: AbortSignal) => Promise<void>;
-  onDeleteFile: (file: DocumentFile) => Promise<boolean> | boolean;
-  onOpenFile: (file: DocumentFile) => void;
-};
-
-const DocumentsPropertyCell: React.FC<DocumentsPropertyCellProps> = ({
-  files,
-  selectedIds,
-  onCommit,
-  onUploadAndAttach,
-  onDeleteFile,
-  onOpenFile
-}) => {
-  const [open, setOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [pendingDeleteFile, setPendingDeleteFile] = useState<DocumentFile | null>(null);
-  const [deletingFile, setDeletingFile] = useState(false);
-  const uploadAbortRef = useRef<AbortController | null>(null);
-  const uploadTimeoutRef = useRef<number | null>(null);
-
-  const cancelUpload = useCallback(() => {
-    if (uploadTimeoutRef.current) {
-      window.clearTimeout(uploadTimeoutRef.current);
-      uploadTimeoutRef.current = null;
-    }
-    uploadAbortRef.current?.abort();
-    uploadAbortRef.current = null;
-  }, []);
-
-  useEffect(() => cancelUpload, [cancelUpload]);
-
-  const toggleId = (id: string) => {
-    if (selectedIds.includes(id)) {
-      onCommit(selectedIds.filter((item) => item !== id));
-      return;
-    }
-    onCommit([...selectedIds, id]);
-  };
-
-  const startUpload = async (nextFiles: File[]) => {
-    if (!nextFiles || nextFiles.length === 0) return;
-    if (uploading) return;
-    cancelUpload();
-    setUploadError(null);
-    setUploading(true);
-    const controller = new AbortController();
-    uploadAbortRef.current = controller;
-    // Avoid infinite hangs if the backend never responds.
-    uploadTimeoutRef.current = window.setTimeout(() => controller.abort(), 120_000);
-    try {
-      await onUploadAndAttach(nextFiles, controller.signal);
-      setOpen(false);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        setUploadError("Upload cancelled.");
-      } else {
-        const message = error instanceof Error ? error.message : "Upload failed.";
-        setUploadError(message || "Upload failed.");
-      }
-    } finally {
-      setUploading(false);
-      if (uploadTimeoutRef.current) {
-        window.clearTimeout(uploadTimeoutRef.current);
-        uploadTimeoutRef.current = null;
-      }
-      uploadAbortRef.current = null;
-    }
-  };
-
-  const fileById = useMemo(() => {
-    const map = new Map<string, DocumentFile>();
-    files.forEach((file) => map.set(file.id, file));
-    return map;
-  }, [files]);
-
-  const showInlineDropzone = files.length === 0 && selectedIds.length === 0;
-
-  return (
-    <div className="docs-prop-cell">
-      {showInlineDropzone ? (
-        <div className={`docs-prop-inline-dropzone ${uploading ? "disabled" : ""}`}>
-          <DocumentsDropzone
-            onUpload={(fileList) => void startUpload(Array.from(fileList || []))}
-          />
-        </div>
-      ) : (
-        <div className="doc-chips">
-          {selectedIds.length === 0 && <span className="docs-prop-empty">—</span>}
-          {selectedIds.map((id) => {
-            const file = fileById.get(id) || null;
-            const label = file?.name || "Unknown document";
-            return (
-              <div className="docs-prop-chip" key={id}>
-                {file ? (
-                  <button
-                    className="doc-chip doc-button"
-                    type="button"
-                    onClick={() => setOpen(true)}
-                    title={file.name}
-                  >
-                    <svg viewBox="0 0 20 20" aria-hidden="true">
-                      <path d="M5 2.5h6l4 4V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Zm6 1.5H6v12h8V8h-3V4Z" />
-                    </svg>
-                    <span>
-                      {file.name}
-                      {file.size ? ` ${formatFileSize(file.size)}` : ""}
-                    </span>
-                  </button>
-                ) : (
-                  <button className="doc-chip doc-button" type="button" onClick={() => setOpen(true)} title={id}>
-                    <svg viewBox="0 0 20 20" aria-hidden="true">
-                      <path d="M5 2.5h6l4 4V17a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Zm6 1.5H6v12h8V8h-3V4Z" />
-                    </svg>
-                    <span>{label}</span>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {uploadError && !open && <div className="docs-prop-error">{uploadError}</div>}
-      <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-        + Add document
-      </button>
-      {open && (
-        <div className="docs-prop-popover">
-          <div className="docs-prop-actions">
-            <button
-              className="ghost small"
-              type="button"
-              onClick={() => setOpen(false)}
-            >
-              Done
-            </button>
-            {uploading && (
-              <button className="ghost small" type="button" onClick={cancelUpload}>
-                Cancel
-              </button>
-            )}
-          </div>
-          <div className={`docs-prop-popover-dropzone ${uploading ? "disabled" : ""}`}>
-            <DocumentsDropzone
-              onUpload={(fileList) => void startUpload(Array.from(fileList || []))}
-            />
-          </div>
-          {uploadError && <div className="docs-prop-error">{uploadError}</div>}
-          <div className="docs-prop-list">
-            {files.length === 0 ? null : (
-              files.map((file) => (
-                <div
-                  key={file.id}
-                  className={`docs-prop-row ${selectedIds.includes(file.id) ? "selected" : ""}`}
-                >
-                  <button className="docs-prop-row-main" type="button" onClick={() => toggleId(file.id)}>
-                    <span className="docs-prop-row-check">{selectedIds.includes(file.id) ? "✓" : ""}</span>
-                    <span className="docs-prop-row-name">
-                      {file.name}
-                      {file.size ? ` ${formatFileSize(file.size)}` : ""}
-                    </span>
-                  </button>
-                  <span className="docs-prop-row-actions">
-                    <button
-                      className="doc-icon-button info"
-                      type="button"
-                      aria-label="Document info"
-                      title="Document info"
-                      onClick={() => onOpenFile(file)}
-                    >
-                      i
-                    </button>
-                    <button
-                      className="doc-icon-button danger"
-                      type="button"
-                      aria-label="Delete document"
-                      title="Delete document"
-                      onClick={() => setPendingDeleteFile(file)}
-                    >
-                      <svg viewBox="0 0 20 20" aria-hidden="true">
-                        <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
-                      </svg>
-                    </button>
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-      {pendingDeleteFile && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setPendingDeleteFile(null)}>
-          <div className="modal confirm-delete-modal" onClick={(event) => event.stopPropagation()}>
-            <header className="modal-header">
-              <div>
-                <h2>Delete Document</h2>
-                <p>{pendingDeleteFile.name}</p>
-              </div>
-              <button className="ghost" type="button" onClick={() => setPendingDeleteFile(null)} aria-label="Close">
-                ×
-              </button>
-            </header>
-            <p>Do you want to delete this document?</p>
-            <div className="confirm-delete-actions">
-              <button className="ghost" type="button" onClick={() => setPendingDeleteFile(null)} disabled={deletingFile}>
-                Cancel
-              </button>
-              <button
-                className="icon-button danger"
-                type="button"
-                aria-label="Delete document"
-                disabled={deletingFile}
-                onClick={async () => {
-                  const target = pendingDeleteFile;
-                  if (!target) return;
-                  setDeletingFile(true);
-                  const removed = await Promise.resolve(onDeleteFile(target));
-                  if (removed) {
-                    onCommit(selectedIds.filter((id) => id !== target.id));
-                    setPendingDeleteFile(null);
-                  }
-                  setDeletingFile(false);
-                }}
-              >
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="M7.5 3.5h5l.5 1.5H17v1.5H3V5h3.5l.5-1.5Zm1 4h1.5v7H8.5v-7Zm3 0H13v7h-1.5v-7ZM5.5 6.5h9l-.6 9.1a1.5 1.5 0 0 1-1.5 1.4H7.6a1.5 1.5 0 0 1-1.5-1.4l-.6-9.1Z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-type RatingCellProps = {
-  value?: number | null;
-  onCommit: (next: number | null) => void;
-};
-
-const RatingCell: React.FC<RatingCellProps> = ({ value, onCommit }) => (
-  <StarRating value={value ?? null} onChange={onCommit} size="sm" step={0.5} />
-);
-
-const ColumnMenuIcon: React.FC<{ viewBox?: string; children: React.ReactNode }> = ({
-  viewBox = "0 0 20 20",
-  children
-}) => (
-  <svg aria-hidden="true" viewBox={viewBox} className="column-menu-icon">
-    {children}
-  </svg>
-);
-
-const ColumnMenuChevronRight = () => (
-  <ColumnMenuIcon viewBox="0 0 16 16">
-    <path d="M6.722 3.238a.625.625 0 1 0-.884.884L9.716 8l-3.878 3.878a.625.625 0 0 0 .884.884l4.32-4.32a.625.625 0 0 0 0-.884z" />
-  </ColumnMenuIcon>
-);
-
-const TRACKER_PRIMARY_TABLE_ID = "tracker:table";
+import {
+  TRACKER_BASE_COLUMN_ORDER as BASE_COLUMN_ORDER,
+  TRACKER_COLUMN_LABELS as COLUMN_LABELS,
+  TRACKER_COLUMN_TYPES as COLUMN_TYPES,
+  TRACKER_DEFAULT_COLUMN_WIDTHS as DEFAULT_COLUMN_WIDTHS,
+  DEFAULT_COLUMN_WIDTH
+} from "../shared/columnSchema";
+import {
+  CheckboxCell,
+  NumberCell,
+  TodoItemsCell,
+  ContactsCell,
+  LinksCell,
+  DocumentsPropertyCell,
+  RatingCell,
+  ColumnMenuIcon,
+  ColumnMenuChevronRight,
+  parseJsonArraySafe,
+  parseContactsPropValue,
+  parseLinksPropValue,
+  parseDocumentsPropValue,
+  normalizeUrl,
+  guessLinkLabel,
+  type LinkItem
+} from "./tracker/trackerCells";
+import {
+  SELECTION_COLUMN_WIDTH,
+  ACTIONS_COLUMN_WIDTH,
+  COLUMN_MENU_WIDTH,
+  COLUMN_MENU_GUTTER,
+  COLUMN_MENU_OFFSET,
+  COLUMN_MENU_X_OFFSET,
+  COLUMN_MENU_HEIGHT_ESTIMATE,
+  COLUMN_MENU_ANIM_MS,
+  DEFAULT_OPTION_COLOR,
+  TODO_STATUS_SELECT_OPTIONS,
+  TRACKER_PRIMARY_TABLE_ID,
+  type ColumnMenuView,
+  type ColumnCalcOp
+} from "./tracker/trackerConstants";
 
 const TrackerPage: React.FC = () => {
   const { t } = useI18n();
@@ -1049,14 +141,13 @@ const TrackerPage: React.FC = () => {
   const [viewportHeight, setViewportHeight] = useState(0);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
+  const contactToString = (contact: Contact) =>
+    [contact.name, contact.information, contact.email, contact.phone]
+      .filter(Boolean)
+      .join(" ");
+
   const contactsToString = (list?: Contact[] | null) =>
-    (list || [])
-      .map((contact) =>
-        [contact.name, contact.information, contact.email, contact.phone]
-          .filter(Boolean)
-          .join(" ")
-      )
-      .join(" | ");
+    (list || []).map((c) => contactToString(c)).join(" | ");
 
   const documentsToString = (list?: { name?: string | null }[] | null) =>
     (list || [])
@@ -2735,6 +1826,66 @@ const TrackerPage: React.FC = () => {
     return String(value);
   };
 
+  /* --- multi-value group-by helpers --- */
+  const cellToGroupKeys = (app: Application, col: string): string[] => {
+    if (col.startsWith("prop__")) {
+      const key = col.replace("prop__", "");
+      const raw = app.properties?.[key] || "";
+      const prop = settings.custom_properties.find((item) => item.key === key);
+      if (prop?.type === "contacts") {
+        const list = parseContactsPropValue(raw);
+        if (list.length <= 1) return [cellToString(app, col)];
+        return list.map((c) => contactToString(c));
+      }
+      if (prop?.type === "links") {
+        const list = parseLinksPropValue(raw);
+        if (list.length <= 1) return [cellToString(app, col)];
+        return list.map((link) => link.label || link.url || "");
+      }
+      if (prop?.type === "documents") {
+        const ids = parseDocumentsPropValue(raw);
+        if (ids.length <= 1) return [cellToString(app, col)];
+        const fileMap = new Map((app.documents_files || []).map((file) => [file.id, file.name]));
+        return ids.map((id) => fileMap.get(id) || id);
+      }
+      return [cellToString(app, col)];
+    }
+    if (col === "contacts") {
+      const contacts = app.contacts || [];
+      if (contacts.length <= 1) return [cellToString(app, col)];
+      return contacts.map((c) => contactToString(c));
+    }
+    if (col === "todo_items") {
+      const items = app.todo_items || [];
+      if (items.length <= 1) return [cellToString(app, col)];
+      return items.map((item) => item.task || "");
+    }
+    if (col === "documents_files") {
+      const files = app.documents_files || [];
+      if (files.length <= 1) return [cellToString(app, col)];
+      return files.map((file) => file?.name || "");
+    }
+    return [cellToString(app, col)];
+  };
+
+  const groupEntries = useMemo((): { app: Application; groupKey: string }[] | null => {
+    if (!groupBy) return null;
+    const entries: { app: Application; groupKey: string }[] = [];
+    sorted.forEach((app) => {
+      const keys = cellToGroupKeys(app, groupBy);
+      for (const k of keys) {
+        entries.push({ app, groupKey: k.trim() || "(Vacio)" });
+      }
+    });
+    entries.sort((a, b) => {
+      if (a.groupKey === b.groupKey) return 0;
+      if (a.groupKey === "(Vacio)") return 1;
+      if (b.groupKey === "(Vacio)") return -1;
+      return a.groupKey.localeCompare(b.groupKey, undefined, { sensitivity: "base" });
+    });
+    return entries;
+  }, [sorted, groupBy]);
+
   const rowsForDisplay = useMemo(() => {
     if (!groupBy) return sorted;
     const next = [...sorted];
@@ -2750,14 +1901,13 @@ const TrackerPage: React.FC = () => {
   }, [sorted, groupBy]);
 
   const groupCounts = useMemo(() => {
-    if (!groupBy) return null;
+    if (!groupBy || !groupEntries) return null;
     const map = new Map<string, number>();
-    rowsForDisplay.forEach((app) => {
-      const key = cellToString(app, groupBy).trim() || "(Vacio)";
-      map.set(key, (map.get(key) || 0) + 1);
+    groupEntries.forEach(({ groupKey }) => {
+      map.set(groupKey, (map.get(groupKey) || 0) + 1);
     });
     return map;
-  }, [rowsForDisplay, groupBy]);
+  }, [groupEntries, groupBy]);
 
   const stickyColumn = orderedVisible[0];
   const viewHeight = viewportHeight || rowHeight * 10;
@@ -3066,7 +2216,20 @@ const TrackerPage: React.FC = () => {
                   <td colSpan={orderedVisible.length + 2} style={{ height: topSpacer }} />
                 </tr>
               )}
-              {visibleRowsForBlock.map((app, index) => {
+              {(groupBy && groupEntries
+                ? groupEntries.map(({ app, groupKey }, index, arr) => {
+                    const prevGroupKey = index > 0 ? arr[index - 1].groupKey : "";
+                    const firstInGroup = groupKey !== prevGroupKey;
+                    const collapsed = collapsedGroups.has(groupKey);
+                    return { app, groupKey, firstInGroup, collapsed };
+                  })
+                : visibleRowsForBlock.map((app) => ({
+                    app,
+                    groupKey: "",
+                    firstInGroup: false,
+                    collapsed: false,
+                  }))
+              ).map(({ app, groupKey, firstInGroup, collapsed }, index) => {
                 const stageOptions = buildSelectOptions(app.stage, settings.stages, settings.stage_colors);
                 const outcomeOptions = buildSelectOptions(app.outcome, settings.outcomes, settings.outcome_colors);
                 const jobTypeOptions = buildSelectOptions(
@@ -3076,16 +2239,9 @@ const TrackerPage: React.FC = () => {
                 );
                 const isSelected = selectedIds.has(app.id);
 
-                const groupKey = groupBy ? cellToString(app, groupBy).trim() || "(Vacio)" : "";
-                const prevGroupKey =
-                  groupBy && index > 0
-                    ? cellToString(visibleRowsForBlock[index - 1], groupBy).trim() || "(Vacio)"
-                    : "";
-                const firstInGroup = Boolean(groupBy && groupKey !== prevGroupKey);
-                const collapsed = Boolean(groupBy && collapsedGroups.has(groupKey));
-
+                const rowKey = groupKey ? `${groupKey}-${app.id}` : String(app.id);
                 const row = (
-                <tr key={app.id} className={isSelected ? "selected" : ""} style={{ height: rowHeight }}>
+                <tr key={rowKey} className={isSelected ? "selected" : ""} style={{ height: rowHeight }}>
                   <td
                     className="selection-col sticky-col"
                     style={{ left: 0, width: SELECTION_COLUMN_WIDTH, minWidth: SELECTION_COLUMN_WIDTH }}

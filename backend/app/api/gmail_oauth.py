@@ -10,7 +10,7 @@ import secrets
 import threading
 import time
 import urllib.parse
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -25,6 +25,9 @@ from ..services.emails import (
     get_google_oauth_backend_config,
     get_valid_google_send_access_token,
     disconnect_google_send_oauth,
+    disconnect_single_google_account,
+    list_google_accounts,
+    select_google_account,
     send_gmail_message,
     store_google_send_tokens_secure,
     validate_no_header_injection,
@@ -261,6 +264,7 @@ def oauth_google_callback(
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
 ) -> HTMLResponse:
     if error:
         return _oauth_result_page("error", "Autorización cancelada", html.escape(error))
@@ -277,7 +281,7 @@ def oauth_google_callback(
     if not ok:
         return _oauth_result_page("error", "Error al conectar", html.escape(message))
 
-    saved_ok, saved_message = store_google_send_tokens_secure(token_data)
+    saved_ok, saved_message = store_google_send_tokens_secure(token_data, db=db)
     if not saved_ok:
         return _oauth_result_page(
             "warning",
@@ -328,3 +332,46 @@ def gmail_send(
 def oauth_google_disconnect(db: Session = Depends(get_db)) -> dict[str, str | bool]:
     ok, message = disconnect_google_send_oauth(db)
     return {"ok": ok, "message": message}
+
+
+# ---------------------------------------------------------------------------
+# Multi-account endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/oauth/google/accounts")
+@router.get("/api/oauth/google/accounts")
+def google_accounts_list(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return all connected Google accounts with which one is active."""
+    accounts = list_google_accounts(db)
+    return {"ok": True, "accounts": accounts}
+
+
+@router.post("/oauth/google/accounts/select")
+@router.post("/api/oauth/google/accounts/select")
+def google_account_select(
+    payload: dict[str, str],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    email = str(payload.get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="'email' is required")
+    ok, message = select_google_account(db, email)
+    if not ok:
+        raise HTTPException(status_code=404, detail=message)
+    return {"ok": True, "message": message}
+
+
+@router.post("/oauth/google/accounts/disconnect")
+@router.post("/api/oauth/google/accounts/disconnect")
+def google_account_disconnect_single(
+    payload: dict[str, str],
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    email = str(payload.get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="'email' is required")
+    ok, message = disconnect_single_google_account(db, email)
+    if not ok:
+        raise HTTPException(status_code=404, detail=message)
+    return {"ok": True, "message": message}

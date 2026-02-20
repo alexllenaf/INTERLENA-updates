@@ -1,0 +1,99 @@
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-Light.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-LightItalic.woff2") format("woff2");
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-MediumItalic.woff2") format("woff2");
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "WSJ";
+  src: url("/fonts/WSJ_Font.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #f6f1ea;
+  --bg-accent: #e4eff3;
+  --surface: #ffffff;
+  --surface-alt: #f7fafc;
+  --text: #1b1f24;
+  --muted: #6b7280;
+  --accent: #2b6cb0;
+  --accent-2: #d69e2e;
+  --accent-3: #2f855a;
+  --danger: #c53030;
+  --border: #e2e8f0;
+  --shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+  --radius: 18px;
+  --font-body: "McKinsey Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "WSJ", "McKinsey Sans", "Times New Roman", serif;
+  --content-block-gap: 12px;
+  --page-grid-columns: 60;
+  --page-grid-gap: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--text);
+  background: radial-gradient(circle at top left, var(--bg-accent), var(--bg));
+  min-height: 100vh;
+}
+
+h1,
+h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.2px;
+}
+
+#root {
+  min-height: 100vh;
+}
+

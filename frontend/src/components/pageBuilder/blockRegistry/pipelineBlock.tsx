@@ -2,6 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { useAppData } from "../../../state";
 import { type Application, type CustomProperty } from "../../../types";
+import {
+  TRACKER_BASE_COLUMN_ORDER,
+  TRACKER_COLUMN_LABELS,
+  TRACKER_COLUMN_KINDS
+} from "../../../shared/columnSchema";
+import {
+  isRecord,
+  normalizeString,
+  normalizeStringArray,
+  normalizeCustomProperties,
+  customPropertyKind
+} from "../../../shared/normalize";
 import BlockPanel from "../../BlockPanel";
 import {
   PIPELINE_SOURCE_TABLE_LINK_KEY,
@@ -22,143 +34,6 @@ type PipelineLinkedTableModel = {
 };
 
 type PipelineTableTarget = ReturnType<typeof collectEditableTableTargets>[number];
-
-const TRACKER_BASE_COLUMN_ORDER = [
-  "company_name",
-  "position",
-  "job_type",
-  "location",
-  "stage",
-  "outcome",
-  "application_date",
-  "interview_datetime",
-  "followup_date",
-  "interview_rounds",
-  "interview_type",
-  "interviewers",
-  "company_score",
-  "contacts",
-  "last_round_cleared",
-  "total_rounds",
-  "my_interview_score",
-  "improvement_areas",
-  "skill_to_upgrade",
-  "job_description",
-  "notes",
-  "todo_items",
-  "documents_links",
-  "favorite"
-];
-
-const TRACKER_COLUMN_LABELS: Record<string, string> = {
-  company_name: "Company",
-  position: "Position",
-  job_type: "Job Type",
-  location: "Location",
-  stage: "Stage",
-  outcome: "Outcome",
-  application_date: "Application Date",
-  interview_datetime: "Interview",
-  followup_date: "Follow-Up",
-  interview_rounds: "Interview Rounds",
-  interview_type: "Interview Type",
-  interviewers: "Interviewers",
-  company_score: "Company Score",
-  contacts: "Contacts",
-  last_round_cleared: "Last Round Cleared",
-  total_rounds: "Total Rounds",
-  my_interview_score: "Interview Score",
-  improvement_areas: "Improvement Areas",
-  skill_to_upgrade: "Skill To Upgrade",
-  job_description: "Job Description",
-  notes: "Notes",
-  todo_items: "To-Do Items",
-  documents_links: "Documents / Links",
-  favorite: "Favorite"
-};
-
-const TRACKER_COLUMN_KINDS: Record<string, EditableTableColumnKind> = {
-  company_name: "text",
-  position: "text",
-  job_type: "select",
-  location: "text",
-  stage: "select",
-  outcome: "select",
-  application_date: "date",
-  interview_datetime: "date",
-  followup_date: "date",
-  interview_rounds: "number",
-  interview_type: "text",
-  interviewers: "text",
-  company_score: "rating",
-  contacts: "contacts",
-  last_round_cleared: "text",
-  total_rounds: "number",
-  my_interview_score: "rating",
-  improvement_areas: "text",
-  skill_to_upgrade: "text",
-  job_description: "text",
-  notes: "text",
-  todo_items: "todo",
-  documents_links: "documents",
-  favorite: "checkbox"
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const normalizeString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-
-const normalizeStringArray = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => normalizeString(item))
-    .filter(Boolean);
-};
-
-const normalizeCustomProperties = (value: unknown): CustomProperty[] => {
-  if (!Array.isArray(value)) return [];
-  const out: CustomProperty[] = [];
-  value.forEach((entry) => {
-    if (!isRecord(entry)) return;
-    const key = normalizeString(entry.key);
-    if (!key) return;
-    const name = normalizeString(entry.name);
-    const typeRaw = normalizeString(entry.type);
-    const type =
-      typeRaw === "select" ||
-      typeRaw === "text" ||
-      typeRaw === "number" ||
-      typeRaw === "date" ||
-      typeRaw === "checkbox" ||
-      typeRaw === "rating" ||
-      typeRaw === "contacts" ||
-      typeRaw === "links" ||
-      typeRaw === "documents"
-        ? typeRaw
-        : "text";
-    out.push({
-      key,
-      name: name || key,
-      type,
-      options: []
-    });
-  });
-  return out;
-};
-
-const customPropertyKind = (prop: CustomProperty | null): EditableTableColumnKind => {
-  if (!prop) return "text";
-  if (prop.type === "number") return "number";
-  if (prop.type === "date") return "date";
-  if (prop.type === "checkbox") return "checkbox";
-  if (prop.type === "rating") return "rating";
-  if (prop.type === "contacts") return "contacts";
-  if (prop.type === "links") return "links";
-  if (prop.type === "documents") return "documents";
-  if (prop.type === "select") return "select";
-  return "text";
-};
 
 const createUniqueLabel = (label: string, used: Set<string>): string => {
   const base = label.trim() || "Column";
@@ -208,7 +83,6 @@ const isTrackerSourceTarget = (target: PipelineTableTarget): boolean => {
   const contentSlotId = normalizeString(target.props.contentSlotId);
   return (
     schemaRef === "tracker.applications@1" ||
-    target.pageId === "tracker" ||
     target.blockId === "tracker:table" ||
     contentSlotId.startsWith("tracker:content")
   );

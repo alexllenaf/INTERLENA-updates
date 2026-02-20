@@ -13,6 +13,7 @@ import {
   EmailSendBatchResult,
   EmailSendContact,
   EmailSendStats,
+  GoogleAccount,
   Settings,
   UpdateInfo,
   View
@@ -442,6 +443,25 @@ export async function sendEmailBatch(payload: {
 export async function disconnectGoogleOAuth(): Promise<{ ok: boolean; message: string }> {
   return request<{ ok: boolean; message: string }>("/oauth/google/disconnect", {
     method: "POST"
+  });
+}
+
+export async function listGoogleAccounts(): Promise<GoogleAccount[]> {
+  const res = await request<{ ok: boolean; accounts: GoogleAccount[] }>("/oauth/google/accounts");
+  return res.accounts || [];
+}
+
+export async function selectGoogleAccount(email: string): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>("/oauth/google/accounts/select", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export async function disconnectSingleGoogleAccount(email: string): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>("/oauth/google/accounts/disconnect", {
+    method: "POST",
+    body: JSON.stringify({ email })
   });
 }
 

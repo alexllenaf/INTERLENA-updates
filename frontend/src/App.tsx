@@ -1,7 +1,9 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getUpdateInfo, openExternal } from "./api";
+import CameraModal from "./components/CameraModal";
 import { getCrossPageDragState } from "./components/pageBuilder/crossPageDragStore";
+import { PencilIcon, TrashIcon, CameraIcon, GearIcon } from "./components/SidebarIcons";
 import { useI18n } from "./i18n";
 import { CORE_PAGE_PLUGINS } from "./pagePlugins";
 import { AppProvider, useAppData } from "./state";
@@ -17,31 +19,6 @@ const DEFAULT_PROFILE: BrandProfile = {
   avatarSrc: "/brand-avatar.svg",
   avatarAlt: "Foto de perfil",
 };
-
-const PencilIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" />
-    <path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.82 3.75 3.75 1.83-1.82z" />
-  </svg>
-);
-
-const TrashIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-1 6h2v9H8V9zm6 0h2v9h-2V9zM6 9h2v9H6V9z" />
-  </svg>
-);
-
-const CameraIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M9 4a2 2 0 0 0-1.6.8L6.7 6H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.7l-.7-1.2A2 2 0 0 0 14 4H9zm3 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" />
-  </svg>
-);
-
-const GearIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.27 7.27 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.23-1.13.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.23 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.2A3.2 3.2 0 1 1 12 8.8a3.2 3.2 0 0 1 0 6.4Z" />
-  </svg>
-);
 
 const parseVersion = (value: string | null | undefined): number[] => {
   if (!value) return [];
@@ -164,7 +141,6 @@ const AppShell: React.FC = () => {
   const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [navLabelOverrides, setNavLabelOverrides] = useState<Record<string, string>>(() =>
     readNavLabelOverrides()
   );
@@ -175,9 +151,6 @@ const AppShell: React.FC = () => {
   const hasLoadedProfileRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const dragHoverTimerRef = useRef<number | null>(null);
@@ -330,22 +303,6 @@ const AppShell: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isCameraOpen && streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-  }, [isCameraOpen]);
-
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-    };
-  }, []);
-
   const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) {
@@ -366,64 +323,23 @@ const AppShell: React.FC = () => {
     event.target.value = "";
   };
 
-  const openCamera = async () => {
+  const openCamera = () => {
     setIsAvatarMenuOpen(false);
-    setCameraError(null);
     setIsCameraOpen(true);
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError(t("Your browser cannot open the camera. Use Upload photo."));
-      cameraInputRef.current?.click();
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
-      }
-    } catch {
-      setCameraError(t("Could not access the camera. Use Upload photo."));
-      setIsCameraOpen(false);
-      cameraInputRef.current?.click();
-    }
   };
 
   const closeCamera = () => {
     setIsCameraOpen(false);
-    setCameraError(null);
   };
 
-  const capturePhoto = () => {
-    if (!videoRef.current) {
-      return;
-    }
-    const width = videoRef.current.videoWidth;
-    const height = videoRef.current.videoHeight;
-    if (!width || !height) {
-      setCameraError(t("Camera is not ready yet."));
-      return;
-    }
-    const canvas = canvasRef.current;
-    if (!canvas) {
-      return;
-    }
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      return;
-    }
-    ctx.drawImage(videoRef.current, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-    setProfile((current) => ({
-      ...current,
-      avatarSrc: dataUrl,
-    }));
-    closeCamera();
+  const handleCameraCapture = (dataUrl: string) => {
+    setProfile((current) => ({ ...current, avatarSrc: dataUrl }));
+    setIsCameraOpen(false);
+  };
+
+  const handleCameraUpload = () => {
+    setIsCameraOpen(false);
+    fileInputRef.current?.click();
   };
 
   const handleProfileKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -865,51 +781,11 @@ const AppShell: React.FC = () => {
         </div>
       )}
       {isCameraOpen && (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("Take photo")}
-          onClick={closeCamera}
-        >
-          <div className="modal camera-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h3>{t("Take photo")}</h3>
-                <p>{t("Use the camera to update your profile photo.")}</p>
-              </div>
-              <button className="icon-button" type="button" onClick={closeCamera} aria-label={t("Close")}>
-                X
-              </button>
-            </div>
-            <div className="camera-body">
-              {cameraError ? (
-                <div className="alert">{cameraError}</div>
-              ) : (
-                <video ref={videoRef} className="camera-video" playsInline muted autoPlay />
-              )}
-            </div>
-            <div className="camera-actions">
-              <button className="ghost" type="button" onClick={closeCamera}>
-                {t("Cancel")}
-              </button>
-              <button
-                className="ghost"
-                type="button"
-                onClick={() => {
-                  closeCamera();
-                  fileInputRef.current?.click();
-                }}
-              >
-                {t("Upload photo")}
-              </button>
-              <button className="primary" type="button" onClick={capturePhoto} disabled={!!cameraError}>
-                {t("Capture")}
-              </button>
-            </div>
-            <canvas ref={canvasRef} className="camera-canvas" />
-          </div>
-        </div>
+        <CameraModal
+          onCapture={handleCameraCapture}
+          onUpload={handleCameraUpload}
+          onClose={closeCamera}
+        />
       )}
       {sheetToDelete && (
         <div

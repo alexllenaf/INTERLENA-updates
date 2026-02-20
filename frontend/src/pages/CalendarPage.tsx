@@ -68,388 +68,50 @@ import {
   TODO_STATUS_PILL_COLORS,
   type TodoStatus
 } from "../constants";
-
-const TODO_STATUS_SELECT_OPTIONS: SelectOption[] = TODO_STATUSES.map((status) => ({
-  label: status,
-  color: TODO_STATUS_PILL_COLORS[status]
-}));
-
-const toDateKey = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const buildWeekdayLabels = (locale?: string): string[] => {
-  const formatter = new Intl.DateTimeFormat(locale || undefined, { weekday: "short" });
-  const base = new Date(2021, 0, 4);
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + index);
-    return formatter.format(date);
-  });
-};
-
-type CalendarEvent = {
-  id: string;
-  appId: number;
-  applicationId: string;
-  todoId?: string;
-  type: "Interview" | "Follow-Up" | "To-Do";
-  company: string;
-  position: string;
-  date: Date;
-  dateKey: string;
-  dateLabel: string;
-  timeLabel?: string;
-};
-
-type TodoRow = {
-  appId: number;
-  applicationId: string;
-  company: string;
-  position: string;
-  todo: TodoItem;
-};
-
-type TodoTarget = {
-  appId: number;
-  todoId: string;
-};
-
-type TodoDraft = {
-  task: string;
-  due_date: string;
-  status: TodoStatus;
-  task_location: string;
-  notes: string;
-  documents_links: string;
-  company_name: string;
-  position: string;
-};
-
-type TodoColumnId =
-  | "application"
-  | "task"
-  | "task_location"
-  | "notes"
-  | "documents_links"
-  | "due_date"
-  | "status"
-  | "actions";
-
-type TodoColumnMenuState = {
-  col: TodoColumnId;
-  rename: string;
-  filter: string;
-};
-
-type TodoColumnMenuView = "root" | "type" | "filter" | "sort" | "group" | "calculate";
-
-type TodoColumnKind =
-  | "text"
-  | "number"
-  | "select"
-  | "date"
-  | "checkbox"
-  | "rating"
-  | "contacts"
-  | "links"
-  | "documents";
-
-const TODO_COLUMN_KIND_OPTIONS: TodoColumnKind[] = [
-  "text",
-  "number",
-  "select",
-  "date",
-  "checkbox",
-  "rating",
-  "contacts",
-  "links",
-  "documents"
-];
-const TODO_COLUMN_KIND_SET = new Set<TodoColumnKind>(TODO_COLUMN_KIND_OPTIONS);
-const TODO_COLUMN_KIND_DEFAULTS: Record<TodoColumnId, TodoColumnKind> = {
-  application: "select",
-  task: "text",
-  task_location: "text",
-  notes: "text",
-  documents_links: "links",
-  due_date: "date",
-  status: "select",
-  actions: "text"
-};
-type TodoColumnKinds = Partial<Record<TodoColumnId, TodoColumnKind>>;
-
-type TodoSortConfig = { column: TodoColumnId; direction: "asc" | "desc" } | null;
-
-type TodoColumnCalcOp =
-  | "none"
-  | "count"
-  | "count_values"
-  | "count_empty"
-  | "unique"
-  | "sum"
-  | "avg"
-  | "min"
-  | "max"
-  | "checked"
-  | "unchecked";
-
-const TODO_COLUMN_ORDER_DEFAULT: TodoColumnId[] = [
-  "application",
-  "task",
-  "task_location",
-  "notes",
-  "documents_links",
-  "due_date",
-  "status",
-  "actions"
-];
-
-const TODO_COLUMN_WIDTHS: Record<TodoColumnId, number> = {
-  application: 220,
-  task: 220,
-  task_location: 180,
-  notes: 260,
-  documents_links: 260,
-  due_date: 160,
-  status: 160,
-  actions: 130
-};
-
-const TODO_COLUMN_MENU_WIDTH = 240;
-const TODO_COLUMN_MENU_HEIGHT_ESTIMATE = 420;
-const TODO_COLUMN_MENU_GUTTER = 12;
-const TODO_COLUMN_MENU_OFFSET = 6;
-const TODO_COLUMN_MENU_ANIM_MS = 160;
-const TODO_TABLE_PREFS_STORAGE_KEY = "calendar_todo_table_prefs_v1";
-
-type TodoTablePrefs = {
-  order: TodoColumnId[];
-  hidden: TodoColumnId[];
-  pinned: TodoColumnId | null;
-  labels: Partial<Record<TodoColumnId, string>>;
-  kinds: TodoColumnKinds;
-};
-
-type TodoSourceAccess = {
-  hasSource: boolean;
-  reason: string | null;
-};
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-
-const isTodoColumnId = (value: string): value is TodoColumnId =>
-  (TODO_COLUMN_ORDER_DEFAULT as string[]).includes(value);
-
-const normalizeTodoColumnOrder = (order: unknown): TodoColumnId[] => {
-  if (!Array.isArray(order)) return [...TODO_COLUMN_ORDER_DEFAULT];
-  const list = order.filter((value): value is TodoColumnId => typeof value === "string" && isTodoColumnId(value));
-  const unique: TodoColumnId[] = [];
-  list.forEach((col) => {
-    if (!unique.includes(col)) unique.push(col);
-  });
-  TODO_COLUMN_ORDER_DEFAULT.forEach((col) => {
-    if (!unique.includes(col)) unique.push(col);
-  });
-  return unique;
-};
-
-const normalizeTodoColumnKinds = (raw: unknown): TodoColumnKinds => {
-  if (!raw || typeof raw !== "object") return {};
-  const parsed = raw as Record<string, unknown>;
-  const next: TodoColumnKinds = {};
-  (Object.keys(TODO_COLUMN_KIND_DEFAULTS) as TodoColumnId[]).forEach((column) => {
-    const value = parsed[column];
-    if (typeof value !== "string") return;
-    if (!TODO_COLUMN_KIND_SET.has(value as TodoColumnKind)) return;
-    next[column] = value as TodoColumnKind;
-  });
-  return next;
-};
-
-const readTodoTablePrefs = (): TodoTablePrefs => {
-  if (typeof window === "undefined") {
-    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
-  }
-  try {
-    const raw = window.localStorage.getItem(TODO_TABLE_PREFS_STORAGE_KEY);
-    if (!raw) return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
-    const parsed = JSON.parse(raw) as {
-      order?: unknown;
-      hidden?: unknown;
-      pinned?: unknown;
-      labels?: unknown;
-      kinds?: unknown;
-    };
-    const order = normalizeTodoColumnOrder(parsed.order);
-    const hidden = Array.isArray(parsed.hidden)
-      ? parsed.hidden.filter(
-          (value): value is TodoColumnId =>
-            typeof value === "string" && isTodoColumnId(value) && value !== "actions"
-        )
-      : [];
-    const pinned =
-      typeof parsed.pinned === "string" &&
-      isTodoColumnId(parsed.pinned) &&
-      parsed.pinned !== "actions" &&
-      !hidden.includes(parsed.pinned)
-        ? parsed.pinned
-        : null;
-    const labels: Partial<Record<TodoColumnId, string>> = {};
-    if (parsed.labels && typeof parsed.labels === "object") {
-      Object.entries(parsed.labels as Record<string, unknown>).forEach(([key, value]) => {
-        if (!isTodoColumnId(key)) return;
-        if (typeof value !== "string") return;
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        labels[key] = trimmed;
-      });
-    }
-    return { order, hidden, pinned, labels, kinds: normalizeTodoColumnKinds(parsed.kinds) };
-  } catch {
-    return { order: [...TODO_COLUMN_ORDER_DEFAULT], hidden: [], pinned: null, labels: {}, kinds: {} };
-  }
-};
-
-const writeTodoTablePrefs = (prefs: TodoTablePrefs) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(TODO_TABLE_PREFS_STORAGE_KEY, JSON.stringify(prefs));
-  } catch {
-    // ignore storage failures
-  }
-};
-
-const TRACKER_COLUMN_LABEL_FALLBACKS: Record<string, string> = {
-  company_name: "Company",
-  position: "Position",
-  job_type: "Job Type",
-  location: "Location",
-  stage: "Stage",
-  outcome: "Outcome",
-  application_date: "Application Date",
-  interview_datetime: "Interview",
-  followup_date: "Follow-Up",
-  interview_rounds: "Interview Rounds",
-  interview_type: "Interview Type",
-  interviewers: "Interviewers",
-  company_score: "Company Score",
-  contacts: "Contacts",
-  last_round_cleared: "Last Round Cleared",
-  total_rounds: "Total Rounds",
-  my_interview_score: "Interview Score",
-  improvement_areas: "Improvement Areas",
-  skill_to_upgrade: "Skill To Upgrade",
-  job_description: "Job Description",
-  notes: "Notes",
-  todo_items: "To-Do Items",
-  documents_links: "Documents / Links",
-  favorite: "Favorite"
-};
-
-const normalizeStringArray = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
-};
-
-const normalizeStringRecord = (value: unknown): Record<string, string> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const out: Record<string, string> = {};
-  Object.entries(value as Record<string, unknown>).forEach(([key, raw]) => {
-    if (typeof raw !== "string") return;
-    const trimmed = raw.trim();
-    if (!trimmed) return;
-    out[key] = trimmed;
-  });
-  return out;
-};
-
-const humanizeColumnKey = (value: string): string => {
-  const cleaned = value.replace(/^prop__/, "").replace(/[_-]+/g, " ").trim();
-  if (!cleaned) return "Application";
-  return cleaned
-    .split(/\s+/)
-    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : part))
-    .join(" ");
-};
-
-const resolveTrackerPinnedColumnKey = (settings: unknown): string => {
-  const settingsRecord =
-    settings && typeof settings === "object" && !Array.isArray(settings)
-      ? (settings as Record<string, unknown>)
-      : {};
-  const order = normalizeStringArray(settingsRecord.table_columns);
-  const hidden = new Set(normalizeStringArray(settingsRecord.hidden_columns));
-  const visible = order.filter((column) => !hidden.has(column));
-  return visible[0] || order[0] || "company_name";
-};
-
-const resolveTrackerPinnedColumnLabel = (settings: unknown, column: string): string => {
-  const settingsRecord =
-    settings && typeof settings === "object" && !Array.isArray(settings)
-      ? (settings as Record<string, unknown>)
-      : {};
-  const labels = normalizeStringRecord(settingsRecord.column_labels);
-  return labels[column] || TRACKER_COLUMN_LABEL_FALLBACKS[column] || humanizeColumnKey(column);
-};
-
-const trackerApplicationValueForColumn = (app: Application, column: string): string => {
-  if (column.startsWith("prop__")) {
-    const key = column.slice("prop__".length);
-    return app.properties?.[key] || "";
-  }
-  if (column === "contacts") {
-    return (app.contacts || []).map((item) => item.name).filter(Boolean).join(" | ");
-  }
-  if (column === "todo_items") {
-    return (app.todo_items || []).map((item) => item.task || "").filter(Boolean).join(" | ");
-  }
-  if (column === "documents_links") {
-    return app.documents_links || "";
-  }
-  if (column === "favorite") {
-    return app.favorite ? "true" : "false";
-  }
-  const raw = (app as Record<string, unknown>)[column];
-  if (raw === null || raw === undefined) return "";
-  return String(raw);
-};
-
-const buildSingleEventIcs = (event: CalendarEvent) => {
-  const uid = `${event.id}-${Date.now()}`;
-  const summary = `${event.type} - ${event.company} - ${event.position}`;
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Local Interview Tracker//EN",
-    "BEGIN:VEVENT",
-    `UID:${uid}`,
-    `DTSTAMP:${formatIcsDateTime(new Date())}`,
-    `SUMMARY:${escapeIcsText(summary)}`
-  ];
-  if (event.type === "Interview") {
-    const end = new Date(event.date.getTime() + 60 * 60 * 1000);
-    lines.push(`DTSTART:${formatIcsDateTime(event.date)}`);
-    lines.push(`DTEND:${formatIcsDateTime(end)}`);
-  } else {
-    lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(event.date)}`);
-  }
-  lines.push("END:VEVENT", "END:VCALENDAR");
-  return lines.join("\n");
-};
-
-const downloadEventIcs = async (event: CalendarEvent) => {
-  const content = buildSingleEventIcs(event);
-  const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
-  const safeName = `${event.type}-${event.company}-${event.dateKey}`
-    .replace(/[^a-z0-9-_]+/gi, "_")
-    .replace(/_+/g, "_");
-  await saveBlobAsFile(blob, `${safeName}.ics`);
-};
+import {
+  TODO_STATUS_SELECT_OPTIONS,
+  toDateKey,
+  buildWeekdayLabels,
+  buildSingleEventIcs,
+  downloadEventIcs,
+  clamp,
+  isTodoColumnId,
+  normalizeTodoColumnOrder,
+  normalizeTodoColumnKinds,
+  readTodoTablePrefs,
+  writeTodoTablePrefs,
+  TRACKER_COLUMN_LABEL_FALLBACKS,
+  normalizeStringArray,
+  normalizeStringRecord,
+  humanizeColumnKey,
+  resolveTrackerPinnedColumnKey,
+  resolveTrackerPinnedColumnLabel,
+  trackerApplicationValueForColumn,
+  TODO_COLUMN_KIND_OPTIONS,
+  TODO_COLUMN_KIND_SET,
+  TODO_COLUMN_KIND_DEFAULTS,
+  TODO_COLUMN_ORDER_DEFAULT,
+  TODO_COLUMN_WIDTHS,
+  TODO_COLUMN_MENU_WIDTH,
+  TODO_COLUMN_MENU_GUTTER,
+  TODO_COLUMN_MENU_OFFSET,
+  TODO_COLUMN_MENU_HEIGHT_ESTIMATE,
+  TODO_COLUMN_MENU_ANIM_MS,
+  TODO_TABLE_PREFS_STORAGE_KEY,
+  type CalendarEvent,
+  type TodoRow,
+  type TodoTarget,
+  type TodoDraft,
+  type TodoColumnId,
+  type TodoColumnMenuState,
+  type TodoColumnMenuView,
+  type TodoColumnKind,
+  type TodoColumnKinds,
+  type TodoSortConfig,
+  type TodoColumnCalcOp,
+  type TodoTablePrefs,
+  type TodoSourceAccess
+} from "./calendar/calendarHelpers";
 
 const CalendarPage: React.FC = () => {
   const { t, locale } = useI18n();

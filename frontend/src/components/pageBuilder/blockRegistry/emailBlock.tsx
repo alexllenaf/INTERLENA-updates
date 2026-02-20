@@ -1,14 +1,20 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import BlockPanel from "../../BlockPanel";
+import RichTextEditor from "../../RichTextEditor";
+import MergeTagPicker, { buildMergeTagsFromContacts } from "../../MergeTagPicker";
+import type { MergeTag } from "../../MergeTagPicker";
 import {
   ApiError,
   disconnectGoogleOAuth,
+  disconnectSingleGoogleAccount,
   getGoogleOAuthStartUrl,
   getEmailSendStats,
   listEmailSendContacts,
+  listGoogleAccounts,
+  selectGoogleAccount,
   sendEmailBatch,
 } from "../../../api";
-import { type EmailSendBatchResult, type EmailSendContact, type EmailSendStats } from "../../../types";
+import { type EmailSendBatchResult, type EmailSendContact, type EmailSendStats, type GoogleAccount } from "../../../types";
 import { createSlotContext, renderHeader } from "./shared";
 import { type BlockDefinition } from "./types";
 
@@ -46,10 +52,10 @@ const renderTemplate = (template: string, values: Record<string, string>) =>
 
 const sectionCardStyle: React.CSSProperties = {
   border: "1px solid rgba(15, 23, 42, 0.08)",
-  borderRadius: 14,
-  padding: "16px 18px",
+  borderRadius: 12,
+  padding: "14px 18px",
   background: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
-  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
+  boxShadow: "0 1px 2px rgba(15, 23, 42, 0.03)",
 };
 
 const rowGridStyle: React.CSSProperties = {
@@ -61,8 +67,8 @@ const stepBadge = (num: number, active: boolean): React.CSSProperties => ({
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  width: 26,
-  height: 26,
+  width: 24,
+  height: 24,
   borderRadius: "50%",
   fontSize: 13,
   fontWeight: 700,
@@ -78,11 +84,11 @@ const StepHeader: React.FC<{ num: number; label: string; active?: boolean; done?
   active = false,
   done = false,
 }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
     <span style={stepBadge(num, active || done)}>
       {done ? "✓" : num}
     </span>
-    <span style={{ fontWeight: 600, fontSize: 14, color: active ? "var(--text, #0f172a)" : "#64748b" }}>
+    <span style={{ fontWeight: 600, fontSize: 13, color: active ? "var(--text, #0f172a)" : "#64748b" }}>
       {label}
     </span>
   </div>
@@ -93,7 +99,7 @@ const StatusPill: React.FC<{ ok: boolean; label: string }> = ({ ok, label }) => 
     style={{
       display: "inline-flex",
       alignItems: "center",
-      gap: 5,
+      gap: 6,
       padding: "3px 10px",
       borderRadius: 20,
       fontSize: 12,
@@ -103,7 +109,7 @@ const StatusPill: React.FC<{ ok: boolean; label: string }> = ({ ok, label }) => 
       border: `1px solid ${ok ? "#a7f3d0" : "#fde68a"}`,
     }}
   >
-    <span style={{ fontSize: 10 }}>{ok ? "●" : "○"}</span>
+    <span style={{ fontSize: 11 }}>{ok ? "●" : "○"}</span>
     {label}
   </span>
 );
@@ -156,6 +162,33 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     const [sendMessage, setSendMessage] = useState<string | null>(null);
     const [sendStats, setSendStats] = useState<EmailSendStats | null>(null);
     const [sendResult, setSendResult] = useState<EmailSendBatchResult | null>(null);
+    const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
+    const [acctDropdownOpen, setAcctDropdownOpen] = useState(false);
+
+    const subjectInputRef = useRef<HTMLInputElement>(null);
+    const acctDropdownRef = useRef<HTMLDivElement>(null);
+
+    /* ── Available merge tags derived from loaded contacts ────────── */
+    const mergeTags = useMemo(() => buildMergeTagsFromContacts(contacts), [contacts]);
+
+    const insertTagInSubject = (tag: MergeTag) => {
+      const input = subjectInputRef.current;
+      const variable = `{{${tag.key}}}`;
+      if (!input) {
+        patchBlockProps({ sendSubjectTemplate: (block.props.sendSubjectTemplate || "") + variable });
+        return;
+      }
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      const before = input.value.slice(0, start);
+      const after = input.value.slice(end);
+      patchBlockProps({ sendSubjectTemplate: before + variable + after });
+      // Restore cursor position after React re-render
+      requestAnimationFrame(() => {
+        input.selectionStart = input.selectionEnd = start + variable.length;
+        input.focus();
+      });
+    };
 
     const refreshSendStats = React.useCallback(async () => {
       try {
@@ -164,11 +197,30 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       } catch {
         setSendStats(null);
       }
+      try {
+        const accts = await listGoogleAccounts();
+        setGoogleAccounts(accts);
+      } catch {
+        /* ignore */
+      }
     }, []);
 
     useEffect(() => {
       void refreshSendStats();
     }, [refreshSendStats]);
+
+    /* Close account dropdown on outside click */
+    useEffect(() => {
+      const handler = (e: MouseEvent) => {
+        if (acctDropdownRef.current && !acctDropdownRef.current.contains(e.target as Node)) {
+          setAcctDropdownOpen(false);
+        }
+      };
+      if (acctDropdownOpen) {
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+      }
+    }, [acctDropdownOpen]);
 
     const isConnected = Boolean(sendStats?.connected && String(sendStats?.sent_by || "").trim());
     const connectedEmail = String(sendStats?.sent_by || "").trim();
@@ -203,6 +255,14 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
         setLoadingContacts(false);
       }
     };
+
+    /* Auto-load contacts when connected and list is empty */
+    useEffect(() => {
+      if (isConnected && contacts.length === 0 && !loadingContacts) {
+        void loadContacts();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isConnected]);
 
     const startGoogleLoginForSend = () => {
       /* ── The backend /oauth/google/start validates configuration
@@ -256,11 +316,17 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       if (!first) return null;
       const values: Record<string, string> = {
         name: first.name || "",
-        Nombre: first.name || "",
+        Nombre: first.first_name || first.name?.split(" ")[0] || "",
+        nombre: first.first_name || first.name?.split(" ")[0] || "",
+        first_name: first.first_name || first.name?.split(" ")[0] || "",
+        last_name: first.last_name || "",
+        Apellidos: first.last_name || "",
+        apellidos: first.last_name || "",
         email: first.email || "",
         Email: first.email || "",
         company: first.company || "",
         Empresa: first.company || "",
+        empresa: first.company || "",
       };
       Object.entries(first.custom_fields || {}).forEach(([key, value]) => {
         values[key] = String(value || "");
@@ -317,80 +383,42 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
           (patch) => patchBlockProps(patch)
         )}
 
-        {mode === "edit" ? (
-          <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-            <input
-              className="block-edit-title"
-              value={block.props.contactId || ""}
-              onChange={(event) => patchBlockProps({ contactId: event.target.value })}
-              placeholder="Contact ID"
-              aria-label={`${block.id}-contact-id`}
-            />
-            <input
-              className="block-edit-title"
-              value={block.props.folder || "INBOX"}
-              onChange={(event) => patchBlockProps({ folder: event.target.value || "INBOX" })}
-              placeholder="Folder"
-              aria-label={`${block.id}-folder`}
-            />
-            <input
-              className="block-edit-title"
-              type="number"
-              min={30}
-              max={50}
-              value={block.props.cacheSize || 50}
-              onChange={(event) => patchBlockProps({ cacheSize: Number(event.target.value || 50) })}
-              placeholder="Cache size"
-              aria-label={`${block.id}-cache-size`}
-            />
-            <input
-              className="block-edit-title"
-              type="number"
-              min={1}
-              max={5000}
-              value={block.props.sendContactLimit || 500}
-              onChange={(event) => patchBlockProps({ sendContactLimit: Number(event.target.value || 500) })}
-              placeholder="Contact limit"
-              aria-label={`${block.id}-send-contact-limit`}
-            />
-          </div>
-        ) : null}
+        {mode === "edit" ? null : null}
 
         {slot ? (
           slot
         ) : (
-          <div style={{ display: "grid", gap: 14 }}>
-            {/* ── Hero header ─────────────────────────────────── */}
+          <div style={{ display: "grid", gap: 8 }}>
+            {/* ── Hero header (compact bar) ────────────────────── */}
             <div
               style={{
-                ...sectionCardStyle,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                padding: "12px 16px",
+                borderRadius: 12,
                 background: "linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #f0fdf4 100%)",
-                borderColor: "rgba(79, 70, 229, 0.12)",
-                padding: "18px 20px",
+                border: "1px solid rgba(79, 70, 229, 0.10)",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 22 }}>✉️</span>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>Asistente de envío de emails</div>
-                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                      Envía emails personalizados a tus contactos con Google OAuth
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <StatusPill ok={isConnected} label={isConnected ? "Conectado" : "Sin sesión"} />
-                  <button
-                    className="ghost"
-                    type="button"
-                    onClick={() => void refreshSendStats()}
-                    title="Actualizar estado"
-                    style={{ padding: "6px 8px", fontSize: 13, minWidth: "unset", borderRadius: 8 }}
-                  >
-                    ↻
-                  </button>
-                </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18 }}>✉️</span>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>Envío de emails</span>
+                <span style={{ fontSize: 12, color: "#64748b" }}>— Google OAuth</span>
+              </div>
+              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                <StatusPill ok={isConnected} label={isConnected ? "Conectado" : "Sin sesión"} />
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => void refreshSendStats()}
+                  title="Actualizar estado"
+                  style={{ padding: "4px 8px", fontSize: 13, minWidth: "unset", borderRadius: 6 }}
+                >
+                  ↻
+                </button>
               </div>
             </div>
 
@@ -398,157 +426,344 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
             {sendMessage ? (
               <div
                 style={{
-                  ...sectionCardStyle,
-                  background: "linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%)",
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  background: "#ecfdf5",
                   border: "1px solid #a7f3d0",
                   color: "#065f46",
                   display: "flex",
                   alignItems: "center",
-                  gap: 8,
+                  gap: 6,
                   fontSize: 13,
                   fontWeight: 500,
                 }}
               >
-                <span style={{ fontSize: 16 }}>✅</span>
+                <span style={{ fontSize: 13 }}>✅</span>
                 {sendMessage}
               </div>
             ) : null}
             {sendError ? (
-              <div className="alert" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 16 }}>⚠️</span>
+              <div className="alert" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, padding: "8px 14px" }}>
+                <span style={{ fontSize: 13 }}>⚠️</span>
                 {sendError}
               </div>
             ) : null}
 
             {/* ── STEP 1 — Google Auth ────────────────────────── */}
-            <div style={sectionCardStyle}>
-              <StepHeader num={1} label="Conectar cuenta de Google" active={!isConnected} done={isConnected} />
-              <Divider />
+            {isConnected && googleAccounts.length > 0 ? (
+              /* ── Connected: compact single-line with dropdown ── */
+              <div
+                style={{
+                  ...sectionCardStyle,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                {/* Active account avatar + dropdown trigger */}
+                {(() => {
+                  const active = googleAccounts.find((a) => a.active);
+                  const activeEmail = active?.email || connectedEmail || "—";
+                  return (
+                    <div ref={acctDropdownRef} style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        onClick={() => setAcctDropdownOpen((p) => !p)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "4px 10px",
+                          borderRadius: 8,
+                          border: "1px solid #e2e8f0",
+                          background: "#f8fafc",
+                          cursor: "pointer",
+                          transition: "all 150ms ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = "#a5b4fc";
+                          (e.currentTarget as HTMLButtonElement).style.background = "#eef2ff";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLButtonElement).style.borderColor = "#e2e8f0";
+                          (e.currentTarget as HTMLButtonElement).style.background = "#f8fafc";
+                        }}
+                      >
+                        {/* Round avatar */}
+                        <span
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: "50%",
+                            background: "var(--accent, #4f46e5)",
+                            color: "#fff",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {activeEmail.charAt(0).toUpperCase()}
+                        </span>
+                        <strong style={{ fontSize: 12, color: "#1e293b", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {activeEmail}
+                        </strong>
+                        <span style={{ fontSize: 10, color: "#94a3b8", transition: "transform 150ms", transform: acctDropdownOpen ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
+                      </button>
 
-              {/* Session info when connected */}
-              {sendStats && isConnected ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                    gap: 10,
-                    margin: "12px 0",
-                  }}
-                >
-                  {[
-                    { label: "Cuenta", value: connectedEmail || "—", icon: "👤" },
-                    { label: "Enviados hoy", value: `${sendStats.sent_today} / ${sendStats.daily_limit}`, icon: "📊" },
-                    { label: "Restantes", value: String(sendStats.remaining_today), icon: "📨" },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        background: "#f8fafc",
-                        border: "1px solid rgba(15, 23, 42, 0.06)",
-                      }}
-                    >
-                      <span style={{ fontSize: 16 }}>{item.icon}</span>
-                      <div>
-                        <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px" }}>{item.label}</div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{item.value}</div>
-                      </div>
+                      {/* Dropdown menu */}
+                      {acctDropdownOpen ? (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 4px)",
+                            left: 0,
+                            minWidth: 260,
+                            background: "#fff",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: 10,
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                            zIndex: 50,
+                            padding: "4px 0",
+                            animation: "fadeIn 100ms ease",
+                          }}
+                        >
+                          <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+                          {googleAccounts.map((acct) => (
+                            <div
+                              key={acct.email}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "8px 12px",
+                                cursor: acct.active ? "default" : "pointer",
+                                background: acct.active ? "#eef2ff" : "transparent",
+                                transition: "background 100ms ease",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!acct.active) (e.currentTarget as HTMLElement).style.background = "#f8fafc";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!acct.active) (e.currentTarget as HTMLElement).style.background = "transparent";
+                              }}
+                              onClick={() => {
+                                if (!acct.active) {
+                                  void (async () => {
+                                    try {
+                                      await selectGoogleAccount(acct.email);
+                                      await refreshSendStats();
+                                    } catch (err) {
+                                      if (err instanceof ApiError) setSendError(err.message);
+                                    }
+                                  })();
+                                }
+                                setAcctDropdownOpen(false);
+                              }}
+                            >
+                              {/* Avatar */}
+                              <span
+                                style={{
+                                  width: 24,
+                                  height: 24,
+                                  borderRadius: "50%",
+                                  background: acct.active ? "var(--accent, #4f46e5)" : "#e2e8f0",
+                                  color: acct.active ? "#fff" : "#64748b",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {acct.email.charAt(0).toUpperCase()}
+                              </span>
+                              <span style={{ flex: 1, fontSize: 12, fontWeight: acct.active ? 700 : 400, color: acct.active ? "var(--accent, #4f46e5)" : "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {acct.email}
+                              </span>
+                              {acct.active ? (
+                                <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 600 }}>● Activa</span>
+                              ) : (
+                                /* Disconnect single */
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  title={`Desconectar ${acct.email}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void (async () => {
+                                      setSendError(null);
+                                      setSendMessage(null);
+                                      try {
+                                        const out = await disconnectSingleGoogleAccount(acct.email);
+                                        setSendMessage(out.message || "Cuenta desconectada.");
+                                        await refreshSendStats();
+                                      } catch (err) {
+                                        if (err instanceof ApiError) setSendError(err.message);
+                                        else setSendError("No se pudo desconectar la cuenta.");
+                                      }
+                                      setAcctDropdownOpen(false);
+                                    })();
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); }
+                                  }}
+                                  style={{
+                                    fontSize: 11,
+                                    color: "#94a3b8",
+                                    cursor: "pointer",
+                                    padding: "2px 4px",
+                                    borderRadius: 4,
+                                    transition: "color 100ms, background 100ms",
+                                  }}
+                                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#dc2626"; (e.currentTarget as HTMLElement).style.background = "#fef2f2"; }}
+                                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "#94a3b8"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                                >
+                                  ✕
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                          {/* Divider + Add account */}
+                          <div style={{ height: 1, background: "#f1f5f9", margin: "4px 0" }} />
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "8px 12px",
+                              cursor: oauthStarting ? "not-allowed" : "pointer",
+                              opacity: oauthStarting ? 0.6 : 1,
+                              transition: "background 100ms ease",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f8fafc"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                            onClick={() => {
+                              if (!oauthStarting) {
+                                setAcctDropdownOpen(false);
+                                startGoogleLoginForSend();
+                              }
+                            }}
+                          >
+                            <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#64748b" }}>+</span>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>{oauthStarting ? "Abriendo…" : "Añadir cuenta"}</span>
+                            <GoogleIcon />
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-                  ))}
-                  {sendStats.warning ? (
-                    <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "#b45309", padding: "4px 0" }}>
-                      ⚠️ {sendStats.warning}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+                  );
+                })()}
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                {/* Stats pills */}
+                {sendStats ? (
+                  <>
+                    <span style={{ fontSize: 12, color: "#64748b", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 6, background: "#f8fafc", border: "1px solid rgba(15,23,42,0.06)" }}>
+                      📊 <strong style={{ color: "#1e293b" }}>{sendStats.sent_today}/{sendStats.daily_limit}</strong> hoy
+                    </span>
+                    <span style={{ fontSize: 12, color: "#64748b", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 6, background: "#f8fafc", border: "1px solid rgba(15,23,42,0.06)" }}>
+                      📨 <strong style={{ color: "#1e293b" }}>{sendStats.remaining_today}</strong> restantes
+                    </span>
+                    {sendStats.warning ? (
+                      <span style={{ fontSize: 12, color: "#b45309" }}>⚠️ {sendStats.warning}</span>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {/* Spacer */}
+                <span style={{ flex: 1 }} />
+
+                {/* Disconnect all */}
                 <button
+                  className="ghost"
                   type="button"
-                  onClick={() => startGoogleLoginForSend()}
-                  disabled={oauthStarting}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "9px 18px",
-                    borderRadius: 10,
-                    fontWeight: 600,
-                    fontSize: 13,
-                    border: "1px solid #dadce0",
-                    background: "#fff",
-                    color: "#3c4043",
-                    cursor: oauthStarting ? "not-allowed" : "pointer",
-                    opacity: oauthStarting ? 0.6 : 1,
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-                    transition: "box-shadow 150ms ease, background 150ms ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!oauthStarting) {
-                      (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
-                      (e.currentTarget as HTMLButtonElement).style.background = "#f8f9fa";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
-                    (e.currentTarget as HTMLButtonElement).style.background = "#fff";
+                  style={{ fontSize: 12, padding: "5px 10px", borderRadius: 6, color: "#dc2626" }}
+                  onClick={() => {
+                    void (async () => {
+                      setSendError(null);
+                      setSendMessage(null);
+                      try {
+                        const out = await disconnectGoogleOAuth();
+                        setSendMessage(out.message || "Google OAuth desconectado.");
+                        await refreshSendStats();
+                      } catch (err) {
+                        if (err instanceof ApiError) setSendError(err.message);
+                        else setSendError("No se pudo desconectar Google OAuth.");
+                      }
+                    })();
                   }}
                 >
-                  <GoogleIcon />
-                  {oauthStarting ? "Abriendo Google…" : isConnected ? "Cambiar cuenta" : "Iniciar sesión con Google"}
+                  Desconectar
                 </button>
-
-                {isConnected ? (
+              </div>
+            ) : (
+              /* ── Not connected: full login card ───────────── */
+              <div style={sectionCardStyle}>
+                <StepHeader num={1} label="Conectar cuenta de Google" active done={false} />
+                <Divider />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                   <button
-                    className="ghost"
                     type="button"
-                    style={{ fontSize: 13, padding: "9px 14px", borderRadius: 10 }}
-                    onClick={() => {
-                      void (async () => {
-                        setSendError(null);
-                        setSendMessage(null);
-                        try {
-                          const out = await disconnectGoogleOAuth();
-                          setSendMessage(out.message || "Google OAuth desconectado.");
-                          await refreshSendStats();
-                        } catch (err) {
-                          if (err instanceof ApiError) setSendError(err.message);
-                          else setSendError("No se pudo desconectar Google OAuth.");
-                        }
-                      })();
+                    onClick={() => startGoogleLoginForSend()}
+                    disabled={oauthStarting}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 14px",
+                      borderRadius: 8,
+                      fontWeight: 600,
+                      fontSize: 13,
+                      border: "1px solid #dadce0",
+                      background: "#fff",
+                      color: "#3c4043",
+                      cursor: oauthStarting ? "not-allowed" : "pointer",
+                      opacity: oauthStarting ? 0.6 : 1,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                      transition: "box-shadow 150ms ease, background 150ms ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!oauthStarting) {
+                        (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 2px 6px rgba(0,0,0,0.15)";
+                        (e.currentTarget as HTMLButtonElement).style.background = "#f8f9fa";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
+                      (e.currentTarget as HTMLButtonElement).style.background = "#fff";
                     }}
                   >
-                    Desconectar
+                    <GoogleIcon />
+                    {oauthStarting ? "Abriendo Google…" : "Iniciar sesión con Google"}
                   </button>
-                ) : null}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* ── STEP 2 — Load contacts ──────────────────────── */}
             <div style={{ ...sectionCardStyle, opacity: isConnected ? 1 : 0.55, transition: "opacity 200ms ease" }}>
               <StepHeader num={2} label="Cargar contactos del tracker" active={isConnected && contacts.length === 0} done={contacts.length > 0} />
               <Divider />
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
                 <button
                   className="ghost"
                   type="button"
                   onClick={() => void loadContacts()}
                   disabled={loadingContacts || !isConnected}
-                  style={{ fontSize: 13, padding: "9px 16px", borderRadius: 10 }}
+                  style={{ fontSize: 13, padding: "7px 14px", borderRadius: 8 }}
                 >
                   {loadingContacts ? "Cargando…" : "Cargar lista de contactos"}
                 </button>
                 {contacts.length > 0 ? (
-                  <span style={{ fontSize: 12, color: "#64748b" }}>
+                  <span style={{ fontSize: 13, color: "#64748b" }}>
                     {contacts.length} contacto{contacts.length !== 1 ? "s" : ""} · {selectedContacts.length} seleccionado{selectedContacts.length !== 1 ? "s" : ""}
                   </span>
                 ) : (
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                  <span style={{ fontSize: 13, color: "#94a3b8" }}>
                     Se extraerán del tracker activo
                   </span>
                 )}
@@ -558,9 +773,9 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                 <div
                   className="table-scroll"
                   style={{
-                    marginTop: 12,
+                    marginTop: 8,
                     border: "1px solid rgba(15, 23, 42, 0.06)",
-                    borderRadius: 10,
+                    borderRadius: 8,
                     overflow: "hidden",
                   }}
                 >
@@ -598,7 +813,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                                 setCustomFieldsDraft((prev) => ({ ...prev, [contact.email]: event.target.value }))
                               }
                               placeholder="Posicion=Frontend; Ciudad=Madrid"
-                              style={{ fontSize: 12 }}
+                              style={{ fontSize: 13 }}
                             />
                           </td>
                         </tr>
@@ -614,18 +829,28 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
               <StepHeader num={3} label="Plantilla y vista previa" active={contacts.length > 0 && !preview} done={!!preview} />
               <Divider />
 
-              <div style={{ ...rowGridStyle, marginTop: 10 }}>
+              <div style={{ ...rowGridStyle, marginTop: 6 }}>
                 <div>
-                  <label
-                    htmlFor={`${block.id}-send-subject`}
-                    style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.4px" }}
-                  >
-                    Asunto base
-                  </label>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                    <label
+                      htmlFor={`${block.id}-send-subject`}
+                      style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.4px" }}
+                    >
+                      Asunto base
+                    </label>
+                    {mergeTags.length > 0 && (
+                      <MergeTagPicker
+                        tags={mergeTags}
+                        onInsert={insertTagInSubject}
+                        compact
+                      />
+                    )}
+                  </div>
                   <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
-                    Usa {"{{Nombre}}"}, {"{{Empresa}}"}, etc. como variables
+                    Haz clic en <strong style={{ color: "#4338ca" }}>{"{\u27e9} Variables"}</strong> para insertar datos del contacto
                   </div>
                   <input
+                    ref={subjectInputRef}
                     id={`${block.id}-send-subject`}
                     className="block-edit-title"
                     value={block.props.sendSubjectTemplate || ""}
@@ -642,22 +867,23 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   >
                     Cuerpo base
                   </label>
-                  <textarea
-                    id={`${block.id}-send-body`}
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>
+                    Editor de texto enriquecido — usa <strong style={{ color: "#4338ca" }}>{"{⟩} Variables"}</strong> en la barra para insertar datos del contacto
+                  </div>
+                  <RichTextEditor
                     value={block.props.sendBodyTemplate || ""}
-                    onChange={(event) => patchBlockProps({ sendBodyTemplate: event.target.value })}
-                    rows={5}
-                    style={{
-                      width: "100%",
-                      fontSize: 13,
-                      borderRadius: 10,
-                      border: "1px solid rgba(15, 23, 42, 0.1)",
-                      padding: "10px 12px",
-                      marginTop: 4,
-                      fontFamily: "inherit",
-                      resize: "vertical",
-                    }}
+                    onChange={(html) => patchBlockProps({ sendBodyTemplate: html })}
                     placeholder="Hola {{Nombre}}, ..."
+                    minHeight={120}
+                    toolbarExtra={mergeTags.length > 0 ? (editor) => (
+                      <MergeTagPicker
+                        tags={mergeTags}
+                        onInsert={(tag) => {
+                          editor.chain().focus().insertContent(`{{${tag.key}}}`).run();
+                        }}
+                        buttonLabel="Variables"
+                      />
+                    ) : undefined}
                   />
                 </div>
               </div>
@@ -665,9 +891,9 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
               {preview ? (
                 <div
                   style={{
-                    marginTop: 14,
-                    padding: "14px 16px",
-                    borderRadius: 10,
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    borderRadius: 8,
                     background: "#fffbeb",
                     border: "1px solid #fde68a",
                   }}
@@ -682,14 +908,12 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                     className="page-builder-text"
                     style={{
                       marginTop: 6,
-                      whiteSpace: "pre-wrap",
                       fontSize: 13,
                       color: "#44403c",
-                      lineHeight: 1.6,
+                      lineHeight: 1.5,
                     }}
-                  >
-                    {preview.body}
-                  </div>
+                    dangerouslySetInnerHTML={{ __html: preview.body }}
+                  />
                 </div>
               ) : null}
             </div>
@@ -698,7 +922,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
             <div style={{ ...sectionCardStyle, opacity: isConnected ? 1 : 0.55, transition: "opacity 200ms ease" }}>
               <StepHeader num={4} label="Enviar emails" active={selectedContacts.length > 0 && !sendResult} done={!!sendResult} />
               <Divider />
-              <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
                 <button
                   className="primary"
                   type="button"
@@ -706,11 +930,11 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   disabled={sending || selectedContacts.length === 0 || !isConnected}
                   style={{
                     fontSize: 13,
-                    padding: "10px 22px",
-                    borderRadius: 10,
+                    padding: "8px 18px",
+                    borderRadius: 8,
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 8,
+                    gap: 6,
                   }}
                 >
                   {sending ? (
@@ -725,39 +949,36 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   )}
                 </button>
                 {selectedContacts.length === 0 && contacts.length > 0 ? (
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                  <span style={{ fontSize: 13, color: "#94a3b8" }}>
                     Selecciona al menos un contacto arriba
                   </span>
                 ) : null}
               </div>
 
               {sendResult ? (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 8 }}>
                   <div
                     style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                      display: "flex",
                       gap: 8,
-                      marginBottom: 10,
+                      flexWrap: "wrap",
+                      marginBottom: 8,
                     }}
                   >
-                    <div style={{ padding: "8px 12px", borderRadius: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", textAlign: "center" }}>
-                      <div style={{ fontSize: 20, fontWeight: 700, color: "#059669" }}>{sendResult.sent}</div>
-                      <div style={{ fontSize: 11, color: "#065f46", fontWeight: 600 }}>Enviados</div>
-                    </div>
-                    <div style={{ padding: "8px 12px", borderRadius: 10, background: sendResult.errors > 0 ? "#fff5f5" : "#f8fafc", border: `1px solid ${sendResult.errors > 0 ? "#fed7d7" : "rgba(15,23,42,0.06)"}`, textAlign: "center" }}>
-                      <div style={{ fontSize: 20, fontWeight: 700, color: sendResult.errors > 0 ? "#dc2626" : "#94a3b8" }}>{sendResult.errors}</div>
-                      <div style={{ fontSize: 11, color: sendResult.errors > 0 ? "#9b2c2c" : "#94a3b8", fontWeight: 600 }}>Errores</div>
-                    </div>
-                    <div style={{ padding: "8px 12px", borderRadius: 10, background: "#f8fafc", border: "1px solid rgba(15,23,42,0.06)", textAlign: "center" }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", lineHeight: 1.8 }}>Lote</div>
-                      <div style={{ fontSize: 11, color: "#94a3b8", wordBreak: "break-all" }}>{sendResult.batch_id}</div>
-                    </div>
+                    <span style={{ padding: "5px 12px", borderRadius: 8, background: "#ecfdf5", border: "1px solid #a7f3d0", fontSize: 13, fontWeight: 700, color: "#059669" }}>
+                      {sendResult.sent} enviados
+                    </span>
+                    <span style={{ padding: "5px 12px", borderRadius: 8, background: sendResult.errors > 0 ? "#fff5f5" : "#f8fafc", border: `1px solid ${sendResult.errors > 0 ? "#fed7d7" : "rgba(15,23,42,0.06)"}`, fontSize: 13, fontWeight: 700, color: sendResult.errors > 0 ? "#dc2626" : "#94a3b8" }}>
+                      {sendResult.errors} errores
+                    </span>
+                    <span style={{ padding: "5px 12px", borderRadius: 8, background: "#f8fafc", border: "1px solid rgba(15,23,42,0.06)", fontSize: 12, color: "#94a3b8" }}>
+                      Lote: {sendResult.batch_id}
+                    </span>
                   </div>
                   {sendResult.warning ? (
-                    <div style={{ fontSize: 12, color: "#b45309", marginBottom: 6 }}>⚠️ {sendResult.warning}</div>
+                    <div style={{ fontSize: 13, color: "#b45309", marginBottom: 6 }}>⚠️ {sendResult.warning}</div>
                   ) : null}
-                  <div className="table-scroll" style={{ border: "1px solid rgba(15,23,42,0.06)", borderRadius: 10, overflow: "hidden" }}>
+                  <div className="table-scroll" style={{ border: "1px solid rgba(15,23,42,0.06)", borderRadius: 8, overflow: "hidden" }}>
                     <table className="table" style={{ fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: "#f8fafc" }}>
@@ -773,7 +994,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                             <td>
                               <StatusPill ok={row.status === "sent"} label={row.status} />
                             </td>
-                            <td style={{ fontSize: 12, color: "#64748b" }}>{row.message}</td>
+                            <td style={{ fontSize: 13, color: "#64748b" }}>{row.message}</td>
                           </tr>
                         ))}
                       </tbody>
