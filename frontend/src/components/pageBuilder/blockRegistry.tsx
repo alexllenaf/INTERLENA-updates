@@ -5,6 +5,7 @@ import {
   type PageBlockType
 } from "./types";
 import { CALENDAR_BLOCK_DEFINITION } from "./blockRegistry/calendarBlock";
+import { CARD_GALLERY_BLOCK_DEFINITION } from "./blockRegistry/cardGalleryBlock.tsx";
 import { CHART_BLOCK_DEFINITION } from "./blockRegistry/chartBlock";
 import { EMAIL_BLOCK_DEFINITION } from "./blockRegistry/emailBlock";
 import { EDITABLE_TABLE_BLOCK_DEFINITION } from "./blockRegistry/editableTableBlock";
@@ -28,6 +29,7 @@ export type {
 export const PAGE_BLOCK_REGISTRY: BlockRegistry = {
   text: TEXT_BLOCK_DEFINITION,
   titleDescription: TITLE_DESCRIPTION_BLOCK_DEFINITION,
+  cardGallery: CARD_GALLERY_BLOCK_DEFINITION,
   editableTable: EDITABLE_TABLE_BLOCK_DEFINITION,
   todoTable: TODO_TABLE_BLOCK_DEFINITION,
   informationalTable: INFORMATIONAL_TABLE_BLOCK_DEFINITION,

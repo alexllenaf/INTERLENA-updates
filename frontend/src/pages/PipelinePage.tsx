@@ -17,6 +17,7 @@ import {
   TRACKER_COLUMN_LABELS,
   TRACKER_COLUMN_KINDS
 } from "../shared/columnSchema";
+import { useUndo } from "../undoContext";
 import {
   isRecord,
   normalizeString,
@@ -254,6 +255,7 @@ const buildPipelineGroupingConfig = (
 const PipelinePage: React.FC = () => {
   const { t } = useI18n();
   const { applications, settings, updateApplication, saveSettings } = useAppData();
+  const { executeCommand } = useUndo();
   const [columnDragOver, setColumnDragOver] = useState<string | null>(null);
   const [draggedApp, setDraggedApp] = useState<{ id: number; columnValue: string } | null>(null);
   const [dragOverAppId, setDragOverAppId] = useState<number | null>(null);
@@ -293,11 +295,20 @@ const PipelinePage: React.FC = () => {
           payload.stage = stage;
         }
         if (Object.keys(payload).length === 0) return null;
-        return updateApplication(app.id, payload);
+        return { id: app.id, payload, previous: { pipeline_order: app.pipeline_order, stage: app.stage } };
       })
-      .filter(Boolean) as Promise<void>[];
+      .filter(Boolean) as { id: number; payload: Partial<ApplicationInput>; previous: Partial<Application> }[];
     if (updates.length === 0) return;
-    await Promise.all(updates);
+    
+    await executeCommand({
+      description: `Reordenar ${updates.length} aplicación${updates.length > 1 ? "es" : ""} en ${stage}`,
+      async do() {
+        await Promise.all(updates.map(({ id, payload }) => updateApplication(id, payload)));
+      },
+      async undo() {
+        await Promise.all(updates.map(({ id, previous }) => updateApplication(id, previous)));
+      }
+    });
   };
 
   const resolvePipelineSlot: BlockSlotResolver = (slotId, block) => {
@@ -343,9 +354,18 @@ const PipelinePage: React.FC = () => {
         resetColumnDrag();
         return;
       }
+      const previousStages = [...reorderableStages];
       const nextStages = reorderList(reorderableStages, fromColumn, targetColumn);
       if (nextStages !== reorderableStages) {
-        await saveSettings({ stages: nextStages });
+        await executeCommand({
+          description: `Reordenar columna ${fromColumn}`,
+          async do() {
+            await saveSettings({ stages: nextStages });
+          },
+          async undo() {
+            await saveSettings({ stages: previousStages });
+          }
+        });
       }
       resetColumnDrag();
     };
@@ -397,11 +417,19 @@ const PipelinePage: React.FC = () => {
     };
 
     const moveAppToColumn = async (app: Application, targetColumn: string) => {
-      if (grouping.key === "stage") {
-        await updateApplication(app.id, { stage: targetColumn });
-        return;
-      }
-      await updateApplication(app.id, buildGroupUpdatePayload(app, grouping.key, targetColumn));
+      const previousValue = grouping.key === "stage" ? app.stage : readGroupValue(app, grouping.key);
+      const payload = grouping.key === "stage" ? { stage: targetColumn } : buildGroupUpdatePayload(app, grouping.key, targetColumn);
+      
+      await executeCommand({
+        description: `Mover ${app.company_name || "aplicación"} a ${targetColumn}`,
+        async do() {
+          await updateApplication(app.id, payload);
+        },
+        async undo() {
+          const undoPayload = grouping.key === "stage" ? { stage: previousValue } : buildGroupUpdatePayload(app, grouping.key, previousValue);
+          await updateApplication(app.id, undoPayload);
+        }
+      });
     };
 
     return (

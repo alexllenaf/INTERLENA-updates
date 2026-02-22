@@ -23,6 +23,7 @@ export const TODO_SOURCE_TABLE_LINK_KEY = "todo.sourceTable";
 export const KPI_SOURCE_TABLE_LINK_KEY = "kpi.sourceTable";
 export const CHART_SOURCE_TABLE_LINK_KEY = "chart.sourceTable";
 export const PIPELINE_SOURCE_TABLE_LINK_KEY = "pipeline.sourceTable";
+export const CARD_GALLERY_SOURCE_TABLE_LINK_KEY = "cardGallery.sourceTable";
 
 export const normalizeBlockLinks = (raw: unknown): BlockLinksMap => {
   if (!isRecord(raw)) return {};

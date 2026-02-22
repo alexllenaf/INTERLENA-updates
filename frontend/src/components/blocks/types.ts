@@ -58,6 +58,7 @@ export type EditableTableToolbarConfig = {
     items: EditableTableToolbarColumn[];
     onToggle: (key: string) => void;
     onShowAll?: () => void;
+    label?: string;
   };
 };
 

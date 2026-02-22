@@ -244,7 +244,7 @@ export const EditableTableToolbar: React.FC<{ toolbar: EditableTableToolbarConfi
                   setMenuVisible(false);
                   setShowColumns(true);
                 }}
-                aria-label={t("Columns")}
+                aria-label={columns.label || t("Columns")}
               >
                 <span className="select-pill" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <svg
@@ -254,7 +254,7 @@ export const EditableTableToolbar: React.FC<{ toolbar: EditableTableToolbarConfi
                   >
                     <path d="M10 4.5c-4.2 0-7.7 3-9 5.5 1.3 2.5 4.8 5.5 9 5.5s7.7-3 9-5.5c-1.3-2.5-4.8-5.5-9-5.5Zm0 9c-2 0-3.6-1.6-3.6-3.6S8 6.3 10 6.3s3.6 1.6 3.6 3.6S12 13.5 10 13.5Zm0-5.7c-1.2 0-2.1 1-2.1 2.1S8.8 12 10 12s2.1-1 2.1-2.1S11.2 7.8 10 7.8Z" />
                   </svg>
-                  {t("Columns")}
+                  {columns.label || t("Columns")}
                 </span>
                 <span className="select-caret">▾</span>
               </button>
@@ -280,7 +280,7 @@ export const EditableTableToolbar: React.FC<{ toolbar: EditableTableToolbarConfi
             }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="select-options" role="menu" aria-label={t("Columns")}>
+            <div className="select-options" role="menu" aria-label={columns.label || t("Columns")}>
               {columns.items.map((item) => (
                 <button
                   key={item.key}

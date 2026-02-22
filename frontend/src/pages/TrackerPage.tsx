@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
+import { useUndo } from "../undoContext";
 import { EditableTableToolbar } from "../components/blocks/BlockRenderer";
 import {
   PageBuilderPage,
@@ -80,8 +81,14 @@ const TrackerPage: React.FC = () => {
     saveSettings,
     refresh
   } = useAppData();
+  const { executeCommand, undoManager } = useUndo();
   const updateApplicationRemote = updateApplication;
   const deleteApplicationRemote = deleteApplication;
+  const applicationsRef = useRef(applications);
+  
+  useEffect(() => {
+    applicationsRef.current = applications;
+  }, [applications]);
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
   const [outcomeFilter, setOutcomeFilter] = useState("all");
@@ -106,6 +113,8 @@ const TrackerPage: React.FC = () => {
 	  const columnMenuAnchorRef = useRef<HTMLElement | null>(null);
 	  const columnMenuCloseTimerRef = useRef<number | null>(null);
 	  const [detailApp, setDetailApp] = useState<Application | null>(null);
+	  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+	  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const detailIdRef = useRef<number | null>(null);
   const [documentModal, setDocumentModal] = useState<{ appId: number; file: DocumentFile } | null>(
     null
@@ -128,6 +137,11 @@ const TrackerPage: React.FC = () => {
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   // Keep drag source in a ref so drop handlers work reliably even if React doesn't re-render during drag.
   const draggedColRef = useRef<string | null>(null);
+  // Row drag-and-drop state
+  const [draggedRowId, setDraggedRowId] = useState<number | null>(null);
+  const [dragOverRowId, setDragOverRowId] = useState<number | null>(null);
+  const draggedRowRef = useRef<number | null>(null);
+  const [manualRowOrder, setManualRowOrder] = useState<number[] | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const widthsRef = useRef<Record<string, number>>({});
   const [columnOrderDraft, setColumnOrderDraft] = useState<string[]>([]);
@@ -140,6 +154,11 @@ const TrackerPage: React.FC = () => {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
+
+  // Clear the manual row order when the user applies a sort or group
+  useEffect(() => {
+    setManualRowOrder(null);
+  }, [sortConfig, groupBy]);
 
   const contactToString = (contact: Contact) =>
     [contact.name, contact.information, contact.email, contact.phone]
@@ -328,6 +347,17 @@ const TrackerPage: React.FC = () => {
     if (!selectAllRef.current) return;
     selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected;
   }, [someVisibleSelected, allVisibleSelected]);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [exportMenuOpen]);
 
   useEffect(() => {
     if (!settings) return;
@@ -573,30 +603,68 @@ const TrackerPage: React.FC = () => {
     if (!trimmed) return null;
     const existing = findExistingLabel(settings.stages, trimmed);
     if (existing) return existing;
+    const previousStages = settings.stages;
+    const previousColors = settings.stage_colors;
     const nextStages = [...settings.stages, trimmed];
     const nextColors = { ...settings.stage_colors };
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ stages: nextStages, stage_colors: nextColors });
+    await executeCommand({
+      description: `Agregar stage: ${trimmed}`,
+      async do() {
+        await saveSettings({ stages: nextStages, stage_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ stages: previousStages, stage_colors: previousColors });
+      }
+    });
     return trimmed;
   };
 
   const updateStageColor = async (label: string, color: string) => {
+    const previousColors = settings.stage_colors;
     const nextColors = { ...settings.stage_colors, [label]: color };
-    await saveSettings({ stage_colors: nextColors });
+    await executeCommand({
+      description: `Cambiar color de stage: ${label}`,
+      async do() {
+        await saveSettings({ stage_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ stage_colors: previousColors });
+      }
+    });
   };
 
   const deleteStageOption = async (label: string) => {
+    const previousStages = settings.stages;
+    const previousColors = settings.stage_colors;
     const nextStages = settings.stages.filter((stage) => stage !== label);
     const { [label]: _, ...restColors } = settings.stage_colors;
-    await saveSettings({ stages: nextStages, stage_colors: restColors });
+    await executeCommand({
+      description: `Eliminar stage: ${label}`,
+      async do() {
+        await saveSettings({ stages: nextStages, stage_colors: restColors });
+      },
+      async undo() {
+        await saveSettings({ stages: previousStages, stage_colors: previousColors });
+      }
+    });
   };
 
   const reorderStageOption = async (fromLabel: string, toLabel: string) => {
+    const previousStages = settings.stages;
     const nextStages = reorderList(settings.stages, fromLabel, toLabel);
     if (nextStages === settings.stages) return;
-    await saveSettings({ stages: nextStages });
+    await executeCommand({
+      description: `Reordenar stage: ${fromLabel}`,
+      async do() {
+        await saveSettings({ stages: nextStages });
+      },
+      async undo() {
+        await saveSettings({ stages: previousStages });
+      }
+    });
   };
 
   const addOutcomeOption = async (label: string) => {
@@ -604,30 +672,68 @@ const TrackerPage: React.FC = () => {
     if (!trimmed) return null;
     const existing = findExistingLabel(settings.outcomes, trimmed);
     if (existing) return existing;
+    const previousOutcomes = settings.outcomes;
+    const previousColors = settings.outcome_colors;
     const nextOutcomes = [...settings.outcomes, trimmed];
     const nextColors = { ...settings.outcome_colors };
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ outcomes: nextOutcomes, outcome_colors: nextColors });
+    await executeCommand({
+      description: `Agregar outcome: ${trimmed}`,
+      async do() {
+        await saveSettings({ outcomes: nextOutcomes, outcome_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ outcomes: previousOutcomes, outcome_colors: previousColors });
+      }
+    });
     return trimmed;
   };
 
   const updateOutcomeColor = async (label: string, color: string) => {
+    const previousColors = settings.outcome_colors;
     const nextColors = { ...settings.outcome_colors, [label]: color };
-    await saveSettings({ outcome_colors: nextColors });
+    await executeCommand({
+      description: `Cambiar color de outcome: ${label}`,
+      async do() {
+        await saveSettings({ outcome_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ outcome_colors: previousColors });
+      }
+    });
   };
 
   const deleteOutcomeOption = async (label: string) => {
+    const previousOutcomes = settings.outcomes;
+    const previousColors = settings.outcome_colors;
     const nextOutcomes = settings.outcomes.filter((outcome) => outcome !== label);
     const { [label]: _, ...restColors } = settings.outcome_colors;
-    await saveSettings({ outcomes: nextOutcomes, outcome_colors: restColors });
+    await executeCommand({
+      description: `Eliminar outcome: ${label}`,
+      async do() {
+        await saveSettings({ outcomes: nextOutcomes, outcome_colors: restColors });
+      },
+      async undo() {
+        await saveSettings({ outcomes: previousOutcomes, outcome_colors: previousColors });
+      }
+    });
   };
 
   const reorderOutcomeOption = async (fromLabel: string, toLabel: string) => {
+    const previousOutcomes = settings.outcomes;
     const nextOutcomes = reorderList(settings.outcomes, fromLabel, toLabel);
     if (nextOutcomes === settings.outcomes) return;
-    await saveSettings({ outcomes: nextOutcomes });
+    await executeCommand({
+      description: `Reordenar outcome: ${fromLabel}`,
+      async do() {
+        await saveSettings({ outcomes: nextOutcomes });
+      },
+      async undo() {
+        await saveSettings({ outcomes: previousOutcomes });
+      }
+    });
   };
 
   const addJobTypeOption = async (label: string) => {
@@ -635,30 +741,68 @@ const TrackerPage: React.FC = () => {
     if (!trimmed) return null;
     const existing = findExistingLabel(settings.job_types, trimmed);
     if (existing) return existing;
+    const previousTypes = settings.job_types;
+    const previousColors = settings.job_type_colors || {};
     const nextTypes = [...settings.job_types, trimmed];
-    const nextColors = { ...(settings.job_type_colors || {}) };
+    const nextColors = { ...previousColors };
     if (!nextColors[trimmed]) {
       nextColors[trimmed] = DEFAULT_OPTION_COLOR;
     }
-    await saveSettings({ job_types: nextTypes, job_type_colors: nextColors });
+    await executeCommand({
+      description: `Agregar job type: ${trimmed}`,
+      async do() {
+        await saveSettings({ job_types: nextTypes, job_type_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ job_types: previousTypes, job_type_colors: previousColors });
+      }
+    });
     return trimmed;
   };
 
   const updateJobTypeColor = async (label: string, color: string) => {
-    const nextColors = { ...(settings.job_type_colors || {}), [label]: color };
-    await saveSettings({ job_type_colors: nextColors });
+    const previousColors = settings.job_type_colors || {};
+    const nextColors = { ...previousColors, [label]: color };
+    await executeCommand({
+      description: `Cambiar color de job type: ${label}`,
+      async do() {
+        await saveSettings({ job_type_colors: nextColors });
+      },
+      async undo() {
+        await saveSettings({ job_type_colors: previousColors });
+      }
+    });
   };
 
   const deleteJobTypeOption = async (label: string) => {
+    const previousTypes = settings.job_types;
+    const previousColors = settings.job_type_colors || {};
     const nextTypes = settings.job_types.filter((job) => job !== label);
-    const { [label]: _, ...restColors } = settings.job_type_colors || {};
-    await saveSettings({ job_types: nextTypes, job_type_colors: restColors });
+    const { [label]: _, ...restColors } = previousColors;
+    await executeCommand({
+      description: `Eliminar job type: ${label}`,
+      async do() {
+        await saveSettings({ job_types: nextTypes, job_type_colors: restColors });
+      },
+      async undo() {
+        await saveSettings({ job_types: previousTypes, job_type_colors: previousColors });
+      }
+    });
   };
 
   const reorderJobTypeOption = async (fromLabel: string, toLabel: string) => {
+    const previousTypes = settings.job_types;
     const nextTypes = reorderList(settings.job_types, fromLabel, toLabel);
     if (nextTypes === settings.job_types) return;
-    await saveSettings({ job_types: nextTypes });
+    await executeCommand({
+      description: `Reordenar job type: ${fromLabel}`,
+      async do() {
+        await saveSettings({ job_types: nextTypes });
+      },
+      async undo() {
+        await saveSettings({ job_types: previousTypes });
+      }
+    });
   };
 
   const addCustomOption = async (propKey: string, label: string) => {
@@ -1095,18 +1239,48 @@ const TrackerPage: React.FC = () => {
   const handleBulkStage = async (value: string) => {
     if (!value) return;
     const targets = [...selectedIds];
-    await Promise.all(
-      targets.map((id) => updateApplication(id, { stage: value }))
-    );
+    const previousValues = targets.map((id) => {
+      const app = applicationsRef.current.find((a) => a.id === id);
+      return { id, stage: app?.stage || "" };
+    });
+    
+    await executeCommand({
+      description: `Cambiar stage de ${targets.length} aplicación${targets.length > 1 ? "es" : ""}`,
+      async do() {
+        await Promise.all(
+          targets.map((id) => updateApplication(id, { stage: value }))
+        );
+      },
+      async undo() {
+        await Promise.all(
+          previousValues.map(({ id, stage }) => updateApplication(id, { stage }))
+        );
+      }
+    });
     setBulkStage("");
   };
 
   const handleBulkOutcome = async (value: string) => {
     if (!value) return;
     const targets = [...selectedIds];
-    await Promise.all(
-      targets.map((id) => updateApplication(id, { outcome: value }))
-    );
+    const previousValues = targets.map((id) => {
+      const app = applicationsRef.current.find((a) => a.id === id);
+      return { id, outcome: app?.outcome || "" };
+    });
+    
+    await executeCommand({
+      description: `Cambiar outcome de ${targets.length} aplicación${targets.length > 1 ? "es" : ""}`,
+      async do() {
+        await Promise.all(
+          targets.map((id) => updateApplication(id, { outcome: value }))
+        );
+      },
+      async undo() {
+        await Promise.all(
+          previousValues.map(({ id, outcome }) => updateApplication(id, { outcome }))
+        );
+      }
+    });
     setBulkOutcome("");
   };
 
@@ -1114,10 +1288,21 @@ const TrackerPage: React.FC = () => {
     const targets = [...selectedIds];
     if (targets.length === 0) return;
     const confirmed = window.confirm(
-      `Delete ${targets.length} selected row${targets.length === 1 ? "" : "s"}? This action cannot be undone.`
+      `Delete ${targets.length} selected row${targets.length === 1 ? "" : "s"}?`
     );
     if (!confirmed) return;
-    await Promise.all(targets.map((id) => deleteApplication(id)));
+    
+    const deletedApps = targets.map((id) => applicationsRef.current.find((a) => a.id === id)).filter(Boolean) as Application[];
+    
+    await executeCommand({
+      description: `Eliminar ${targets.length} aplicación${targets.length > 1 ? "es" : ""}`,
+      async do() {
+        await Promise.all(targets.map((id) => deleteApplication(id)));
+      },
+      async undo() {
+        await Promise.all(deletedApps.map((app) => createApplication(app)));
+      }
+    });
     setSelectedIds(new Set());
   };
 
@@ -1146,21 +1331,44 @@ const TrackerPage: React.FC = () => {
   };
 
   const handleCreate = async (payload: any, files: File[] = []) => {
-    const created = await createApplication(payload);
-    if (created && files.length > 0) {
-      await uploadDocuments(created.id, files);
-      await refresh();
-    }
+    let createdApp: Application | null = null;
+    
+    await executeCommand({
+      description: `Crear aplicación: ${payload.company_name || "Nueva"}`,
+      async do() {
+        createdApp = await createApplication(payload);
+        if (createdApp && files.length > 0) {
+          await uploadDocuments(createdApp.id, files);
+          await refresh();
+        }
+      },
+      async undo() {
+        if (createdApp) {
+          await deleteApplication(createdApp.id);
+        }
+      }
+    });
     setShowForm(false);
   };
 
   const handleUpdate = async (payload: any, files: File[] = []) => {
     if (!editing) return;
-    await updateApplication(editing.id, payload);
-    if (files.length > 0) {
-      await uploadDocuments(editing.id, files);
-      await refresh();
-    }
+    const appId = editing.id;
+    const previousApp = { ...editing };
+    
+    await executeCommand({
+      description: `Actualizar aplicación: ${editing.company_name || "Sin nombre"}`,
+      async do() {
+        await updateApplication(appId, payload);
+        if (files.length > 0) {
+          await uploadDocuments(appId, files);
+          await refresh();
+        }
+      },
+      async undo() {
+        await updateApplication(appId, previousApp);
+      }
+    });
     setEditing(null);
   };
 
@@ -1887,8 +2095,21 @@ const TrackerPage: React.FC = () => {
   }, [sorted, groupBy]);
 
   const rowsForDisplay = useMemo(() => {
-    if (!groupBy) return sorted;
-    const next = [...sorted];
+    // Apply manual row order when no sort or group is active
+    const base = (() => {
+      if (manualRowOrder && !sortConfig && !groupBy) {
+        const byId = new Map(sorted.map((a) => [a.id, a]));
+        const ordered = manualRowOrder
+          .map((id) => byId.get(id))
+          .filter((a): a is Application => !!a);
+        const inOrder = new Set(manualRowOrder);
+        sorted.forEach((a) => { if (!inOrder.has(a.id)) ordered.push(a); });
+        return ordered;
+      }
+      return sorted;
+    })();
+    if (!groupBy) return base;
+    const next = [...base];
     next.sort((a, b) => {
       const aKey = cellToString(a, groupBy).trim() || "(Vacio)";
       const bKey = cellToString(b, groupBy).trim() || "(Vacio)";
@@ -1898,7 +2119,7 @@ const TrackerPage: React.FC = () => {
       return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
     });
     return next;
-  }, [sorted, groupBy]);
+  }, [sorted, groupBy, manualRowOrder, sortConfig]);
 
   const groupCounts = useMemo(() => {
     if (!groupBy || !groupEntries) return null;
@@ -2011,18 +2232,69 @@ const TrackerPage: React.FC = () => {
 
   const renderTrackerTableContent = (block: PageBlockConfig) => {
     const isPrimaryTable = block.id === TRACKER_PRIMARY_TABLE_ID;
+    
     const updateApplication = async (id: number, payload: Partial<Application>) => {
-      await updateApplicationRemote(id, payload);
+      const previousApp = applicationsRef.current.find((a) => a.id === id);
+      if (!previousApp) {
+        await updateApplicationRemote(id, payload);
+        return;
+      }
+      
+      const previousValues: any = {};
+      Object.keys(payload).forEach((key) => {
+        previousValues[key] = (previousApp as any)[key];
+      });
+      
+      await executeCommand({
+        description: `Editar ${previousApp.company_name || "aplicación"}`,
+        async do() {
+          await updateApplicationRemote(id, payload);
+        },
+        async undo() {
+          await updateApplicationRemote(id, previousValues);
+        }
+      });
     };
+    
     const deleteApplication = async (id: number) => {
-      await deleteApplicationRemote(id);
+      const appToDelete = applicationsRef.current.find((a) => a.id === id);
+      if (!appToDelete) {
+        await deleteApplicationRemote(id);
+        return;
+      }
+      
+      await executeCommand({
+        description: `Eliminar ${appToDelete.company_name || "aplicación"}`,
+        async do() {
+          await deleteApplicationRemote(id);
+        },
+        async undo() {
+          await createApplication(appToDelete);
+        }
+      });
     };
+    
+    const quickAddApplication = async () => {
+      let createdApp: Application | null = null;
+      await executeCommand({
+        description: "Crear aplicación rápida",
+        async do() {
+          createdApp = await createApplication({ company_name: "", position: "", job_type: "", stage: "", outcome: "" });
+        },
+        async undo() {
+          if (createdApp) {
+            await deleteApplicationRemote(createdApp.id);
+          }
+        }
+      });
+    };
+    
     const requestDeleteApplication = async (id: number) => {
-      const confirmed = window.confirm("Delete this row? This action cannot be undone.");
+      const confirmed = window.confirm("Delete this row?");
       if (!confirmed) return;
       await deleteApplication(id);
     };
-    const sortedForBlock: Application[] = sorted;
+    const sortedForBlock: Application[] = rowsForDisplay;
     const visibleRowsForBlock: Application[] = visibleRows;
     const visibleIdsForBlock = sortedForBlock.map((app) => app.id);
     const allVisibleSelected =
@@ -2097,6 +2369,7 @@ const TrackerPage: React.FC = () => {
           <table className="table">
             <thead>
               <tr>
+                {isPrimaryTable && <th className="row-handle-col" />}
                 <th
                   className="selection-col sticky-col"
                   style={{ left: 0, width: SELECTION_COLUMN_WIDTH, minWidth: SELECTION_COLUMN_WIDTH }}
@@ -2213,7 +2486,7 @@ const TrackerPage: React.FC = () => {
             <tbody>
               {shouldVirtualize && topSpacer > 0 && (
                 <tr className="spacer-row">
-                  <td colSpan={orderedVisible.length + 2} style={{ height: topSpacer }} />
+                  <td colSpan={orderedVisible.length + (isPrimaryTable ? 3 : 2)} style={{ height: topSpacer }} />
                 </tr>
               )}
               {(groupBy && groupEntries
@@ -2241,7 +2514,71 @@ const TrackerPage: React.FC = () => {
 
                 const rowKey = groupKey ? `${groupKey}-${app.id}` : String(app.id);
                 const row = (
-                <tr key={rowKey} className={isSelected ? "selected" : ""} style={{ height: rowHeight }}>
+                <tr
+                  key={rowKey}
+                  className={`editable-row${isSelected ? " selected" : ""}${dragOverRowId === app.id ? " row-drag-over" : ""}`}
+                  style={{ height: rowHeight }}
+                  onDragOver={(e) => {
+                    if (draggedRowRef.current === null || draggedRowRef.current === app.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    setDragOverRowId(app.id);
+                  }}
+                  onDragLeave={() => setDragOverRowId(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const fromId = draggedRowRef.current;
+                    if (fromId !== null && fromId !== app.id) {
+                      const currentOrder = sortedForBlock.map((a) => a.id);
+                      const fromIdx = currentOrder.indexOf(fromId);
+                      const toIdx = currentOrder.indexOf(app.id);
+                      if (fromIdx >= 0 && toIdx >= 0) {
+                        const next = [...currentOrder];
+                        next.splice(fromIdx, 1);
+                        next.splice(toIdx, 0, fromId);
+                        setManualRowOrder(next);
+                      }
+                    }
+                    draggedRowRef.current = null;
+                    setDraggedRowId(null);
+                    setDragOverRowId(null);
+                  }}
+                >
+                  {isPrimaryTable && (
+                    <td
+                      className="row-handle-col"
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", String(app.id));
+                        draggedRowRef.current = app.id;
+                        setDraggedRowId(app.id);
+                      }}
+                      onDragEnd={() => {
+                        draggedRowRef.current = null;
+                        setDraggedRowId(null);
+                        setDragOverRowId(null);
+                      }}
+                    >
+                      <div className="row-handle-group">
+                        <button
+                          className="row-insert-handle"
+                          type="button"
+                          aria-label="Add new row"
+                          onClick={() => { void quickAddApplication(); }}
+                        >
+                          <svg viewBox="0 0 16 16" aria-hidden="true" className="row-insert-icon">
+                            <path d="M8 2.5a.75.75 0 0 1 .75.75v4h4a.75.75 0 0 1 0 1.5h-4v4a.75.75 0 0 1-1.5 0v-4h-4a.75.75 0 0 1 0-1.5h4v-4A.75.75 0 0 1 8 2.5Z" />
+                          </svg>
+                        </button>
+                        <div
+                          className="row-grip-handle"
+                          role="img"
+                          aria-hidden="true"
+                        />
+                      </div>
+                    </td>
+                  )}
                   <td
                     className="selection-col sticky-col"
                     style={{ left: 0, width: SELECTION_COLUMN_WIDTH, minWidth: SELECTION_COLUMN_WIDTH }}
@@ -2794,7 +3131,7 @@ const TrackerPage: React.FC = () => {
 	                  <React.Fragment key={`${groupKey}-${app.id}`}>
 	                    {firstInGroup && (
 	                      <tr className="group-row">
-	                        <td colSpan={orderedVisible.length + 2}>
+	                        <td colSpan={orderedVisible.length + (isPrimaryTable ? 3 : 2)}>
 	                          <button
 	                            className="group-toggle"
 	                            type="button"
@@ -2820,13 +3157,14 @@ const TrackerPage: React.FC = () => {
 	              })}
               {shouldVirtualize && bottomSpacer > 0 && (
                 <tr className="spacer-row">
-                  <td colSpan={orderedVisible.length + 2} style={{ height: bottomSpacer }} />
+                  <td colSpan={orderedVisible.length + (isPrimaryTable ? 3 : 2)} style={{ height: bottomSpacer }} />
                 </tr>
               )}
 	            </tbody>
 	            {showCalcRow && (
 	              <tfoot>
 	                <tr className="calc-row">
+	                  {isPrimaryTable && <td className="row-handle-col" />}
 	                  <td
 	                    className="selection-col sticky-col"
 	                    style={{ left: 0, width: SELECTION_COLUMN_WIDTH, minWidth: SELECTION_COLUMN_WIDTH }}
@@ -2900,15 +3238,18 @@ const TrackerPage: React.FC = () => {
         },
         trailing: (
           <>
-            <button className="ghost" onClick={() => downloadExcel("all")}>
-              {t("Export All")}
-            </button>
-            <button className="ghost" onClick={() => downloadExcel("favorites")}>
-              {t("Export Favorites")}
-            </button>
-            <button className="ghost" onClick={() => downloadExcel("active")}>
-              {t("Export Active")}
-            </button>
+            <div className="export-dropdown" ref={exportMenuRef}>
+              <button className="ghost" onClick={() => setExportMenuOpen((v) => !v)}>
+                {t("Export")} ▾
+              </button>
+              {exportMenuOpen && (
+                <div className="export-dropdown-menu">
+                  <button type="button" onClick={() => { downloadExcel("all"); setExportMenuOpen(false); }}>{t("Export All")}</button>
+                  <button type="button" onClick={() => { downloadExcel("favorites"); setExportMenuOpen(false); }}>{t("Export Favorites")}</button>
+                  <button type="button" onClick={() => { downloadExcel("active"); setExportMenuOpen(false); }}>{t("Export Active")}</button>
+                </div>
+              )}
+            </div>
             <button className="primary" onClick={() => setShowForm(true)}>
               {t("New Application")}
             </button>

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import ApplicationForm from "../components/ApplicationForm";
 import { EditableTableToolbar } from "../components/blocks/BlockRenderer";
+import { useUndo } from "../undoContext";
 import {
   ColumnMenuChevronRight,
   columnMenuIconCalc,
@@ -116,6 +117,7 @@ import {
 const CalendarPage: React.FC = () => {
   const { t, locale } = useI18n();
   const { applications, updateApplication, settings, refresh } = useAppData();
+  const { executeCommand } = useUndo();
   const [selected, setSelected] = useState<string>("");
   const [editing, setEditing] = useState<Application | null>(null);
   const [detailApp, setDetailApp] = useState<Application | null>(null);
@@ -174,6 +176,11 @@ const CalendarPage: React.FC = () => {
   const todoColumnMenuFilterInputRef = useRef<HTMLInputElement | null>(null);
   const todoColumnMenuAnchorRef = useRef<HTMLElement | null>(null);
   const todoColumnMenuCloseTimerRef = useRef<number | null>(null);
+  // Row drag-and-drop state for todo table
+  const [todoDraggedRowId, setTodoDraggedRowId] = useState<string | null>(null);
+  const [todoDragOverRowId, setTodoDragOverRowId] = useState<string | null>(null);
+  const todoDraggedRowRef = useRef<string | null>(null);
+  const [manualTodoOrder, setManualTodoOrder] = useState<string[] | null>(null);
 
   const editableTableTargets = useMemo(
     () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
@@ -664,8 +671,21 @@ const CalendarPage: React.FC = () => {
   }, [filteredTodos, getTodoColumnKind, todoCellToString, todoSortConfig]);
 
   const rowsForDisplay = useMemo(() => {
-    if (!todoGroupBy) return orderedTodos;
-    const next = [...orderedTodos];
+    // Apply manual row order when no sort or group is active
+    const base = (() => {
+      if (manualTodoOrder && !todoSortConfig && !todoGroupBy) {
+        const byId = new Map(orderedTodos.map((r) => [r.todo.id, r]));
+        const ordered = manualTodoOrder
+          .map((id) => byId.get(id))
+          .filter((r): r is TodoRow => !!r);
+        const inOrder = new Set(manualTodoOrder);
+        orderedTodos.forEach((r) => { if (!inOrder.has(r.todo.id)) ordered.push(r); });
+        return ordered;
+      }
+      return orderedTodos;
+    })();
+    if (!todoGroupBy) return base;
+    const next = [...base];
     next.sort((a, b) => {
       const aKey = todoCellToString(a, todoGroupBy).trim() || "(Empty)";
       const bKey = todoCellToString(b, todoGroupBy).trim() || "(Empty)";
@@ -675,7 +695,12 @@ const CalendarPage: React.FC = () => {
       return aKey.localeCompare(bKey, undefined, { sensitivity: "base" });
     });
     return next;
-  }, [orderedTodos, todoGroupBy, todoCellToString]);
+  }, [orderedTodos, todoGroupBy, todoCellToString, manualTodoOrder, todoSortConfig]);
+
+  // Clear manual todo order when sort or group changes
+  useEffect(() => {
+    setManualTodoOrder(null);
+  }, [todoSortConfig, todoGroupBy]);
 
   const todoGroupCounts = useMemo(() => {
     if (!todoGroupBy) return null;
@@ -1515,7 +1540,8 @@ const CalendarPage: React.FC = () => {
   const updateTodoItem = async (appId: number, todoId: string, patch: Partial<TodoItem>) => {
     const app = applications.find((entry) => entry.id === appId);
     if (!app) return;
-    const nextTodos = (app.todo_items || []).map((item) => {
+    const previousTodos = app.todo_items || [];
+    const nextTodos = previousTodos.map((item) => {
       if (item.id !== todoId) return item;
       const next: TodoItem = { ...item, ...patch };
       if (patch.due_date !== undefined) {
@@ -1526,16 +1552,35 @@ const CalendarPage: React.FC = () => {
       }
       return next;
     });
-    await updateApplication(appId, { todo_items: nextTodos });
+    
+    await executeCommand({
+      description: `Actualizar todo: ${previousTodos.find(t => t.id === todoId)?.task || "tarea"}`,
+      async do() {
+        await updateApplication(appId, { todo_items: nextTodos });
+      },
+      async undo() {
+        await updateApplication(appId, { todo_items: previousTodos });
+      }
+    });
   };
 
   const removeTodoItem = async (appId: number, todoId: string) => {
-    const confirmed = window.confirm("Delete this to-do item? This action cannot be undone.");
+    const confirmed = window.confirm("Delete this to-do item?");
     if (!confirmed) return;
     const app = applications.find((entry) => entry.id === appId);
     if (!app) return;
-    const nextTodos = (app.todo_items || []).filter((item) => item.id !== todoId);
-    await updateApplication(appId, { todo_items: nextTodos });
+    const previousTodos = app.todo_items || [];
+    const nextTodos = previousTodos.filter((item) => item.id !== todoId);
+    
+    await executeCommand({
+      description: `Eliminar todo: ${previousTodos.find(t => t.id === todoId)?.task || "tarea"}`,
+      async do() {
+        await updateApplication(appId, { todo_items: nextTodos });
+      },
+      async undo() {
+        await updateApplication(appId, { todo_items: previousTodos });
+      }
+    });
   };
 
   const moveTodoItem = async (
@@ -1548,12 +1593,23 @@ const CalendarPage: React.FC = () => {
     if (!sourceApp || !targetApp) return;
     if (sourceApp.application_id === targetApplicationId) return;
     const sourceTodos = sourceApp.todo_items || [];
+    const targetTodos = targetApp.todo_items || [];
     const item = sourceTodos.find((todo) => todo.id === todoId);
     if (!item) return;
     const nextSourceTodos = sourceTodos.filter((todo) => todo.id !== todoId);
-    const nextTargetTodos = [...(targetApp.todo_items || []), item];
-    await updateApplication(targetApp.id, { todo_items: nextTargetTodos });
-    await updateApplication(sourceApp.id, { todo_items: nextSourceTodos });
+    const nextTargetTodos = [...targetTodos, item];
+    
+    await executeCommand({
+      description: `Mover todo: ${item.task}`,
+      async do() {
+        await updateApplication(targetApp.id, { todo_items: nextTargetTodos });
+        await updateApplication(sourceApp.id, { todo_items: nextSourceTodos });
+      },
+      async undo() {
+        await updateApplication(targetApp.id, { todo_items: targetTodos });
+        await updateApplication(sourceApp.id, { todo_items: sourceTodos });
+      }
+    });
   };
 
   const handleAddTodo = async () => {
@@ -1573,7 +1629,8 @@ const CalendarPage: React.FC = () => {
       notes: todoCreateDraft.notes.trim() || undefined,
       documents_links: todoCreateDraft.documents_links.trim() || undefined
     };
-    const nextTodos = [...(targetApp.todo_items || []), nextItem];
+    const previousTodos = targetApp.todo_items || [];
+    const nextTodos = [...previousTodos, nextItem];
     const payload: Partial<Application> = { todo_items: nextTodos };
     const nextCompany = todoCreateDraft.company_name.trim();
     const nextPosition = todoCreateDraft.position.trim();
@@ -1583,7 +1640,16 @@ const CalendarPage: React.FC = () => {
     if (nextPosition && nextPosition !== targetApp.position) {
       payload.position = nextPosition;
     }
-    await updateApplication(targetApp.id, payload);
+    
+    await executeCommand({
+      description: `Crear todo: ${trimmedTask}`,
+      async do() {
+        await updateApplication(targetApp.id, payload);
+      },
+      async undo() {
+        await updateApplication(targetApp.id, { todo_items: previousTodos });
+      }
+    });
     setTodoCreateDraft(null);
     setTodoCreateAppId("");
   };
@@ -1659,11 +1725,22 @@ const CalendarPage: React.FC = () => {
 
   const handleUpdate = async (payload: any, files: File[] = []) => {
     if (!editing) return;
-    await updateApplication(editing.id, payload);
-    if (files.length > 0) {
-      await uploadDocuments(editing.id, files);
-      await refresh();
-    }
+    const appId = editing.id;
+    const previousApp = { ...editing };
+    
+    await executeCommand({
+      description: `Actualizar ${editing.company_name || "evento"}`,
+      async do() {
+        await updateApplication(appId, payload);
+        if (files.length > 0) {
+          await uploadDocuments(appId, files);
+          await refresh();
+        }
+      },
+      async undo() {
+        await updateApplication(appId, previousApp);
+      }
+    });
     setEditing(null);
   };
 
@@ -1703,6 +1780,7 @@ const CalendarPage: React.FC = () => {
   const updateTodoFromDraft = async (app: Application, todoId: string, draft: TodoDraft) => {
     const todos = app.todo_items || [];
     let updated = false;
+    const previousTodos = [...todos];
     const nextTodos = todos.map((item) => {
       if (item.id !== todoId) return item;
       updated = true;
@@ -1727,7 +1805,16 @@ const CalendarPage: React.FC = () => {
     if (nextPosition && nextPosition !== app.position) {
       payload.position = nextPosition;
     }
-    await updateApplication(app.id, payload);
+    
+    await executeCommand({
+      description: `Actualizar todo: ${todos.find(t => t.id === todoId)?.task || "tarea"}`,
+      async do() {
+        await updateApplication(app.id, payload);
+      },
+      async undo() {
+        await updateApplication(app.id, { todo_items: previousTodos });
+      }
+    });
   };
 
   const buildTodoDraft = (app?: Application | null): TodoDraft => ({
@@ -2017,6 +2104,7 @@ const CalendarPage: React.FC = () => {
                 <table className="table todo-table">
                   <thead>
                     <tr>
+                      <th className="row-handle-col" />
                       {visibleTodoColumns.map((col) => {
                         const canMove = col !== "actions";
                         const canMenu = col !== "actions";
@@ -2276,8 +2364,66 @@ const CalendarPage: React.FC = () => {
                       const rowNode = (
                         <tr
                           key={`${row.applicationId}-${row.todo.id}`}
-                          className={status === "Done" ? "todo-completed" : undefined}
+                          className={`editable-row${status === "Done" ? " todo-completed" : ""}${todoDragOverRowId === row.todo.id ? " row-drag-over" : ""}`}
+                          onDragOver={(e) => {
+                            if (todoDraggedRowRef.current === null || todoDraggedRowRef.current === row.todo.id) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                            setTodoDragOverRowId(row.todo.id);
+                          }}
+                          onDragLeave={() => setTodoDragOverRowId(null)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const fromId = todoDraggedRowRef.current;
+                            if (fromId && fromId !== row.todo.id) {
+                              const currentOrder = rowsForDisplay.map((r) => r.todo.id);
+                              const fromIdx = currentOrder.indexOf(fromId);
+                              const toIdx = currentOrder.indexOf(row.todo.id);
+                              if (fromIdx >= 0 && toIdx >= 0) {
+                                const next = [...currentOrder];
+                                next.splice(fromIdx, 1);
+                                next.splice(toIdx, 0, fromId);
+                                setManualTodoOrder(next);
+                              }
+                            }
+                            todoDraggedRowRef.current = null;
+                            setTodoDraggedRowId(null);
+                            setTodoDragOverRowId(null);
+                          }}
                         >
+                          <td
+                            className="row-handle-col"
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", row.todo.id);
+                              todoDraggedRowRef.current = row.todo.id;
+                              setTodoDraggedRowId(row.todo.id);
+                            }}
+                            onDragEnd={() => {
+                              todoDraggedRowRef.current = null;
+                              setTodoDraggedRowId(null);
+                              setTodoDragOverRowId(null);
+                            }}
+                          >
+                            <div className="row-handle-group">
+                              <button
+                                className="row-insert-handle"
+                                type="button"
+                                aria-label="Add new to-do"
+                                onClick={openTodoCreate}
+                              >
+                                <svg viewBox="0 0 16 16" aria-hidden="true" className="row-insert-icon">
+                                  <path d="M8 2.5a.75.75 0 0 1 .75.75v4h4a.75.75 0 0 1 0 1.5h-4v4a.75.75 0 0 1-1.5 0v-4h-4a.75.75 0 0 1 0-1.5h4v-4A.75.75 0 0 1 8 2.5Z" />
+                                </svg>
+                              </button>
+                              <div
+                                className="row-grip-handle"
+                                role="img"
+                                aria-hidden="true"
+                              />
+                            </div>
+                          </td>
                           {visibleTodoColumns.map((col) => {
                             const width = todoColumnWidths[col] || TODO_COLUMN_WIDTHS[col];
                             const isPinned = todoPinnedColumn === col;
@@ -2302,7 +2448,7 @@ const CalendarPage: React.FC = () => {
                         <React.Fragment key={`${groupKey}-${row.applicationId}-${row.todo.id}`}>
                           {firstInGroup && (
                             <tr className="group-row">
-                              <td colSpan={visibleTodoColumns.length}>
+                              <td colSpan={visibleTodoColumns.length + 1}>
                                 <button
                                   className="group-toggle"
                                   type="button"
@@ -2330,6 +2476,7 @@ const CalendarPage: React.FC = () => {
                   {showTodoCalcRow && (
                     <tfoot>
                       <tr className="calc-row">
+                        <td className="row-handle-col" />
                         {visibleTodoColumns.map((col) => {
                           const width = todoColumnWidths[col] || TODO_COLUMN_WIDTHS[col];
                           const isPinned = todoPinnedColumn === col;

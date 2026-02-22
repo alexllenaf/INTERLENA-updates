@@ -1,7 +1,24 @@
 .app-shell {
   display: grid;
   grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
   min-height: 100vh;
+}
+
+.global-undo-bar {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .sidebar {
@@ -17,12 +34,12 @@
   display: flex;
   flex-direction: column;
   gap: 32px;
-
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100vh;
+  grid-row: 2;
+  height: calc(100vh - 52px);
   overflow-y: auto;
+  position: sticky;
+  top: 52px;
+  align-self: start;
 }
 
 .sidebar.block-panel.block-glass {
@@ -37,6 +54,9 @@
   position: sticky;
   overflow: visible;
   overflow-y: auto;
+  grid-row: 2;
+  height: calc(100vh - 52px);
+  top: 52px;
 }
 
 .brand {
@@ -363,6 +383,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  grid-row: 2;
 }
 
 .content::before,
@@ -401,6 +422,39 @@
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
   margin-bottom: 24px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.undo-redo-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.undo-redo-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 600;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+.undo-redo-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.undo-redo-button:not(:disabled):hover {
+  background: rgba(246, 173, 85, 0.12);
+  border-color: rgba(246, 173, 85, 0.4);
 }
 
 .topbar h1 {

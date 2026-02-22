@@ -5,6 +5,7 @@ export const PAGE_CONFIG_VERSION = 1;
 export const PAGE_BLOCK_TYPES = [
   "text",
   "titleDescription",
+  "cardGallery",
   "editableTable",
   "todoTable",
   "informationalTable",
@@ -45,6 +46,52 @@ export type TitleDescriptionBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   actionsSlotId?: string;
+};
+
+export type CardGalleryItem = {
+  title: string;
+  subtitle?: string;
+  tag?: string;
+  date?: string;
+  imageUrl?: string;
+};
+
+export type CardGalleryCustomField = {
+  key: string;
+  label: string;
+  kind: EditableTableColumnKind;
+  value: string;
+  selectOptions?: EditableTableSelectOption[];
+};
+
+export type CardGalleryManualCard = {
+  key: string;
+  title: string;
+  imageUrl?: string;
+  fields?: CardGalleryCustomField[];
+};
+
+export type CardGalleryBlockProps = LinkableBlockProps & {
+  title: string;
+  description: string;
+  /** @deprecated Legacy props; use manualCards for manual mode */
+  items?: CardGalleryItem[];
+  contentSlotId?: string;
+  /** Manual cards with typed fields */
+  manualCards?: CardGalleryManualCard[];
+  /** Per-card image override when linking table */
+  sourceImageByTitle?: Record<string, string>;
+  /** Per-card field configuration when linking table */
+  cardFieldConfigs?: Record<
+    string,
+    {
+      titleColumn?: string;
+      visibleColumns?: string[];
+      imageColumn?: string;
+    }
+  >;
+  /** Per-card field value overrides when linking table: cardKey -> fieldLabel -> value */
+  fieldValueOverrides?: Record<string, Record<string, string>>;
 };
 
 export type EditableTableBlockProps = LinkableBlockProps & {
@@ -172,6 +219,7 @@ export type EmailBlockProps = LinkableBlockProps & {
 export type PageBlockPropsMap = {
   text: TextBlockProps;
   titleDescription: TitleDescriptionBlockProps;
+  cardGallery: CardGalleryBlockProps;
   editableTable: EditableTableBlockProps;
   todoTable: TodoTableBlockProps;
   informationalTable: InformationalTableBlockProps;

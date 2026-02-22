@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppData } from "../../state";
+import { useUndo } from "../../undoContext";
 // Diagnostic traces (flag-gated) for rehydrate/flush lifecycle.
 import { summarizePageConfig, tracePageConfig } from "../../pageConfigDebug";
 import PageEditor, { type CrossPageDropPayload } from "./PageEditor";
@@ -40,6 +41,7 @@ const PageBuilderPage: React.FC<Props> = ({
   createBlockForType
 }) => {
   const { settings, saveSettings } = useAppData();
+  const { executeCommand } = useUndo();
   const trace = useCallback(
     (event: string, payload?: Record<string, unknown>) => {
       tracePageConfig(`builder:${pageId}:${event}`, payload);
@@ -230,24 +232,46 @@ const PageBuilderPage: React.FC<Props> = ({
 
   const handlePageConfigChange = useCallback(
     (next: PageConfig) => {
+      const previousConfig = pageConfigRef.current;
       const stamped: PageConfig = {
         ...next,
         updated_at: new Date().toISOString()
       };
-      setPageConfig(stamped);
-      pageConfigRef.current = stamped;
-      configLocalJsonRef.current = JSON.stringify(stamped);
-      persistPageConfigLocal(pageId, stamped);
-      trace("change:from-editor", {
-        config: summarizePageConfig(stamped)
+
+      void executeCommand({
+        description: "Edit page",
+        timestamp: Date.now(),
+        do: () => {
+          setPageConfig(stamped);
+          pageConfigRef.current = stamped;
+          configLocalJsonRef.current = JSON.stringify(stamped);
+          persistPageConfigLocal(pageId, stamped);
+          trace("change:from-editor", {
+            config: summarizePageConfig(stamped)
+          });
+          const currentSettings = settingsRef.current;
+          if (currentSettings) {
+            settingsRef.current = writePageConfig(currentSettings, pageId, stamped);
+          }
+          scheduleFlushPageConfig(stamped);
+        },
+        undo: () => {
+          setPageConfig(previousConfig);
+          pageConfigRef.current = previousConfig;
+          configLocalJsonRef.current = JSON.stringify(previousConfig);
+          persistPageConfigLocal(pageId, previousConfig);
+          trace("undo:revert-page-config", {
+            config: summarizePageConfig(previousConfig)
+          });
+          const currentSettings = settingsRef.current;
+          if (currentSettings) {
+            settingsRef.current = writePageConfig(currentSettings, pageId, previousConfig);
+          }
+          scheduleFlushPageConfig(previousConfig);
+        }
       });
-      const currentSettings = settingsRef.current;
-      if (currentSettings) {
-        settingsRef.current = writePageConfig(currentSettings, pageId, stamped);
-      }
-      scheduleFlushPageConfig(stamped);
     },
-    [pageId, scheduleFlushPageConfig, trace]
+    [executeCommand, pageId, scheduleFlushPageConfig, trace]
   );
 
   const handleDropFromAnotherPage = useCallback(

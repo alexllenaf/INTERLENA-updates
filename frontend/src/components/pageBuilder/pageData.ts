@@ -50,6 +50,20 @@ const BLOCK_PRESET_LIST = [
     layout: { colSpan: 60 }
   }),
   preset({
+    id: "cardGallery.default",
+    type: "cardGallery",
+    props: {
+      title: "Galería de tarjetas",
+      description: "Vista de elementos en tarjetas.",
+      items: [
+        { title: "Nueva oportunidad", subtitle: "Barcelona", tag: "Híbrido", date: "2026-02-21" },
+        { title: "Diseño de producto", subtitle: "Madrid", tag: "Remoto", date: "2026-02-18" },
+        { title: "Frontend Engineer", subtitle: "Valencia", tag: "On-site", date: "2026-02-12" }
+      ]
+    },
+    layout: { colSpan: 60 }
+  }),
+  preset({
     id: "editableTable.default",
     type: "editableTable",
     props: {
@@ -358,6 +372,7 @@ export const PAGE_BLOCK_PRESETS: Record<string, BlockPresetDefinition> = Object.
 export const DEFAULT_PRESET_ID_BY_BLOCK_TYPE: Record<PageBlockType, string> = {
   text: "text.default",
   titleDescription: "titleDescription.default",
+  cardGallery: "cardGallery.default",
   editableTable: "editableTable.default",
   todoTable: "todoTable.default",
   informationalTable: "informationalTable.default",
@@ -376,6 +391,10 @@ const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: 
   titleDescription: {
     label: "Title + description",
     description: "Section title with supporting description."
+  },
+  cardGallery: {
+    label: "Card gallery",
+    description: "Grid of compact cards with tags and date."
   },
   editableTable: {
     label: "Editable table",

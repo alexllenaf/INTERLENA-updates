@@ -684,3 +684,136 @@
   pointer-events: auto;
 }
 
+/* ── Row handle column ── */
+
+.row-handle-col {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding: 0 !important;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  text-align: center;
+  background: inherit;
+}
+
+tbody td.row-handle-col[draggable="true"] {
+  cursor: grab;
+}
+
+tbody td.row-handle-col[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+thead .row-handle-col {
+  border-bottom: 2px solid var(--border);
+}
+
+.row-handle-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+  height: 100%;
+}
+
+.table tbody tr.editable-row:hover .row-handle-group,
+.table tbody tr.editable-row.row-drag-over .row-handle-group {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row-insert-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 150ms ease;
+  padding: 0;
+}
+
+.row-insert-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  fill: var(--muted);
+  flex-shrink: 0;
+  transition: fill 150ms ease;
+}
+
+.row-insert-handle:hover {
+  background: var(--border);
+}
+
+.row-insert-handle:hover .row-insert-icon {
+  fill: var(--fg);
+}
+
+.row-insert-handle:active {
+  background: var(--accent);
+}
+
+.row-insert-handle:active .row-insert-icon {
+  fill: #fff;
+}
+
+/* ── Row grip / drag handle (two vertical bars) ── */
+
+.row-grip-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: grab;
+  transition: background 150ms ease;
+  padding: 0;
+  outline: none;
+  -webkit-user-select: none;
+  user-select: none;
+  position: relative;
+}
+
+.row-grip-handle::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 5px;
+  width: 1.5px;
+  background: var(--muted);
+  box-shadow: 5px 0 0 var(--muted);
+  border-radius: 1px;
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+
+.row-grip-handle:active {
+  cursor: grabbing;
+}
+
+.row-grip-handle:hover {
+  background: var(--border);
+}
+
+.row-grip-handle:hover::before {
+  background: var(--fg);
+  box-shadow: 5px 0 0 var(--fg);
+}
+
+/* ── Row drag-over indicator ── */
+
+.table tbody tr.row-drag-over td {
+  border-top: 2px solid var(--accent);
+}
+

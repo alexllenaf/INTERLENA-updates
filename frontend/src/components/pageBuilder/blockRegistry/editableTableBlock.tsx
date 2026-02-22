@@ -635,6 +635,11 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
   const [editRowIndex, setEditRowIndex] = useState<number | null>(null);
   const [editRowDraft, setEditRowDraft] = useState<string[] | null>(null);
+  const [draggedRowIndex, setDraggedRowIndex] = useState<number | null>(null);
+  const [dragOverRowIndex, setDragOverRowIndex] = useState<number | null>(null);
+  const draggedRowRef = useRef<number | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const columns = useMemo(() => effectiveModel.columns, [effectiveModel.columns]);
   const persistedColumnKinds = useMemo(() => effectiveModel.columnKinds, [effectiveModel.columnKinds]);
   const [columnKinds, setColumnKinds] = useState<Record<string, TableColumnKind>>(persistedColumnKinds);
@@ -702,6 +707,17 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   useEffect(() => {
     setHiddenColumns((prev) => prev.filter((column) => columns.includes(column)));
   }, [columns]);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [exportMenuOpen]);
 
   useEffect(() => {
     if (!isSchemaBacked) return;
@@ -1068,6 +1084,19 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
 
   const handleAddRow = () => {
     const nextRows = [...rows, Array.from({ length: columns.length }, () => "")];
+    persistTable(columns, nextRows);
+  };
+
+  const handleInsertRowAt = (position: number, above: boolean) => {
+    const insertIndex = above ? position : position + 1;
+    const emptyRow = Array.from({ length: columns.length }, () => "");
+    const nextRows = [...rows.slice(0, insertIndex), emptyRow, ...rows.slice(insertIndex)];
+    persistTable(columns, nextRows);
+  };
+
+  const handleRowReorder = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const nextRows = reorderByIndex(rows, fromIndex, toIndex);
     persistTable(columns, nextRows);
   };
 
@@ -2036,15 +2065,18 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
           trailing: (
             <>
               {extraActions}
-              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("all")}>
-                Export All
-              </button>
-              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("favorites")}>
-                Export Favorites
-              </button>
-              <button className="ghost" type="button" onClick={() => void exportRowsAsCsv("active")}>
-                Export Active
-              </button>
+              <div className="export-dropdown" ref={exportMenuRef}>
+                <button className="ghost" type="button" onClick={() => setExportMenuOpen((v) => !v)}>
+                  Export ▾
+                </button>
+                {exportMenuOpen && (
+                  <div className="export-dropdown-menu">
+                    <button type="button" onClick={() => { void exportRowsAsCsv("all"); setExportMenuOpen(false); }}>Export All</button>
+                    <button type="button" onClick={() => { void exportRowsAsCsv("favorites"); setExportMenuOpen(false); }}>Export Favorites</button>
+                    <button type="button" onClick={() => { void exportRowsAsCsv("active"); setExportMenuOpen(false); }}>Export Active</button>
+                  </div>
+                )}
+              </div>
               <button className="ghost" type="button" onClick={handleAddColumn} disabled={!canEditStructure}>
                 Add Column
               </button>
@@ -2076,6 +2108,7 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
           <table className="table">
             <thead>
               <tr>
+                {canEdit && <th className="row-handle-col" />}
                 {visibleColumns.map(({ column, index: colIndex }) => {
                   const sortActive = sortConfig?.column === column;
                   const filterActive = Boolean(columnFilters[column]?.trim());
@@ -2170,7 +2203,62 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                 const collapsed = Boolean(groupBy && collapsedGroups.has(groupKey));
 
                 const rowNode = (
-                  <tr key={`${block.id}-row-${rowIndex}`}>
+                  <tr
+                    key={`${block.id}-row-${rowIndex}`}
+                    className={`editable-row${dragOverRowIndex === rowIndex ? " row-drag-over" : ""}`}
+                    onDragOver={(e) => {
+                      if (draggedRowRef.current === null || draggedRowRef.current === rowIndex) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDragOverRowIndex(rowIndex);
+                    }}
+                    onDragLeave={() => setDragOverRowIndex(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const from = draggedRowRef.current;
+                      if (from !== null && from !== rowIndex) {
+                        handleRowReorder(from, rowIndex);
+                      }
+                      draggedRowRef.current = null;
+                      setDraggedRowIndex(null);
+                      setDragOverRowIndex(null);
+                    }}
+                  >
+                    {canEdit && (
+                      <td
+                        className="row-handle-col"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", String(rowIndex));
+                          draggedRowRef.current = rowIndex;
+                          setDraggedRowIndex(rowIndex);
+                        }}
+                        onDragEnd={() => {
+                          draggedRowRef.current = null;
+                          setDraggedRowIndex(null);
+                          setDragOverRowIndex(null);
+                        }}
+                      >
+                        <div className="row-handle-group">
+                          <button
+                            className="row-insert-handle"
+                            type="button"
+                            aria-label="Insert row below (hold Alt to insert above)"
+                            onClick={(e) => handleInsertRowAt(rowIndex, e.altKey)}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true" className="row-insert-icon">
+                              <path d="M8 2.5a.75.75 0 0 1 .75.75v4h4a.75.75 0 0 1 0 1.5h-4v4a.75.75 0 0 1-1.5 0v-4h-4a.75.75 0 0 1 0-1.5h4v-4A.75.75 0 0 1 8 2.5Z" />
+                            </svg>
+                          </button>
+                          <div
+                            className="row-grip-handle"
+                            role="img"
+                            aria-hidden="true"
+                          />
+                        </div>
+                      </td>
+                    )}
                     {visibleColumns.map(({ column, index: colIndex }) => {
                       const width = getColumnWidth(column);
                       const cellValue = row[colIndex] || "";
@@ -2236,7 +2324,7 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                   <React.Fragment key={`${block.id}-group-${groupKey}-${rowIndex}`}>
                     {firstInGroup && (
                       <tr className="group-row">
-                        <td colSpan={visibleColumns.length + 1}>
+                        <td colSpan={visibleColumns.length + (canEdit ? 2 : 1)}>
                           <button
                             className="group-toggle"
                             type="button"
@@ -2264,6 +2352,7 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
             {showCalcRow && (
               <tfoot>
                 <tr className="calc-row">
+                  {canEdit && <td className="row-handle-col" />}
                   {visibleColumns.map(({ column, index }) => {
                     const width = getColumnWidth(column);
                     const isPinned = pinnedColumn === column;

@@ -6,7 +6,9 @@ import { getCrossPageDragState } from "./components/pageBuilder/crossPageDragSto
 import { PencilIcon, TrashIcon, CameraIcon, GearIcon } from "./components/SidebarIcons";
 import { useI18n } from "./i18n";
 import { CORE_PAGE_PLUGINS } from "./pagePlugins";
+import { Command, UndoManager } from "./shared/undoManager";
 import { AppProvider, useAppData } from "./state";
+import { UndoProvider } from "./undoContext";
 import BlockPanel from "./components/BlockPanel";
 import CustomSheetPage from "./pages/CustomSheetPage";
 import { BrandProfile, UpdateInfo } from "./types";
@@ -149,11 +151,50 @@ const AppShell: React.FC = () => {
   const [renameDraft, setRenameDraft] = useState("");
   const [sheetToDelete, setSheetToDelete] = useState<CustomSheet | null>(null);
   const hasLoadedProfileRef = useRef(false);
+  const hasUndoCheckpointRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const dragHoverTimerRef = useRef<number | null>(null);
+  const undoManagerRef = useRef<UndoManager | null>(null);
+  if (!undoManagerRef.current) {
+    undoManagerRef.current = new UndoManager(100);
+  }
+  const undoManager = undoManagerRef.current;
+  const [, setUndoVersion] = useState(0);
+
+  useEffect(() => undoManager.subscribe(() => setUndoVersion((value) => value + 1)), [undoManager]);
+
+  const runUndoableCommand = useCallback(
+    async (command: Command) => {
+      try {
+        await undoManager.execute(command);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : t("Action failed.");
+        setUpdateError(message);
+      }
+    },
+    [t, undoManager]
+  );
+
+  const runNonUndoableAction = useCallback(
+    async (label: string, action: () => Promise<void> | void) => {
+      if (undoManager.canUndo || undoManager.canRedo || undoManager.isDirty) {
+        const proceed = window.confirm(
+          t('"{label}" cannot be undone. Current undo history will be cleared. Continue?', { label })
+        );
+        if (!proceed) return;
+      }
+      undoManager.clear();
+      try {
+        await action();
+      } finally {
+        undoManager.saveCheckpoint();
+      }
+    },
+    [t, undoManager]
+  );
 
   useEffect(() => {
     let active = true;
@@ -196,29 +237,32 @@ const AppShell: React.FC = () => {
     if (!updateInfo?.url || isUpdating) {
       return;
     }
-    setUpdateError(null);
-    setIsUpdating(true);
-    try {
-      const hasTauri = !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
-      if (hasTauri) {
-        const { checkUpdate, installUpdate } = await import("@tauri-apps/api/updater");
-        const { relaunch } = await import("@tauri-apps/api/process");
-        const { shouldUpdate } = await checkUpdate();
-        if (!shouldUpdate) {
-          setUpdateError(t("You're already on the latest version."));
+    const updateUrl = updateInfo.url;
+    await runNonUndoableAction(t("Download update"), async () => {
+      setUpdateError(null);
+      setIsUpdating(true);
+      try {
+        const hasTauri = !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
+        if (hasTauri) {
+          const { checkUpdate, installUpdate } = await import("@tauri-apps/api/updater");
+          const { relaunch } = await import("@tauri-apps/api/process");
+          const { shouldUpdate } = await checkUpdate();
+          if (!shouldUpdate) {
+            setUpdateError(t("You're already on the latest version."));
+            return;
+          }
+          await installUpdate();
+          await relaunch();
           return;
         }
-        await installUpdate();
-        await relaunch();
-        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : t("Could not auto-install.");
+        setUpdateError(t("{message} Opening the package...", { message }));
+      } finally {
+        setIsUpdating(false);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("Could not auto-install.");
-      setUpdateError(t("{message} Opening the package...", { message }));
-    } finally {
-      setIsUpdating(false);
-    }
-    openExternal(updateInfo.url);
+      openExternal(updateUrl);
+    });
   };
 
   useEffect(() => {
@@ -246,6 +290,12 @@ const AppShell: React.FC = () => {
     setProfile(nextProfile);
     hasLoadedProfileRef.current = true;
   }, [settings]);
+
+  useEffect(() => {
+    if (loading || hasUndoCheckpointRef.current) return;
+    undoManager.saveCheckpoint();
+    hasUndoCheckpointRef.current = true;
+  }, [loading, undoManager]);
 
   useEffect(() => {
     if (!settings || !hasLoadedProfileRef.current) {
@@ -295,13 +345,66 @@ const AppShell: React.FC = () => {
         setIsSettingsOpen(false);
       }
     };
+    const shouldIgnoreUndoShortcutTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      const tag = element.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (element.isContentEditable) return true;
+      return Boolean(element.closest("[contenteditable='true']"));
+    };
+    const handleUndoKeybindings = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (shouldIgnoreUndoShortcutTarget(event.target)) return;
+      const key = event.key.toLowerCase();
+
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        void (async () => {
+          try {
+            await undoManager.redo();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : t("Redo failed.");
+            setUpdateError(message);
+          }
+        })();
+        return;
+      }
+
+      if (key === "z") {
+        event.preventDefault();
+        void (async () => {
+          try {
+            await undoManager.undo();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : t("Undo failed.");
+            setUpdateError(message);
+          }
+        })();
+        return;
+      }
+
+      if (key === "y") {
+        event.preventDefault();
+        void (async () => {
+          try {
+            await undoManager.redo();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : t("Redo failed.");
+            setUpdateError(message);
+          }
+        })();
+      }
+    };
     document.addEventListener("mousedown", handleClick);
     document.addEventListener("keydown", handleKey);
+    document.addEventListener("keydown", handleUndoKeybindings);
     return () => {
       document.removeEventListener("mousedown", handleClick);
       document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("keydown", handleUndoKeybindings);
     };
-  }, []);
+  }, [t, undoManager]);
 
   const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -418,31 +521,91 @@ const AppShell: React.FC = () => {
     const trimmed = renameDraft.trim();
     if (renameTarget.kind === "base") {
       const { path, fallback } = renameTarget;
-      if (!trimmed || trimmed === fallback) {
-        setNavLabelOverrides((prev) => {
-          const { [path]: _, ...rest } = prev;
-          return rest;
-        });
+      const previousValue = navLabelOverrides[path];
+      const hasPrevious = Object.prototype.hasOwnProperty.call(navLabelOverrides, path);
+      const nextValue = !trimmed || trimmed === fallback ? null : trimmed;
+
+      if ((previousValue ?? null) === nextValue) {
         closeRenameModal();
         return;
       }
-      setNavLabelOverrides((prev) => ({ ...prev, [path]: trimmed }));
-      closeRenameModal();
+
+      void runUndoableCommand({
+        description: t("Rename page"),
+        timestamp: Date.now(),
+        do: () => {
+          setNavLabelOverrides((prev) => {
+            const next = { ...prev };
+            if (nextValue) {
+              next[path] = nextValue;
+            } else {
+              delete next[path];
+            }
+            return next;
+          });
+          closeRenameModal();
+        },
+        undo: () => {
+          setNavLabelOverrides((prev) => {
+            const next = { ...prev };
+            if (hasPrevious) {
+              next[path] = previousValue as string;
+            } else {
+              delete next[path];
+            }
+            return next;
+          });
+        }
+      });
       return;
     }
     if (!trimmed) return;
-    setCustomSheets((prev) =>
-      prev.map((sheet) => (sheet.id === renameTarget.sheetId ? { ...sheet, name: trimmed } : sheet))
-    );
-    closeRenameModal();
-  }, [closeRenameModal, renameDraft, renameTarget]);
+
+    const targetSheet = customSheets.find((sheet) => sheet.id === renameTarget.sheetId);
+    if (!targetSheet || targetSheet.name === trimmed) {
+      closeRenameModal();
+      return;
+    }
+
+    const oldName = targetSheet.name;
+    const sheetId = renameTarget.sheetId;
+
+    void runUndoableCommand({
+      description: t("Rename page"),
+      timestamp: Date.now(),
+      do: () => {
+        setCustomSheets((prev) =>
+          prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: trimmed } : sheet))
+        );
+        closeRenameModal();
+      },
+      undo: () => {
+        setCustomSheets((prev) =>
+          prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: oldName } : sheet))
+        );
+      }
+    });
+  }, [closeRenameModal, customSheets, navLabelOverrides, renameDraft, renameTarget, runUndoableCommand, t]);
 
   const addCustomSheet = () => {
     const id = createSheetId();
     const name = t("New Sheet");
     const next: CustomSheet = { id, name };
-    setCustomSheets((prev) => [...prev, next]);
-    navigate(`/sheet/${id}`);
+
+    void runUndoableCommand({
+      description: t("Add new sheet"),
+      timestamp: Date.now(),
+      do: () => {
+        setCustomSheets((prev) => [...prev, next]);
+        navigate(`/sheet/${id}`);
+      },
+      undo: () => {
+        setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== id));
+        if (location.pathname === `/sheet/${id}`) {
+          navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
+        }
+      }
+    });
   };
 
   const deleteCustomSheetConfigData = useCallback(
@@ -476,13 +639,15 @@ const AppShell: React.FC = () => {
   const confirmDeleteCustomSheet = useCallback(async () => {
     if (!sheetToDelete) return;
     const deleting = sheetToDelete;
-    setSheetToDelete(null);
-    setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== deleting.id));
-    if (location.pathname === `/sheet/${deleting.id}`) {
-      navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
-    }
-    await deleteCustomSheetConfigData(deleting.id);
-  }, [deleteCustomSheetConfigData, location.pathname, navigate, sheetToDelete]);
+    await runNonUndoableAction(t("Delete sheet"), async () => {
+      setSheetToDelete(null);
+      setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== deleting.id));
+      if (location.pathname === `/sheet/${deleting.id}`) {
+        navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
+      }
+      await deleteCustomSheetConfigData(deleting.id);
+    });
+  }, [deleteCustomSheetConfigData, location.pathname, navigate, runNonUndoableAction, sheetToDelete, t]);
 
   const hasTauri = typeof window !== "undefined" && !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
   const resolvedVersion = hasTauri ? appVersion || updateInfo?.current_version || null : "DEV";
@@ -493,7 +658,59 @@ const AppShell: React.FC = () => {
     (!resolvedVersion || !updateInfo?.latest_version || isNewerVersion(updateInfo.latest_version, resolvedVersion));
 
   return (
-    <div className="app-shell">
+    <UndoProvider undoManager={undoManager}>
+      <div className="app-shell">
+      <header className="global-undo-bar">
+        <div className="undo-redo-controls" role="toolbar" aria-label={t("Undo and redo")}>
+          <button
+            type="button"
+            className="undo-redo-button"
+            disabled={!undoManager.canUndo}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await undoManager.undo();
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : t("Undo failed.");
+                  setUpdateError(message);
+                }
+              })();
+            }}
+            title={
+              undoManager.nextUndoDescription
+                ? t("Deshacer {description}", { description: undoManager.nextUndoDescription })
+                : t("Deshacer")
+            }
+          >
+            ↶ {undoManager.nextUndoDescription ? undoManager.nextUndoDescription : t("Deshacer")}
+          </button>
+          <button
+            type="button"
+            className="undo-redo-button"
+            disabled={!undoManager.canRedo}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await undoManager.redo();
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : t("Redo failed.");
+                  setUpdateError(message);
+                }
+              })();
+            }}
+            title={
+              undoManager.nextRedoDescription
+                ? t("Rehacer {description}", { description: undoManager.nextRedoDescription })
+                : t("Rehacer")
+            }
+          >
+            ↷ {undoManager.nextRedoDescription ? undoManager.nextRedoDescription : t("Rehacer")}
+          </button>
+        </div>
+        <div className="status-pill">
+          {loading ? t("Loading...") : undoManager.isDirty ? t("Unsaved changes") : t("Ready")}
+        </div>
+      </header>
       <BlockPanel id="app:sidebar" as="aside" variant="raw" className="sidebar">
         <div className="brand">
           <div className="brand-mark profile-avatar" ref={avatarMenuRef}>
@@ -716,9 +933,6 @@ const AppShell: React.FC = () => {
               </h1>
               <p>{t("Offline-first workspace for your job search pipeline.")}</p>
             </div>
-            <div className="status-pill">
-              {loading ? t("Loading...") : t("Ready")}
-            </div>
           </header>
         )}
         {shouldShowUpdate && (
@@ -857,6 +1071,7 @@ const AppShell: React.FC = () => {
         </div>
       )}
     </div>
+    </UndoProvider>
   );
 };
 
