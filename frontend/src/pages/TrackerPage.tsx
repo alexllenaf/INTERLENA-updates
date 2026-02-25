@@ -26,7 +26,6 @@ import {
   formatUploadedAt,
   generateId,
   parseDocumentLinks,
-  toDateInputValue,
   toDateTimeLocalValue
 } from "../utils";
 import {
@@ -2690,10 +2689,10 @@ const TrackerPage: React.FC = () => {
                     }
                     if (col === "application_date") {
                       return (
-                        <DateCell
+                        <DateTimeCell
                           value={app.application_date}
                           onCommit={(next) => {
-                            const current = toDateInputValue(app.application_date);
+                            const current = toDateTimeLocalValue(app.application_date);
                             if (next === current) return;
                             updateApplication(app.id, { application_date: next ? next : null });
                           }}
@@ -2714,10 +2713,10 @@ const TrackerPage: React.FC = () => {
                     }
                     if (col === "followup_date") {
                       return (
-                        <DateCell
+                        <DateTimeCell
                           value={app.followup_date}
                           onCommit={(next) => {
-                            const current = toDateInputValue(app.followup_date);
+                            const current = toDateTimeLocalValue(app.followup_date);
                             if (next === current) return;
                             updateApplication(app.id, { followup_date: next ? next : null });
                           }}

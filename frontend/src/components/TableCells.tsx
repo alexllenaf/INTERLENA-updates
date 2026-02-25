@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { buildHighlightChunks } from "../features/tracker/highlight";
 import { toDateInputValue, toDateTimeLocalValue } from "../utils";
@@ -91,34 +92,445 @@ type DateCellProps = {
   onCommit: (next: string) => void;
 };
 
-export const DateCell: React.FC<DateCellProps> = ({ value, onCommit }) => {
-  const [draft, setDraft] = useState(toDateInputValue(value));
+type DatePopoverProps = {
+  value?: string | null;
+  allowTime: boolean;
+  canEdit: boolean;
+  onCommit: (next: string) => void;
+  inputClassName: string;
+};
+
+const DATE_WEEKDAYS = ["do", "lu", "ma", "mi", "ju", "vi", "sa"];
+
+const parseDateParts = (value?: string | null) => {
+  if (!value) return null;
+  const normalized = toDateInputValue(value);
+  if (!normalized) return null;
+  const [year, month, day] = normalized.split("-").map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+};
+
+const formatDateInput = (value?: string | null) => toDateInputValue(value);
+
+const formatDateTimeInput = (value?: string | null) => toDateTimeLocalValue(value);
+
+const buildMonthGrid = (year: number, monthIndex: number) => {
+  const first = new Date(year, monthIndex, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, monthIndex, 0).getDate();
+  const cells = Array.from({ length: 42 }, (_, idx) => {
+    const dayOffset = idx - startDay + 1;
+    const inMonth = dayOffset >= 1 && dayOffset <= daysInMonth;
+    const day = inMonth
+      ? dayOffset
+      : dayOffset < 1
+        ? daysInPrevMonth + dayOffset
+        : dayOffset - daysInMonth;
+    const monthShift = inMonth ? 0 : dayOffset < 1 ? -1 : 1;
+    const date = new Date(year, monthIndex + monthShift, day);
+    return { date, inMonth };
+  });
+  return cells;
+};
+
+const DatePopover: React.FC<DatePopoverProps> = ({
+  value,
+  allowTime,
+  canEdit,
+  onCommit,
+  inputClassName
+}) => {
+  const [open, setOpen] = useState(false);
+  const [showTime, setShowTime] = useState(allowTime);
+  const [showEndDate, setShowEndDate] = useState(false);
+  const [dateFormat, setDateFormat] = useState("Fecha completa");
+  const [timeFormat, setTimeFormat] = useState("24 horas");
+  const [timezone, setTimezone] = useState("Local");
+  const [reminder, setReminder] = useState("Ninguno");
+  const [draftDate, setDraftDate] = useState(formatDateInput(value));
+  const [draftTime, setDraftTime] = useState("00:00");
+  const [draftEndDate, setDraftEndDate] = useState("");
+  const [draftEndTime, setDraftEndTime] = useState("00:00");
+  const triggerRef = useRef<HTMLInputElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    setDraft(toDateInputValue(value));
-  }, [value]);
+    setDraftDate(formatDateInput(value));
+    if (allowTime) {
+      const raw = formatDateTimeInput(value);
+      const timePart = raw.split("T")[1] || "00:00";
+      setDraftTime(timePart);
+      setDraftEndTime(timePart);
+    }
+  }, [allowTime, value]);
 
-  const commit = (next: string) => {
-    const current = toDateInputValue(value);
-    if (next === current) return;
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (triggerRef.current && target && triggerRef.current.contains(target)) return;
+      if (popoverRef.current && target && popoverRef.current.contains(target)) return;
+      setOpen(false);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const estimatedWidth = 300;
+    const estimatedHeight = 430;
+    let left = rect.left;
+    let top = rect.bottom + 8;
+    if (left + estimatedWidth > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - estimatedWidth - 12);
+    }
+    if (top + estimatedHeight > window.innerHeight - 12) {
+      top = Math.max(12, rect.top - estimatedHeight - 8);
+    }
+    setPopoverPos({ top, left });
+  }, [open]);
+
+  const currentMonth = useMemo(() => {
+    const parsed = parseDateParts(draftDate || value || "");
+    return parsed ? new Date(parsed.year, parsed.month - 1, 1) : new Date();
+  }, [draftDate, value]);
+
+  const monthCells = useMemo(
+    () => buildMonthGrid(currentMonth.getFullYear(), currentMonth.getMonth()),
+    [currentMonth]
+  );
+
+  const commitValue = (nextDate: string, nextTime: string = draftTime, nextShowTime = showTime) => {
+    if (!canEdit) return;
+    const next = allowTime
+      ? nextDate
+        ? `${nextDate}T${nextShowTime ? nextTime || "00:00" : "00:00"}`
+        : ""
+      : nextDate;
+    const current = allowTime ? formatDateTimeInput(value) : formatDateInput(value);
+    if (next === (current || "")) return;
     onCommit(next);
   };
 
+  const commitIfChanged = () => {
+    commitValue(draftDate || "");
+  };
+
+  const showRangeInputs = allowTime && showTime && showEndDate;
+
   return (
-    <input
-      className="cell-date"
-      type="date"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={(event) => commit(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          setDraft(toDateInputValue(value));
-        }
-      }}
+    <div className="date-popover-anchor">
+      <input
+        ref={triggerRef}
+        className={inputClassName}
+        value={allowTime ? formatDateTimeInput(value) : formatDateInput(value)}
+        onClick={() => {
+          if (!canEdit) return;
+          setOpen(true);
+        }}
+        readOnly
+        placeholder="—"
+      />
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="date-popover-layer" style={{ top: popoverPos.top, left: popoverPos.left }}>
+            <div className="date-popover-panel" ref={popoverRef} role="dialog">
+              <div className="date-popover-body">
+                {showRangeInputs ? (
+                  <div className="date-popover-range-row">
+                    <div className="date-popover-range-input active">
+                      <input
+                        type="text"
+                        value={draftDate}
+                        onChange={(event) => setDraftDate(event.target.value)}
+                        placeholder="yyyy-mm-dd"
+                        onBlur={commitIfChanged}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            commitIfChanged();
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit}
+                      />
+                      <span className="date-popover-divider" />
+                      <input
+                        type="time"
+                        value={draftTime}
+                        onChange={(event) => setDraftTime(event.target.value)}
+                        onBlur={commitIfChanged}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            commitIfChanged();
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit}
+                      />
+                    </div>
+                    <div className="date-popover-range-gap" />
+                    <div className="date-popover-range-input">
+                      <input
+                        type="text"
+                        value={draftEndDate}
+                        onChange={(event) => setDraftEndDate(event.target.value)}
+                        placeholder="fin"
+                        disabled={!canEdit}
+                      />
+                      <span className="date-popover-divider" />
+                      <input
+                        type="time"
+                        value={draftEndTime}
+                        onChange={(event) => setDraftEndTime(event.target.value)}
+                        disabled={!canEdit}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="date-popover-inputs">
+                    <input
+                      type="text"
+                      value={draftDate}
+                      onChange={(event) => setDraftDate(event.target.value)}
+                      placeholder="yyyy-mm-dd"
+                      onBlur={commitIfChanged}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          commitIfChanged();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      disabled={!canEdit}
+                    />
+                    <span className="date-popover-divider" />
+                    {showEndDate ? (
+                      <input
+                        type="text"
+                        value={draftEndDate}
+                        onChange={(event) => setDraftEndDate(event.target.value)}
+                        placeholder="fin"
+                        disabled={!canEdit}
+                      />
+                    ) : (
+                      <input
+                        type="time"
+                        value={draftTime}
+                        onChange={(event) => setDraftTime(event.target.value)}
+                        onBlur={commitIfChanged}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            commitIfChanged();
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit || !allowTime || !showTime}
+                      />
+                    )}
+                  </div>
+                )}
+                <div className="date-popover-calendar">
+                  <div className="date-popover-calendar-header">
+                    <div className="date-popover-month">
+                      {currentMonth.toLocaleString("es-ES", { month: "short", year: "numeric" })}
+                    </div>
+                    <div className="date-popover-actions">
+                      <button
+                        type="button"
+                        className="date-popover-now"
+                        onClick={() => {
+                          const today = new Date();
+                          const next = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+                            today.getDate()
+                          ).padStart(2, "0")}`;
+                          setDraftDate(next);
+                          commitValue(next);
+                        }}
+                      >
+                        Ahora
+                      </button>
+                      <button
+                        type="button"
+                        className="date-popover-nav"
+                        onClick={() => {
+                          const nextMonth = new Date(
+                            currentMonth.getFullYear(),
+                            currentMonth.getMonth() - 1,
+                            1
+                          );
+                          setDraftDate(
+                            `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`
+                          );
+                        }}
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        className="date-popover-nav"
+                        onClick={() => {
+                          const nextMonth = new Date(
+                            currentMonth.getFullYear(),
+                            currentMonth.getMonth() + 1,
+                            1
+                          );
+                          setDraftDate(
+                            `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`
+                          );
+                        }}
+                      >
+                        ›
+                      </button>
+                    </div>
+                  </div>
+                  <div className="date-popover-weekdays">
+                    {DATE_WEEKDAYS.map((day) => (
+                      <span key={day}>{day}</span>
+                    ))}
+                  </div>
+                  <div className="date-popover-grid">
+                    {monthCells.map((cell) => {
+                      const cellDate = `${cell.date.getFullYear()}-${String(
+                        cell.date.getMonth() + 1
+                      ).padStart(2, "0")}-${String(cell.date.getDate()).padStart(2, "0")}`;
+                      const selected = draftDate === cellDate;
+                      return (
+                        <button
+                          key={cellDate}
+                          type="button"
+                          className={`date-popover-day ${cell.inMonth ? "" : "muted"} ${
+                            selected ? "selected" : ""
+                          }`}
+                          onClick={() => {
+                            setDraftDate(cellDate);
+                            commitValue(cellDate);
+                          }}
+                        >
+                          {cell.date.getDate()}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="date-popover-options">
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() =>
+                      setShowEndDate((prev) => {
+                        const next = !prev;
+                        if (next && !draftEndDate) {
+                          setDraftEndDate(draftDate || "");
+                          setDraftEndTime(draftTime || "00:00");
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    <span>Fecha de finalizacion</span>
+                    <span className="date-popover-pill">{showEndDate ? "Si" : "No"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() => {
+                      if (!allowTime) return;
+                      setShowTime((prev) => !prev);
+                    }}
+                  >
+                    <span>Incluir hora</span>
+                    <span className={`date-popover-toggle ${showTime ? "on" : ""}`} />
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() =>
+                      setDateFormat((prev) =>
+                        prev === "Fecha completa" ? "DD/MM/AA" : prev === "DD/MM/AA" ? "YYYY-MM-DD" : "Fecha completa"
+                      )
+                    }
+                  >
+                    <span>Formato de fecha</span>
+                    <span className="date-popover-muted">{dateFormat}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() =>
+                      setTimeFormat((prev) => (prev === "24 horas" ? "12 horas" : "24 horas"))
+                    }
+                  >
+                    <span>Formato de hora</span>
+                    <span className="date-popover-muted">{timeFormat}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() =>
+                      setTimezone((prev) => (prev === "Local" ? "UTC" : prev === "UTC" ? "GMT+1" : "Local"))
+                    }
+                  >
+                    <span>Zona horaria</span>
+                    <span className="date-popover-muted">{timezone}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row"
+                    onClick={() =>
+                      setReminder((prev) =>
+                        prev === "Ninguno"
+                          ? "30 minutos antes"
+                          : prev === "30 minutos antes"
+                            ? "1 hora antes"
+                            : "Ninguno"
+                      )
+                    }
+                  >
+                    <span>Recordatorio</span>
+                    <span className="date-popover-muted">{reminder}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="date-popover-row danger"
+                    onClick={() => {
+                      if (!canEdit) return;
+                      setDraftDate("");
+                      onCommit("");
+                      setOpen(false);
+                    }}
+                  >
+                    Borrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+};
+
+export const DateCell: React.FC<DateCellProps> = ({ value, onCommit }) => {
+  return (
+    <DatePopover
+      value={value}
+      allowTime={false}
+      canEdit
+      onCommit={onCommit}
+      inputClassName="cell-date"
     />
   );
 };
@@ -129,33 +541,13 @@ type DateTimeCellProps = {
 };
 
 export const DateTimeCell: React.FC<DateTimeCellProps> = ({ value, onCommit }) => {
-  const [draft, setDraft] = useState(toDateTimeLocalValue(value));
-
-  useEffect(() => {
-    setDraft(toDateTimeLocalValue(value));
-  }, [value]);
-
-  const commit = (next: string) => {
-    const current = toDateTimeLocalValue(value);
-    if (next === current) return;
-    onCommit(next);
-  };
-
   return (
-    <input
-      className="cell-datetime"
-      type="datetime-local"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={(event) => commit(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          setDraft(toDateTimeLocalValue(value));
-        }
-      }}
+    <DatePopover
+      value={value}
+      allowTime
+      canEdit
+      onCommit={onCommit}
+      inputClassName="cell-datetime"
     />
   );
 };

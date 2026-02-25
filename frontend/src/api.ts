@@ -32,6 +32,82 @@ class ApiError extends Error {
   }
 }
 
+const DATETIME_FIELDS = new Set(["application_date", "interview_datetime", "followup_date"]);
+
+const toTrimmedOrNull = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const sanitizeContacts = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value;
+  return value
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry, index) => {
+      const contact = entry as Record<string, unknown>;
+      const name = toTrimmedOrNull(contact.name);
+      if (!name) return null;
+      const id = toTrimmedOrNull(contact.id) || `contact-${Date.now()}-${index}`;
+      return {
+        id,
+        name,
+        first_name: toTrimmedOrNull(contact.first_name) || undefined,
+        last_name: toTrimmedOrNull(contact.last_name) || undefined,
+        information: toTrimmedOrNull(contact.information) || undefined,
+        email: toTrimmedOrNull(contact.email) || undefined,
+        phone: toTrimmedOrNull(contact.phone) || undefined
+      };
+    })
+    .filter(Boolean);
+};
+
+const sanitizeTodoItems = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value;
+  return value
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry, index) => {
+      const todo = entry as Record<string, unknown>;
+      const task = toTrimmedOrNull(todo.task);
+      if (!task) return null;
+      const id = toTrimmedOrNull(todo.id) || `todo-${Date.now()}-${index}`;
+      return {
+        id,
+        task,
+        due_date: toTrimmedOrNull(todo.due_date) || undefined,
+        status: toTrimmedOrNull(todo.status) || undefined,
+        task_location: toTrimmedOrNull(todo.task_location) || undefined,
+        notes: toTrimmedOrNull(todo.notes) || undefined,
+        documents_links: toTrimmedOrNull(todo.documents_links) || undefined
+      };
+    })
+    .filter(Boolean);
+};
+
+const sanitizeApplicationPayload = <T extends Record<string, unknown>>(payload: T): T => {
+  const next: Record<string, unknown> = { ...payload };
+
+  Object.keys(next).forEach((key) => {
+    const value = next[key];
+
+    if (DATETIME_FIELDS.has(key)) {
+      next[key] = typeof value === "string" ? toTrimmedOrNull(value) : value;
+      return;
+    }
+
+    if (key === "contacts") {
+      next[key] = sanitizeContacts(value);
+      return;
+    }
+
+    if (key === "todo_items") {
+      next[key] = sanitizeTodoItems(value);
+    }
+  });
+
+  return next as T;
+};
+
 async function openExternal(url: string) {
   if (!url) return;
   let target = url;
@@ -286,14 +362,14 @@ export async function getApplications(params: {
 export async function createApplication(payload: ApplicationInput): Promise<Application> {
   return request<Application>("/applications", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(sanitizeApplicationPayload(payload as Record<string, unknown>))
   });
 }
 
 export async function updateApplication(id: number, payload: Partial<ApplicationInput>): Promise<Application> {
   return request<Application>(`/applications/${id}`, {
     method: "PUT",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(sanitizeApplicationPayload(payload as Record<string, unknown>))
   });
 }
 

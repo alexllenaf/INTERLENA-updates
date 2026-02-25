@@ -41,7 +41,7 @@ export type CalendarEvent = {
   appId: number;
   applicationId: string;
   todoId?: string;
-  type: "Interview" | "Follow-Up" | "To-Do";
+  type: "Application" | "Interview" | "Follow-Up" | "To-Do";
   company: string;
   position: string;
   date: Date;

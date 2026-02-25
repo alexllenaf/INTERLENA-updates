@@ -459,6 +459,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   flexWrap: "wrap",
                   alignItems: "center",
                   gap: 8,
+                  minWidth: 0,
                 }}
               >
                 {/* Active account avatar + dropdown trigger */}
@@ -466,7 +467,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   const active = googleAccounts.find((a) => a.active);
                   const activeEmail = active?.email || connectedEmail || "—";
                   return (
-                    <div ref={acctDropdownRef} style={{ position: "relative" }}>
+                    <div ref={acctDropdownRef} style={{ position: "relative", minWidth: 0, maxWidth: "100%" }}>
                       <button
                         type="button"
                         onClick={() => setAcctDropdownOpen((p) => !p)}
@@ -479,6 +480,8 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                           border: "1px solid #e2e8f0",
                           background: "#f8fafc",
                           cursor: "pointer",
+                          minWidth: 0,
+                          maxWidth: "100%",
                           transition: "all 150ms ease",
                         }}
                         onMouseEnter={(e) => {
@@ -508,7 +511,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                         >
                           {activeEmail.charAt(0).toUpperCase()}
                         </span>
-                        <strong style={{ fontSize: 12, color: "#1e293b", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <strong style={{ display: "block", minWidth: 0, fontSize: 12, color: "#1e293b", maxWidth: "clamp(90px, 35vw, 200px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {activeEmail}
                         </strong>
                         <span style={{ fontSize: 10, color: "#94a3b8", transition: "transform 150ms", transform: acctDropdownOpen ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
@@ -522,6 +525,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                             top: "calc(100% + 4px)",
                             left: 0,
                             minWidth: 260,
+                            maxWidth: "min(92vw, 360px)",
                             background: "#fff",
                             border: "1px solid #e2e8f0",
                             borderRadius: 10,
@@ -540,6 +544,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                                 alignItems: "center",
                                 gap: 8,
                                 padding: "8px 12px",
+                                minWidth: 0,
                                 cursor: acct.active ? "default" : "pointer",
                                 background: acct.active ? "#eef2ff" : "transparent",
                                 transition: "background 100ms ease",
@@ -582,7 +587,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                               >
                                 {acct.email.charAt(0).toUpperCase()}
                               </span>
-                              <span style={{ flex: 1, fontSize: 12, fontWeight: acct.active ? 700 : 400, color: acct.active ? "var(--accent, #4f46e5)" : "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: acct.active ? 700 : 400, color: acct.active ? "var(--accent, #4f46e5)" : "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {acct.email}
                               </span>
                               {acct.active ? (
@@ -776,7 +781,8 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                     marginTop: 8,
                     border: "1px solid rgba(15, 23, 42, 0.06)",
                     borderRadius: 8,
-                    overflow: "hidden",
+                    overflowX: "auto",
+                    overflowY: "hidden",
                   }}
                 >
                   <table className="table" style={{ fontSize: 13 }}>
@@ -978,7 +984,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   {sendResult.warning ? (
                     <div style={{ fontSize: 13, color: "#b45309", marginBottom: 6 }}>⚠️ {sendResult.warning}</div>
                   ) : null}
-                  <div className="table-scroll" style={{ border: "1px solid rgba(15,23,42,0.06)", borderRadius: 8, overflow: "hidden" }}>
+                  <div className="table-scroll" style={{ border: "1px solid rgba(15,23,42,0.06)", borderRadius: 8, overflowX: "auto", overflowY: "hidden" }}>
                     <table className="table" style={{ fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: "#f8fafc" }}>

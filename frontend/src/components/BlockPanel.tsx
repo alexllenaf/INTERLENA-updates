@@ -14,9 +14,11 @@ export type BlockPanelMenuAction = {
   label: string;
   onClick: () => void;
   tone?: "default" | "danger";
+  icon?: React.ReactNode;
 };
 
 const STORAGE_KEY = "block_styles_v1";
+const HTML_STORAGE_KEY = "block_html_overrides_v1";
 const MENU_WIDTH = 320;
 const MENU_GUTTER = 12;
 const MENU_OFFSET = 8;
@@ -104,6 +106,52 @@ const writeAll = (map: Record<string, BlockStyle>) => {
   }
 };
 
+const readAllHtmlOverrides = (): Record<string, string> => {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(HTML_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const obj = parsed as Record<string, unknown>;
+    const next: Record<string, string> = {};
+    Object.entries(obj).forEach(([key, value]) => {
+      if (typeof value !== "string") return;
+      next[key] = value;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+};
+
+const writeAllHtmlOverrides = (map: Record<string, string>) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HTML_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+};
+
+export const getBlockHtmlOverride = (id: string): string | null => {
+  const map = readAllHtmlOverrides();
+  return map[id] || null;
+};
+
+export const setBlockHtmlOverride = (id: string, html: string | null) => {
+  const next = readAllHtmlOverrides();
+  if (!html || !html.trim()) {
+    delete next[id];
+  } else {
+    next[id] = html;
+  }
+  writeAllHtmlOverrides(next);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("block-html-override-change", { detail: { id } }));
+  }
+};
+
 const readStyle = (id: string): BlockStyle => {
   const map = readAll();
   return map[id] || DEFAULT_STYLE;
@@ -156,6 +204,7 @@ const BlockPanel: React.FC<Props> = ({
 }) => {
   const { t } = useI18n();
   const [blockStyle, setBlockStyle] = useState<BlockStyle>(() => readStyle(id));
+  const [htmlOverride, setHtmlOverrideState] = useState<string | null>(() => getBlockHtmlOverride(id));
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number; placement: "top" | "bottom" } | null>(
@@ -171,6 +220,19 @@ const BlockPanel: React.FC<Props> = ({
 
   useEffect(() => {
     setBlockStyle(readStyle(id));
+    setHtmlOverrideState(getBlockHtmlOverride(id));
+  }, [id]);
+
+  useEffect(() => {
+    const onHtmlOverrideChange = (event: Event) => {
+      const custom = event as CustomEvent<{ id?: string }>;
+      if (custom.detail?.id && custom.detail.id !== id) return;
+      setHtmlOverrideState(getBlockHtmlOverride(id));
+    };
+    window.addEventListener("block-html-override-change", onHtmlOverrideChange as EventListener);
+    return () => {
+      window.removeEventListener("block-html-override-change", onHtmlOverrideChange as EventListener);
+    };
   }, [id]);
 
   const computePos = useCallback(() => {
@@ -438,9 +500,11 @@ const BlockPanel: React.FC<Props> = ({
                     className={`block-style-action ${action.tone === "danger" ? "danger" : ""}`}
                     onClick={() => {
                       action.onClick();
+                      setHtmlOverrideState(getBlockHtmlOverride(id));
                       closeMenu();
                     }}
                   >
+                    {action.icon ? <span className="block-style-action-icon">{action.icon}</span> : null}
                     {action.label}
                   </button>
                 ))}
@@ -476,7 +540,11 @@ const BlockPanel: React.FC<Props> = ({
             </button>
           </div>
         )}
-        {children}
+        {htmlOverride ? (
+          <div className="block-html-override" dangerouslySetInnerHTML={{ __html: htmlOverride }} />
+        ) : (
+          children
+        )}
       </Tag>
       {menu}
     </>

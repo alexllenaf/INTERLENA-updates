@@ -68,12 +68,17 @@ export type CardGalleryManualCard = {
   key: string;
   title: string;
   imageUrl?: string;
+  imagePosition?: string;
   fields?: CardGalleryCustomField[];
 };
 
 export type CardGalleryBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
+  /** Global source column used as title/groupBy when linked */
+  groupByColumn?: string;
+  /** Global visible columns applied to every card when linking table */
+  visibleColumns?: string[];
   /** @deprecated Legacy props; use manualCards for manual mode */
   items?: CardGalleryItem[];
   contentSlotId?: string;
@@ -81,6 +86,8 @@ export type CardGalleryBlockProps = LinkableBlockProps & {
   manualCards?: CardGalleryManualCard[];
   /** Per-card image override when linking table */
   sourceImageByTitle?: Record<string, string>;
+  /** Per-card image position (percentage) when linking table */
+  sourceImagePositionByTitle?: Record<string, string>;
   /** Per-card field configuration when linking table */
   cardFieldConfigs?: Record<
     string,

@@ -578,6 +578,13 @@ button.small {
   align-items: center;
 }
 
+.todo-items-cell .todo-add-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.8fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .links-cell {
   position: relative;
   display: grid;

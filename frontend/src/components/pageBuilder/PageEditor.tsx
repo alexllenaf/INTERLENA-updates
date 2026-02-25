@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getBlockHtmlOverride, setBlockHtmlOverride } from "../BlockPanel";
 import {
   BlockRegistry,
   BlockSlotResolver,
@@ -58,6 +59,17 @@ type Props = {
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   resolveDuplicateProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
+};
+
+type HtmlEditorState = {
+  blockId: string;
+  blockLabel: string;
+  html: string;
+  error: string | null;
+  previewClassName: string;
+  previewStyle: string;
+  previewCssText: string;
+  previewRootVars: string;
 };
 
 export type CrossPageDropPayload = {
@@ -387,6 +399,94 @@ const computeDragPreview = (pageConfig: PageConfig, drag: DragState | null): Dra
   };
 };
 
+const getBlockDisplayName = (block: PageBlockConfig): string => {
+  const props = block.props as Record<string, unknown>;
+  const title = typeof props.title === "string" ? props.title.trim() : "";
+  if (title) return title;
+  const label = typeof props.label === "string" ? props.label.trim() : "";
+  if (label) return label;
+  return block.type;
+};
+
+const validateHtml = (html: string): string | null => {
+  if (!html.trim()) {
+    return "El código HTML no puede estar vacío.";
+  }
+  try {
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    const parserError = parsed.querySelector("parsererror");
+    if (!parserError) return null;
+    return parserError.textContent?.trim() || "Error de sintaxis en el HTML.";
+  } catch {
+    return "No se pudo parsear el HTML.";
+  }
+};
+
+const escapeHtmlAttr = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+const collectRootCssVarsText = (): string => {
+  if (typeof window === "undefined") return "";
+  const rootStyle = window.getComputedStyle(document.documentElement);
+  const parts: string[] = [":root{"];
+  for (let i = 0; i < rootStyle.length; i += 1) {
+    const key = rootStyle.item(i);
+    if (!key || !key.startsWith("--")) continue;
+    const value = rootStyle.getPropertyValue(key).trim();
+    if (!value) continue;
+    parts.push(`${key}:${value};`);
+  }
+  parts.push("}");
+  return parts.join("");
+};
+
+const collectDocumentCssText = (): string => {
+  if (typeof document === "undefined") return "";
+  const chunks: string[] = [];
+  Array.from(document.styleSheets).forEach((sheet) => {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      return;
+    }
+    if (!rules) return;
+    for (let i = 0; i < rules.length; i += 1) {
+      const rule = rules.item(i);
+      if (rule?.cssText) chunks.push(rule.cssText);
+    }
+  });
+  return chunks.join("\n");
+};
+
+const buildPreviewSrcDoc = (state: HtmlEditorState): string => {
+  const className = escapeHtmlAttr(state.previewClassName || "panel block-panel block-flat");
+  const styleAttr = state.previewStyle ? ` style="${escapeHtmlAttr(state.previewStyle)}"` : "";
+  return [
+    "<!doctype html>",
+    '<html lang="es">',
+    "<head>",
+    '<meta charset="utf-8" />',
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+    "<style>",
+    state.previewRootVars,
+    state.previewCssText,
+    "html,body{margin:0;padding:0;}",
+    "body{padding:10px;background:var(--surface);color:var(--text);}",
+    ".block-settings{display:none !important;}",
+    "</style>",
+    "</head>",
+    "<body>",
+    `<section class=\"${className}\"${styleAttr}>${state.html}</section>`,
+    "</body>",
+    "</html>"
+  ].join("\n");
+};
+
 const PageEditor: React.FC<Props> = ({
   pageId,
   pageConfig,
@@ -400,6 +500,8 @@ const PageEditor: React.FC<Props> = ({
   createBlockForType
 }) => {
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [htmlEditor, setHtmlEditor] = useState<HtmlEditorState | null>(null);
+  const [isHtmlEditorExpanded, setIsHtmlEditorExpanded] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
@@ -408,6 +510,10 @@ const PageEditor: React.FC<Props> = ({
   dragRef.current = drag;
 
   const dragPreview = useMemo(() => computeDragPreview(pageConfig, drag), [pageConfig, drag]);
+  const htmlPreviewSrcDoc = useMemo(() => {
+    if (!htmlEditor) return "";
+    return buildPreviewSrcDoc(htmlEditor);
+  }, [htmlEditor]);
 
   useEffect(() => {
     if (drag) return;
@@ -636,6 +742,76 @@ const PageEditor: React.FC<Props> = ({
     updateBlocks(compactBlocks(next));
   };
 
+  const readCurrentBlockSnapshot = (blockId: string) => {
+    const fallbackCss = collectDocumentCssText();
+    const fallbackVars = collectRootCssVarsText();
+    if (typeof document === "undefined") {
+      return {
+        html: "",
+        previewClassName: "panel block-panel block-flat",
+        previewStyle: "",
+        previewCssText: fallbackCss,
+        previewRootVars: fallbackVars
+      };
+    }
+    const blockItem = Array.from(document.querySelectorAll<HTMLElement>(".page-builder-item[data-block-id]"))
+      .find((item) => item.dataset.blockId === blockId);
+    const panel = blockItem?.querySelector<HTMLElement>(".block-panel");
+    if (!panel) {
+      return {
+        html: "",
+        previewClassName: "panel block-panel block-flat",
+        previewStyle: "",
+        previewCssText: fallbackCss,
+        previewRootVars: fallbackVars
+      };
+    }
+    const clone = panel.cloneNode(true) as HTMLElement;
+    clone.querySelector(".block-settings")?.remove();
+    return {
+      html: clone.innerHTML.trim(),
+      previewClassName: panel.className || "panel block-panel block-flat",
+      previewStyle: panel.getAttribute("style") || "",
+      previewCssText: fallbackCss,
+      previewRootVars: fallbackVars
+    };
+  };
+
+  const openHtmlEditor = (block: PageBlockConfig) => {
+    const snapshot = readCurrentBlockSnapshot(block.id);
+    const existing = getBlockHtmlOverride(block.id);
+    const sourceHtml = existing ?? snapshot.html;
+    setHtmlEditor({
+      blockId: block.id,
+      blockLabel: getBlockDisplayName(block),
+      html: sourceHtml,
+      error: validateHtml(sourceHtml),
+      previewClassName: snapshot.previewClassName,
+      previewStyle: snapshot.previewStyle,
+      previewCssText: snapshot.previewCssText,
+      previewRootVars: snapshot.previewRootVars
+    });
+    setIsHtmlEditorExpanded(false);
+  };
+
+  const closeHtmlEditor = () => {
+    setHtmlEditor(null);
+    setIsHtmlEditorExpanded(false);
+  };
+
+  const handleHtmlUpdate = () => {
+    if (!htmlEditor) return;
+    if (htmlEditor.error) return;
+    setBlockHtmlOverride(htmlEditor.blockId, htmlEditor.html);
+    closeHtmlEditor();
+  };
+
+  const handleResetHtmlOverride = () => {
+    if (!htmlEditor) return;
+    setBlockHtmlOverride(htmlEditor.blockId, null);
+    closeHtmlEditor();
+  };
+
   const startDrag = (event: React.PointerEvent, block: PageBlockConfig) => {
     const blockEl = (event.currentTarget as HTMLElement).closest(".page-builder-item");
     const rect = blockEl?.getBoundingClientRect();
@@ -756,6 +932,16 @@ const PageEditor: React.FC<Props> = ({
 
   const resolveMenuActions = (block: PageBlockConfig) => [
     {
+      key: `code-${block.id}`,
+      label: "Código",
+      icon: (
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="16" height="16">
+          <path d="M8.7 7.3 4 12l4.7 4.7 1.1-1.1L6.2 12l3.6-3.6-1.1-1.1Zm6.6 0-1.1 1.1 3.6 3.6-3.6 3.6 1.1 1.1L20 12l-4.7-4.7Z" />
+        </svg>
+      ),
+      onClick: () => openHtmlEditor(block)
+    },
+    {
       key: `duplicate-${block.id}`,
       label: "Duplicar bloque",
       onClick: () => handleDuplicate(block)
@@ -820,6 +1006,97 @@ const PageEditor: React.FC<Props> = ({
         }}
       />
       {ghost}
+      {htmlEditor && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className={`modal-backdrop ${isHtmlEditorExpanded ? "page-editor-html-backdrop-expanded" : ""}`}
+              role="dialog"
+              aria-modal="true"
+              onClick={closeHtmlEditor}
+            >
+              <div className={`modal page-editor-html-modal ${isHtmlEditorExpanded ? "expanded" : ""}`} onClick={(event) => event.stopPropagation()}>
+                <header className="modal-header page-editor-html-modal-header">
+                  <div>
+                    <h3>HTML</h3>
+                    <p>{htmlEditor.blockLabel}</p>
+                  </div>
+                  <div className="page-editor-html-modal-header-actions">
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => setIsHtmlEditorExpanded((prev) => !prev)}
+                      aria-label={isHtmlEditorExpanded ? "Salir de pantalla grande" : "Ampliar editor"}
+                      title={isHtmlEditorExpanded ? "Salir de pantalla grande" : "Ampliar editor"}
+                    >
+                      {isHtmlEditorExpanded ? "↙" : "⤢"}
+                    </button>
+                    <button className="ghost" type="button" onClick={closeHtmlEditor}>
+                      Cerrar
+                    </button>
+                  </div>
+                </header>
+
+                <div className="page-editor-html-modal-body">
+                  <div className="page-editor-html-editor-col">
+                    <label htmlFor="block-html-editor">Código</label>
+                    <textarea
+                      id="block-html-editor"
+                      className="page-editor-html-textarea"
+                      value={htmlEditor.html}
+                      onChange={(event) => {
+                        const nextHtml = event.target.value;
+                        setHtmlEditor((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                html: nextHtml,
+                                error: validateHtml(nextHtml)
+                              }
+                            : prev
+                        );
+                      }}
+                      spellCheck={false}
+                      placeholder="Escribe HTML…"
+                    />
+                    {htmlEditor.error ? <div className="page-editor-html-error">{htmlEditor.error}</div> : null}
+                  </div>
+
+                  <div className="page-editor-html-preview-col">
+                    <label>Previsualización</label>
+                    <iframe
+                      title="Vista previa HTML del bloque"
+                      className="page-editor-html-preview"
+                      sandbox="allow-scripts allow-same-origin allow-presentation"
+                      srcDoc={htmlPreviewSrcDoc}
+                    />
+                  </div>
+                </div>
+
+                <footer className="page-editor-html-modal-footer">
+                  <div className="page-editor-html-modal-footer-left">
+                    <button type="button" className="ghost" onClick={handleResetHtmlOverride}>
+                      Restablecer original
+                    </button>
+                  </div>
+                  <div className="page-editor-html-modal-footer-right">
+                    <button type="button" className="ghost" onClick={closeHtmlEditor}>
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={handleHtmlUpdate}
+                      disabled={Boolean(htmlEditor.error)}
+                    >
+                      Actualizar
+                    </button>
+                  </div>
+                </footer>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 };

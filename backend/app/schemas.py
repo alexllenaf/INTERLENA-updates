@@ -42,9 +42,9 @@ class ApplicationBase(BaseModel):
     outcome: str
     pipeline_order: Optional[int] = None
     location: Optional[str] = None
-    application_date: Optional[date] = None
+    application_date: Optional[datetime] = None
     interview_datetime: Optional[datetime] = None
-    followup_date: Optional[date] = None
+    followup_date: Optional[datetime] = None
     interview_rounds: Optional[int] = None
     interview_type: Optional[str] = None
     interviewers: Optional[str] = None
@@ -77,9 +77,9 @@ class ApplicationUpdate(BaseModel):
     outcome: Optional[str] = None
     pipeline_order: Optional[int] = None
     location: Optional[str] = None
-    application_date: Optional[date] = None
+    application_date: Optional[datetime] = None
     interview_datetime: Optional[datetime] = None
-    followup_date: Optional[date] = None
+    followup_date: Optional[datetime] = None
     interview_rounds: Optional[int] = None
     interview_type: Optional[str] = None
     interviewers: Optional[str] = None

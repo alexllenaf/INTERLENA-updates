@@ -41,7 +41,7 @@ const PageBuilderPage: React.FC<Props> = ({
   createBlockForType
 }) => {
   const { settings, saveSettings } = useAppData();
-  const { executeCommand } = useUndo();
+  const { executeCommand, undoManager } = useUndo();
   const trace = useCallback(
     (event: string, payload?: Record<string, unknown>) => {
       tracePageConfig(`builder:${pageId}:${event}`, payload);
@@ -106,6 +106,7 @@ const PageBuilderPage: React.FC<Props> = ({
         });
         if (updated) {
           configSavedJsonRef.current = nextJson;
+          undoManager.saveCheckpoint();
           trace("flush:success", {
             config: summarizePageConfig(nextConfig)
           });
@@ -233,41 +234,45 @@ const PageBuilderPage: React.FC<Props> = ({
   const handlePageConfigChange = useCallback(
     (next: PageConfig) => {
       const previousConfig = pageConfigRef.current;
-      const stamped: PageConfig = {
-        ...next,
-        updated_at: new Date().toISOString()
-      };
 
       void executeCommand({
         description: "Edit page",
         timestamp: Date.now(),
         do: () => {
-          setPageConfig(stamped);
-          pageConfigRef.current = stamped;
-          configLocalJsonRef.current = JSON.stringify(stamped);
-          persistPageConfigLocal(pageId, stamped);
+          const applied: PageConfig = {
+            ...next,
+            updated_at: new Date().toISOString()
+          };
+          setPageConfig(applied);
+          pageConfigRef.current = applied;
+          configLocalJsonRef.current = JSON.stringify(applied);
+          persistPageConfigLocal(pageId, applied);
           trace("change:from-editor", {
-            config: summarizePageConfig(stamped)
+            config: summarizePageConfig(applied)
           });
           const currentSettings = settingsRef.current;
           if (currentSettings) {
-            settingsRef.current = writePageConfig(currentSettings, pageId, stamped);
+            settingsRef.current = writePageConfig(currentSettings, pageId, applied);
           }
-          scheduleFlushPageConfig(stamped);
+          scheduleFlushPageConfig(applied);
         },
         undo: () => {
-          setPageConfig(previousConfig);
-          pageConfigRef.current = previousConfig;
-          configLocalJsonRef.current = JSON.stringify(previousConfig);
-          persistPageConfigLocal(pageId, previousConfig);
+          const reverted: PageConfig = {
+            ...previousConfig,
+            updated_at: new Date().toISOString()
+          };
+          setPageConfig(reverted);
+          pageConfigRef.current = reverted;
+          configLocalJsonRef.current = JSON.stringify(reverted);
+          persistPageConfigLocal(pageId, reverted);
           trace("undo:revert-page-config", {
-            config: summarizePageConfig(previousConfig)
+            config: summarizePageConfig(reverted)
           });
           const currentSettings = settingsRef.current;
           if (currentSettings) {
-            settingsRef.current = writePageConfig(currentSettings, pageId, previousConfig);
+            settingsRef.current = writePageConfig(currentSettings, pageId, reverted);
           }
-          scheduleFlushPageConfig(previousConfig);
+          scheduleFlushPageConfig(reverted);
         }
       });
     },
@@ -343,6 +348,7 @@ const PageBuilderPage: React.FC<Props> = ({
           return;
         }
         configSavedJsonRef.current = targetJson;
+        undoManager.saveCheckpoint();
         trace("cross-page-drop:save-success", {
           sourcePageId: payload.sourcePageId,
           sourceBlockId: payload.sourceBlockId,
@@ -350,7 +356,7 @@ const PageBuilderPage: React.FC<Props> = ({
         });
       });
     },
-    [handlePageConfigChange, pageId, scheduleFlushPageConfig, trace]
+    [handlePageConfigChange, pageId, scheduleFlushPageConfig, trace, undoManager]
   );
 
   return (

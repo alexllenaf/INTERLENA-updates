@@ -123,6 +123,11 @@
   color: var(--accent);
 }
 
+.calendar-event-chip.application {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1e40af;
+}
+
 .calendar-event-chip.interview {
   background: rgba(47, 133, 90, 0.18);
   color: #276749;

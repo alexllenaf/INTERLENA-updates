@@ -2,6 +2,7 @@ import React from "react";
 
 import { openExternal, saveBlobAsFile } from "../../api";
 import ContactsManagerModal from "../ContactsManagerModal";
+import ContactsEditor from "../ContactsEditor";
 import StarRating from "../StarRating";
 import DocumentsDropzone from "../DocumentsDropzone";
 import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../TableCells";
@@ -43,6 +44,9 @@ export type TypeRegistryContext = {
     options?: SelectOption[];
     setOptions?: (next: SelectOption[]) => void;
     defaultColor?: string;
+  };
+  ui?: {
+    expandedComplexEditors?: boolean;
   };
 };
 
@@ -742,10 +746,11 @@ const baseSelectRenderer = (args: ColumnTypeRenderArgs) =>
 type TodoItemsTypeCellProps = {
   items: TodoItem[];
   canEdit: boolean;
+  expanded?: boolean;
   onCommit: (next: TodoItem[]) => void;
 };
 
-const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, onCommit }) => {
+const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, expanded = false, onCommit }) => {
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState({
     task: "",
@@ -798,100 +803,191 @@ const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, o
 
   return (
     <div className="todo-items-cell">
-      <div className="todo-items-summary">
-        {items.length === 0 ? (
-          <span className="todo-items-empty">No to-do items yet.</span>
-        ) : (
-          <span>{`${items.length} item${items.length === 1 ? "" : "s"} • ${pendingCount} pending`}</span>
-        )}
-      </div>
-      {canEdit && (
-        <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
-          {open ? "Close to-dos" : "Add to-do"}
-        </button>
-      )}
-      {canEdit && open && (
-        <div className="todo-items-popover">
-          {items.length === 0 ? (
-            <div className="todo-items-empty">No to-do items yet.</div>
-          ) : (
-            <table className="table todo-table todo-items-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Due Date</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => {
-                  const status = normalizeTodoStatus(item.status);
-                  return (
-                    <tr key={item.id} className={status === "Done" ? "todo-completed" : undefined}>
-                      <td>
-                        <TextCell
-                          value={item.task || ""}
-                          onCommit={(next) => updateItem(item.id, { task: next })}
-                        />
-                      </td>
-                      <td>
-                        <DateCell
-                          value={item.due_date || ""}
-                          onCommit={(next) => updateItem(item.id, { due_date: next || undefined })}
-                        />
-                      </td>
-                      <td>
-                        <SelectCell
-                          value={status}
-                          options={TODO_STATUS_SELECT_OPTIONS}
-                          onCommit={(next) => updateItem(item.id, { status: normalizeTodoStatus(next) })}
-                        />
-                      </td>
-                      <td>
-                        <button
-                          className="ghost small"
-                          type="button"
-                          onClick={() => removeItem(item.id)}
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-          <div className="todo-items-add-row">
-            <input
-              className="cell-input"
-              placeholder="New task"
-              value={draft.task}
-              onChange={(event) => setDraft((prev) => ({ ...prev, task: event.target.value }))}
-            />
-            <input
-              className="cell-date"
-              type="date"
-              value={draft.due_date}
-              onChange={(event) => setDraft((prev) => ({ ...prev, due_date: event.target.value }))}
-            />
-            <select
-              className={`cell-select todo-status ${TODO_STATUS_CLASS[normalizeTodoStatus(draft.status)]}`}
-              value={draft.status}
-              onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
-            >
-              {TODO_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-            <button className="primary small" type="button" onClick={addItem}>
-              Add
-            </button>
+      {!expanded ? (
+        <>
+          <div className="todo-items-summary">
+            {items.length === 0 ? (
+              <span className="todo-items-empty">No to-do items yet.</span>
+            ) : (
+              <span>{`${items.length} item${items.length === 1 ? "" : "s"} • ${pendingCount} pending`}</span>
+            )}
           </div>
+          {canEdit && (
+            <button className="link-button" type="button" onClick={() => setOpen((prev) => !prev)}>
+              {open ? "Close to-dos" : "Add to-do"}
+            </button>
+          )}
+          {canEdit && open && (
+            <div className="todo-items-popover">
+              {items.length === 0 ? (
+                <div className="todo-items-empty">No to-do items yet.</div>
+              ) : (
+                <table className="table todo-table todo-items-table">
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th>Due Date</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => {
+                      const status = normalizeTodoStatus(item.status);
+                      return (
+                        <tr key={item.id} className={status === "Done" ? "todo-completed" : undefined}>
+                          <td>
+                            <TextCell
+                              value={item.task || ""}
+                              onCommit={(next) => updateItem(item.id, { task: next })}
+                            />
+                          </td>
+                          <td>
+                            <DateCell
+                              value={item.due_date || ""}
+                              onCommit={(next) => updateItem(item.id, { due_date: next || undefined })}
+                            />
+                          </td>
+                          <td>
+                            <SelectCell
+                              value={status}
+                              options={TODO_STATUS_SELECT_OPTIONS}
+                              onCommit={(next) => updateItem(item.id, { status: normalizeTodoStatus(next) })}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              className="ghost small"
+                              type="button"
+                              onClick={() => removeItem(item.id)}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <div className="todo-items-add-row">
+                <input
+                  className="cell-input"
+                  placeholder="New task"
+                  value={draft.task}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, task: event.target.value }))}
+                />
+                <input
+                  className="cell-date"
+                  type="date"
+                  value={draft.due_date}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, due_date: event.target.value }))}
+                />
+                <select
+                  className={`cell-select todo-status ${TODO_STATUS_CLASS[normalizeTodoStatus(draft.status)]}`}
+                  value={draft.status}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
+                >
+                  {TODO_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+                <button className="primary small" type="button" onClick={addItem}>
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+      <div className="todo-header">
+        <div>
+          <h4>To-Do Items</h4>
+          <p>Track preparation tasks for this application.</p>
         </div>
+        <div className="todo-summary">{pendingCount} pending</div>
+      </div>
+      {items.length === 0 ? (
+        <div className="todo-items-empty">No to-do items yet.</div>
+      ) : (
+        <table className="table todo-table todo-items-table">
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const status = normalizeTodoStatus(item.status);
+              return (
+                <tr key={item.id} className={status === "Done" ? "todo-completed" : undefined}>
+                  <td>
+                    <TextCell
+                      value={item.task || ""}
+                      onCommit={(next) => updateItem(item.id, { task: next })}
+                    />
+                  </td>
+                  <td>
+                    <DateCell
+                      value={item.due_date || ""}
+                      onCommit={(next) => updateItem(item.id, { due_date: next || undefined })}
+                    />
+                  </td>
+                  <td>
+                    <SelectCell
+                      value={status}
+                      options={TODO_STATUS_SELECT_OPTIONS}
+                      onCommit={(next) => updateItem(item.id, { status: normalizeTodoStatus(next) })}
+                    />
+                  </td>
+                  <td>
+                    <button className="ghost small" type="button" onClick={() => removeItem(item.id)}>
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {canEdit && (
+        <div className="todo-add-row">
+          <input
+            className="cell-input"
+            placeholder="New task"
+            value={draft.task}
+            onChange={(event) => setDraft((prev) => ({ ...prev, task: event.target.value }))}
+          />
+          <input
+            className="cell-date"
+            type="date"
+            value={draft.due_date}
+            onChange={(event) => setDraft((prev) => ({ ...prev, due_date: event.target.value }))}
+          />
+          <select
+            className={`cell-select todo-status ${TODO_STATUS_CLASS[normalizeTodoStatus(draft.status)]}`}
+            value={draft.status}
+            onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}
+          >
+            {TODO_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+          <button className="primary small" type="button" onClick={addItem}>
+            Add
+          </button>
+        </div>
+      )}
+        </>
       )}
     </div>
   );
@@ -900,45 +996,54 @@ const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, o
 type ContactsTypeCellProps = {
   contacts: Contact[];
   canEdit: boolean;
+  expanded?: boolean;
   onCommit: (next: Contact[]) => void;
 };
 
-const ContactsTypeCell: React.FC<ContactsTypeCellProps> = ({ contacts, canEdit, onCommit }) => {
+const ContactsTypeCell: React.FC<ContactsTypeCellProps> = ({ contacts, canEdit, expanded = false, onCommit }) => {
   const [modalOpen, setModalOpen] = React.useState(false);
+
+  if (!expanded) {
+    return (
+      <div className="contacts-cell">
+        <div
+          className={`contacts-list${canEdit ? " contacts-list-clickable" : ""}`}
+          onClick={canEdit ? () => setModalOpen(true) : undefined}
+          role={canEdit ? "button" : undefined}
+          tabIndex={canEdit ? 0 : undefined}
+          onKeyDown={canEdit ? (e) => { if (e.key === "Enter" || e.key === " ") setModalOpen(true); } : undefined}
+        >
+          {contacts.length === 0 && <span className="contacts-empty">Sin contactos</span>}
+          {contacts.map((contact) => (
+            <div className="contact-item" key={contact.id}>
+              <div className="contact-name">{contact.name}</div>
+              <div className="contact-meta">
+                {contact.information && <span>{contact.information}</span>}
+                {contact.email && <span>{contact.email}</span>}
+                {contact.phone && <span>{contact.phone}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+        {canEdit && (
+          <button className="link-button" type="button" onClick={() => setModalOpen(true)}>
+            + Añadir contacto
+          </button>
+        )}
+        {modalOpen && (
+          <ContactsManagerModal
+            contacts={contacts}
+            onCommit={onCommit}
+            onClose={() => setModalOpen(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="contacts-cell">
-      <div
-        className={`contacts-list${canEdit ? " contacts-list-clickable" : ""}`}
-        onClick={canEdit ? () => setModalOpen(true) : undefined}
-        role={canEdit ? "button" : undefined}
-        tabIndex={canEdit ? 0 : undefined}
-        onKeyDown={canEdit ? (e) => { if (e.key === "Enter" || e.key === " ") setModalOpen(true); } : undefined}
-      >
-        {contacts.length === 0 && <span className="contacts-empty">Sin contactos</span>}
-        {contacts.map((contact) => (
-          <div className="contact-item" key={contact.id}>
-            <div className="contact-name">{contact.name}</div>
-            <div className="contact-meta">
-              {contact.information && <span>{contact.information}</span>}
-              {contact.email && <span>{contact.email}</span>}
-              {contact.phone && <span>{contact.phone}</span>}
-            </div>
-          </div>
-        ))}
-      </div>
-      {canEdit && (
-        <button className="link-button" type="button" onClick={() => setModalOpen(true)}>
-          + Añadir contacto
-        </button>
-      )}
-      {modalOpen && (
-        <ContactsManagerModal
-          contacts={contacts}
-          onCommit={onCommit}
-          onClose={() => setModalOpen(false)}
-        />
-      )}
+      <ContactsEditor contacts={contacts} onCommit={onCommit} />
     </div>
   );
 };
@@ -1264,6 +1369,7 @@ const contactsRenderer = (args: ColumnTypeRenderArgs) =>
   React.createElement(ContactsTypeCell, {
     contacts: Array.isArray(args.value) ? (args.value as Contact[]) : [],
     canEdit: args.canEdit,
+    expanded: Boolean(args.context?.ui?.expandedComplexEditors),
     onCommit: (next: Contact[]) => args.onCommit(next)
   });
 
@@ -1271,6 +1377,7 @@ const todoItemsRenderer = (args: ColumnTypeRenderArgs) =>
   React.createElement(TodoItemsTypeCell, {
     items: Array.isArray(args.value) ? (args.value as TodoItem[]) : [],
     canEdit: args.canEdit,
+    expanded: Boolean(args.context?.ui?.expandedComplexEditors),
     onCommit: (next: TodoItem[]) => args.onCommit(next)
   });
 

@@ -36,7 +36,7 @@ import {
   getBlockLink
 } from "../components/pageBuilder/blockLinks";
 import StarRating from "../components/StarRating";
-import { DateCell, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
+import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
 import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
 import { useI18n } from "../i18n";
 import {
@@ -60,7 +60,8 @@ import {
   followupStatus,
   generateId,
   parseDocumentLinks,
-  parseLocalDateOnly
+  parseLocalDateOnly,
+  toDateTimeLocalValue
 } from "../utils";
 import {
   normalizeTodoStatus,
@@ -311,6 +312,22 @@ const CalendarPage: React.FC = () => {
   const events = useMemo<CalendarEvent[]>(() => {
     const items: CalendarEvent[] = [];
     applications.forEach((app) => {
+      if (app.application_date) {
+        const date = new Date(app.application_date);
+        if (!Number.isNaN(date.getTime())) {
+          items.push({
+            id: `${app.application_id}-application-${date.getTime()}`,
+            appId: app.id,
+            applicationId: app.application_id,
+            type: "Application",
+            company: app.company_name,
+            position: app.position,
+            date,
+            dateKey: toDateKey(date),
+            dateLabel: date.toLocaleDateString()
+          });
+        }
+      }
       if (app.interview_datetime) {
         const date = new Date(app.interview_datetime);
         if (!Number.isNaN(date.getTime())) {
@@ -346,8 +363,11 @@ const CalendarPage: React.FC = () => {
       }
       const todoItems = app.todo_items || [];
       todoItems.forEach((todo) => {
-        const date = parseLocalDateOnly(todo.due_date);
+        const rawDueDate = (todo.due_date || "").trim();
+        const hasTime = /(?:T|\s)\d{2}:\d{2}/.test(rawDueDate);
+        const date = hasTime ? new Date(rawDueDate) : parseLocalDateOnly(rawDueDate);
         if (!date) return;
+        if (hasTime && Number.isNaN(date.getTime())) return;
         items.push({
           id: `${app.application_id}-todo-${todo.id}`,
           appId: app.id,
@@ -358,7 +378,10 @@ const CalendarPage: React.FC = () => {
           position: todo.task,
           date,
           dateKey: toDateKey(date),
-          dateLabel: date.toLocaleDateString()
+          dateLabel: date.toLocaleDateString(),
+          timeLabel: hasTime
+            ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : undefined
         });
       });
     });
@@ -1960,6 +1983,8 @@ const CalendarPage: React.FC = () => {
                               ? "followup"
                               : event.type === "To-Do"
                               ? "todo"
+                              : event.type === "Application"
+                              ? "application"
                               : "interview";
                           return (
                             <span key={event.id} className={`calendar-event-chip ${chipClass}`}>
@@ -2289,7 +2314,7 @@ const CalendarPage: React.FC = () => {
                         }
                         if (col === "due_date") {
                           return (
-                            <DateCell
+                            <DateTimeCell
                               value={row.todo.due_date || ""}
                               onCommit={(next) => updateTodoItem(row.appId, row.todo.id, { due_date: next })}
                             />
@@ -2806,8 +2831,8 @@ const CalendarPage: React.FC = () => {
               <div className="field">
                 <label>{t("Due Date")}</label>
                 <input
-                  type="date"
-                  value={todoCreateDraft.due_date}
+                  type="datetime-local"
+                  value={toDateTimeLocalValue(todoCreateDraft.due_date)}
                   onChange={(event) => updateTodoCreateDraft({ due_date: event.target.value })}
                 />
               </div>
@@ -2974,8 +2999,8 @@ const CalendarPage: React.FC = () => {
               <div className="field">
                 <label>{t("Due Date")}</label>
                 <input
-                  type="date"
-                  value={todoEditDraft.due_date}
+                  type="datetime-local"
+                  value={toDateTimeLocalValue(todoEditDraft.due_date)}
                   onChange={(event) => updateTodoEditDraft({ due_date: event.target.value })}
                 />
               </div>
@@ -3127,8 +3152,8 @@ const CalendarPage: React.FC = () => {
                 {t("Due Date")}
                 <input
                   className="cell-date"
-                  type="date"
-                  value={todoDetailDraft.due_date}
+                  type="datetime-local"
+                  value={toDateTimeLocalValue(todoDetailDraft.due_date)}
                   onChange={(event) => updateTodoDetailDraft({ due_date: event.target.value })}
                 />
               </label>
