@@ -89,6 +89,25 @@
   box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.15);
 }
 
+.cell-textarea {
+  width: 100%;
+  min-height: 66px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+.cell-textarea:focus {
+  outline: none;
+  border-color: var(--border);
+  box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.15);
+}
+
 .table .cell-select {
   cursor: pointer;
 }
@@ -1056,4 +1075,3 @@ thead .row-handle-col {
 .table tbody tr.row-drag-over td {
   border-top: 2px solid var(--accent);
 }
-

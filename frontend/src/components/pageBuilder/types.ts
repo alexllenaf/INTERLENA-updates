@@ -13,7 +13,8 @@ export const PAGE_BLOCK_TYPES = [
   "chart",
   "kpi",
   "pipeline",
-  "email"
+  "email",
+  "databaseView"
 ] as const;
 
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
@@ -220,7 +221,76 @@ export type EmailBlockProps = LinkableBlockProps & {
   sendSubjectTemplate?: string;
   sendBodyTemplate?: string;
   sendContactLimit?: number;
+  sendSelectedRecipients?: Record<string, boolean>;
+  sendDraftAttachments?: Array<{
+    id: string;
+    kind: "image" | "document";
+    filename: string;
+    contentType?: string;
+    size: number;
+    lastModified: number;
+    dataBase64: string;
+    sendDataBase64?: string;
+    sendContentType?: string;
+    sendSizeBytes?: number;
+    renderWidth?: number;
+    naturalWidth?: number;
+    naturalHeight?: number;
+  }>;
+  sendDraftEntries?: Array<{
+    id: string;
+    subjectTemplate: string;
+    bodyTemplate: string;
+    attachments: Array<{
+      id: string;
+      kind: "image" | "document";
+      filename: string;
+      contentType?: string;
+      size: number;
+      lastModified: number;
+      dataBase64: string;
+      sendDataBase64?: string;
+      sendContentType?: string;
+      sendSizeBytes?: number;
+      renderWidth?: number;
+      naturalWidth?: number;
+      naturalHeight?: number;
+    }>;
+    selectedRecipients?: Record<string, boolean>;
+    recipientCount: number;
+    updatedAt: string;
+  }>;
+  sendSentEntries?: Array<{
+    id: string;
+    subjectTemplate: string;
+    bodyTemplate: string;
+    attachments: Array<{
+      id: string;
+      kind: "image" | "document";
+      filename: string;
+      contentType?: string;
+      size: number;
+      lastModified: number;
+      dataBase64: string;
+      sendDataBase64?: string;
+      sendContentType?: string;
+      sendSizeBytes?: number;
+      renderWidth?: number;
+      naturalWidth?: number;
+      naturalHeight?: number;
+    }>;
+    recipientCount: number;
+    updatedAt: string;
+  }>;
   contentSlotId?: string;
+};
+
+export type DatabaseViewBlockProps = LinkableBlockProps & {
+  title: string;
+  description?: string;
+  databaseId: string;
+  viewId?: string;
+  emptyMessage?: string;
 };
 
 export type PageBlockPropsMap = {
@@ -235,6 +305,7 @@ export type PageBlockPropsMap = {
   kpi: KpiBlockProps;
   pipeline: PipelineBlockProps;
   email: EmailBlockProps;
+  databaseView: DatabaseViewBlockProps;
 };
 
 export type PageBlockConfig<TType extends PageBlockType = PageBlockType> = {

@@ -103,7 +103,7 @@ const ContactsEditor: React.FC<ContactsEditorProps> = ({ contacts, onCommit }) =
 
   return (
     <div className="contacts-editor">
-      <div className="contacts-list">
+      <div className={`contacts-list${editingId ? " contacts-list-editing" : ""}`}>
         {list.length === 0 && <span className="contacts-empty">{t("No contacts yet.")}</span>}
         {list.map((contact) =>
           editingId === contact.id ? (

@@ -1,0 +1,76 @@
+{
+  "id": "projects_v1",
+  "version": "projects_v1",
+  "name": "Projects Workspace",
+  "description": "Plantilla de proyectos con tablero y fechas.",
+  "home_page": "home",
+  "pages": [
+    {
+      "id": "home",
+      "title": "Projects Home",
+      "icon": "rocket",
+      "blocks": [
+        {
+          "id": "projects:summary",
+          "type": "text",
+          "layout": { "colSpan": 60 },
+          "props": {
+            "text": "Define objetivos, milestones y responsables por proyecto."
+          },
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  { "type": "text", "text": "Define objetivos, milestones y responsables por proyecto." }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "id": "projects_db",
+      "name": "Projects",
+      "properties": [
+        { "id": "name", "name": "Name", "type": "text", "config": {} },
+        {
+          "id": "status",
+          "name": "Status",
+          "type": "select",
+          "config": { "options": ["Planned", "In Progress", "Blocked", "Done"] }
+        },
+        { "id": "owner", "name": "Owner", "type": "text", "config": {} },
+        { "id": "deadline", "name": "Deadline", "type": "date", "config": {} }
+      ],
+      "views": [
+        { "id": "projects_table", "name": "Table", "type": "table", "config": {} },
+        { "id": "projects_board", "name": "Board", "type": "board", "config": { "groupBy": "Status" } }
+      ],
+      "records": [
+        {
+          "id": "project_1",
+          "page": { "id": "project_1_page", "title": "Lanzamiento portfolio" },
+          "values": {
+            "Name": "Lanzamiento portfolio",
+            "Status": "In Progress",
+            "Owner": "You"
+          }
+        },
+        {
+          "id": "project_2",
+          "page": { "id": "project_2_page", "title": "Pipeline automation" },
+          "values": {
+            "Name": "Pipeline automation",
+            "Status": "Planned",
+            "Owner": "You"
+          }
+        }
+      ]
+    }
+  ]
+}

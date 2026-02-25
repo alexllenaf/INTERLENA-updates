@@ -1,0 +1,36 @@
+{
+  "id": "blank_v1",
+  "version": "blank_v1",
+  "name": "Blank Workspace",
+  "description": "Espacio vacío para empezar desde cero.",
+  "home_page": "home",
+  "pages": [
+    {
+      "id": "home",
+      "title": "Home",
+      "icon": "spark",
+      "blocks": [
+        {
+          "id": "blank:welcome",
+          "type": "text",
+          "layout": { "colSpan": 60 },
+          "props": {
+            "text": "Página vacía lista para personalizar."
+          },
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  { "type": "text", "text": "Página vacía lista para personalizar." }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "databases": []
+}

@@ -200,6 +200,11 @@ button.small {
   overflow: auto;
 }
 
+.contacts-list.contacts-list-editing {
+  max-height: none;
+  overflow: visible;
+}
+
 .contacts-empty {
   color: var(--muted);
   font-size: 12px;
@@ -1290,4 +1295,3 @@ button.small {
   border: 1px solid var(--border);
   background: var(--surface-alt);
 }
-

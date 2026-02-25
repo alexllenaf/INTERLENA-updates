@@ -5,7 +5,7 @@ import ContactsManagerModal from "../ContactsManagerModal";
 import ContactsEditor from "../ContactsEditor";
 import StarRating from "../StarRating";
 import DocumentsDropzone from "../DocumentsDropzone";
-import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../TableCells";
+import { DateCell, DateTimeCell, SelectCell, TextAreaCell, type SelectOption, TextCell } from "../TableCells";
 import {
   normalizeTodoStatus,
   TODO_STATUSES,
@@ -20,6 +20,7 @@ import {
   toDateInputValue,
   toDateTimeLocalValue
 } from "../../utils";
+import { isCompactTextValue } from "../../shared/textControl";
 import { type EditableTableColumnKind } from "../pageBuilder/types";
 
 export type TypeOverridePolicy = {
@@ -47,6 +48,8 @@ export type TypeRegistryContext = {
   };
   ui?: {
     expandedComplexEditors?: boolean;
+    textControl?: "input" | "textarea";
+    textRows?: number;
   };
 };
 
@@ -587,13 +590,23 @@ const getLocalSelectActions = (ctx: TypeRegistryContext): ColumnTypeSelectAction
   };
 };
 
-const baseTextRenderer = (args: ColumnTypeRenderArgs) =>
-  React.createElement(TextCell, {
-    value: args.rawValue,
-    highlightQuery: args.highlightQuery,
-    readOnly: !args.canEdit,
-    onCommit: (next: string) => args.onCommit(next)
-  });
+const baseTextRenderer = (args: ColumnTypeRenderArgs) => {
+  const prefersTextarea = args.context?.ui?.textControl === "textarea" && args.canEdit;
+  const shouldUseTextarea = prefersTextarea && !isCompactTextValue(args.rawValue);
+  return shouldUseTextarea
+    ? React.createElement(TextAreaCell, {
+        value: args.rawValue,
+        rows: args.context?.ui?.textRows || 3,
+        readOnly: !args.canEdit,
+        onCommit: (next: string) => args.onCommit(next)
+      })
+    : React.createElement(TextCell, {
+        value: args.rawValue,
+        highlightQuery: args.highlightQuery,
+        readOnly: !args.canEdit,
+        onCommit: (next: string) => args.onCommit(next)
+      });
+};
 
 const baseDateRenderer = (args: ColumnTypeRenderArgs) =>
   args.canEdit

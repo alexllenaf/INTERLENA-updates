@@ -9,15 +9,15 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
 import { TextStyle } from "@tiptap/extension-text-style";
 import Color from "@tiptap/extension-color";
 import FontFamily from "@tiptap/extension-font-family";
 import Highlight from "@tiptap/extension-highlight";
-import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
+import { Node as TiptapNode, mergeAttributes } from "@tiptap/core";
 
 /* ── Custom FontSize extension (TipTap doesn't ship one by default) ─── */
 import { Extension } from "@tiptap/react";
@@ -55,6 +55,363 @@ const FontSize = Extension.create({
         ({ chain }: { chain: () => any }) =>
           chain().setMark("textStyle", { fontSize: null }).run(),
     } as any;
+  },
+});
+
+const ATTACHMENT_ICON_MIN_SIZE = 28;
+const ATTACHMENT_ICON_MAX_SIZE = 96;
+const ATTACHMENT_ICON_DEFAULT_SIZE = 42;
+const ATTACHMENT_IMAGE_MIN_WIDTH = 120;
+const ATTACHMENT_IMAGE_MAX_WIDTH = 960;
+const ATTACHMENT_IMAGE_DEFAULT_WIDTH = 360;
+
+const clampAttachmentIconSize = (value: number): number =>
+  Math.max(ATTACHMENT_ICON_MIN_SIZE, Math.min(ATTACHMENT_ICON_MAX_SIZE, Math.round(value || ATTACHMENT_ICON_DEFAULT_SIZE)));
+
+const clampAttachmentImageWidth = (value: number): number =>
+  Math.max(
+    ATTACHMENT_IMAGE_MIN_WIDTH,
+    Math.min(ATTACHMENT_IMAGE_MAX_WIDTH, Math.round(value || ATTACHMENT_IMAGE_DEFAULT_WIDTH))
+  );
+
+type EmailAttachmentKind = "image" | "document";
+
+type RichTextAttachmentCatalogItem = {
+  kind: EmailAttachmentKind;
+  filename: string;
+  sizeBytes: number;
+  previewUrl?: string;
+  renderWidth?: number;
+};
+
+const formatAttachmentSize = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 100 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+};
+
+const listInlineAttachmentIds = (editor: Editor): string[] => {
+  const ids = new Set<string>();
+  editor.state.doc.descendants((node) => {
+    if (node.type?.name !== "emailAttachment") return;
+    const id = String((node.attrs as Record<string, unknown>)?.attachmentId || "").trim();
+    if (id) ids.add(id);
+  });
+  return Array.from(ids);
+};
+
+const EmailAttachmentIcon: React.FC<{ size: number }> = ({ size }) => (
+  <svg
+    viewBox="0 0 20 20"
+    aria-hidden="true"
+    style={{ width: size, height: size, display: "block" }}
+  >
+    <path
+      d="M5 2.75A1.75 1.75 0 0 0 3.25 4.5v11A1.75 1.75 0 0 0 5 17.25h10A1.75 1.75 0 0 0 16.75 15.5V7.19a1.75 1.75 0 0 0-.5-1.23l-2.72-2.71a1.75 1.75 0 0 0-1.23-.5H5Zm0 1.5h6.75v2.5c0 .97.78 1.75 1.75 1.75h1.75v7a.25.25 0 0 1-.25.25H5a.25.25 0 0 1-.25-.25v-11c0-.14.11-.25.25-.25Zm1.5 7.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75Zm0 2.5a.75.75 0 0 1 .75-.75h3.75a.75.75 0 0 1 0 1.5H7.25a.75.75 0 0 1-.75-.75Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+const EmailAttachmentNodeView: React.FC<NodeViewProps> = (props) => {
+  const { node, selected, updateAttributes, extension } = props;
+  const attachmentId = String(node.attrs.attachmentId || "");
+  const extensionOptions = ((extension as any)?.options || {}) as {
+    resolveAttachment?: (id: string) => RichTextAttachmentCatalogItem | null;
+    onAttachmentResize?: (id: string, width: number) => void;
+  };
+  const resolved = extensionOptions.resolveAttachment?.(attachmentId) || null;
+  const nodeKind: EmailAttachmentKind = node.attrs.kind === "image" ? "image" : "document";
+  const resolvedKind: EmailAttachmentKind | null =
+    resolved?.kind === "image" || resolved?.kind === "document" ? resolved.kind : null;
+  const kind: EmailAttachmentKind = resolvedKind || nodeKind;
+  const filename = String(node.attrs.filename || resolved?.filename || "Documento");
+  const sizeBytes = Number(resolved?.sizeBytes || node.attrs.sizeBytes || 0) || 0;
+  const renderWidth = clampAttachmentImageWidth(
+    Number(node.attrs.renderWidth || resolved?.renderWidth || ATTACHMENT_IMAGE_DEFAULT_WIDTH)
+  );
+  const previewUrl = kind === "image" ? String(resolved?.previewUrl || "").trim() : "";
+  const iconSize = clampAttachmentIconSize(Number(node.attrs.iconSize) || ATTACHMENT_ICON_DEFAULT_SIZE);
+  const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
+
+  // Keep stored HTML attrs aligned with the canonical attachment type.
+  useEffect(() => {
+    if (!resolvedKind || resolvedKind === nodeKind) return;
+    updateAttributes({ kind: resolvedKind });
+  }, [nodeKind, resolvedKind, updateAttributes]);
+
+  const setPresetSize = useCallback(
+    (next: number, notify = false) => {
+      const width = clampAttachmentImageWidth(next);
+      updateAttributes({ renderWidth: width });
+      if (notify && attachmentId) {
+        extensionOptions.onAttachmentResize?.(attachmentId, width);
+      }
+    },
+    [attachmentId, extensionOptions, updateAttributes]
+  );
+
+  const onResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (kind !== "image") return;
+      event.preventDefault();
+      event.stopPropagation();
+      resizeStartRef.current = { x: event.clientX, width: renderWidth };
+      let latestWidth = renderWidth;
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const start = resizeStartRef.current;
+        if (!start) return;
+        const delta = moveEvent.clientX - start.x;
+        latestWidth = clampAttachmentImageWidth(start.width + delta);
+        updateAttributes({ renderWidth: latestWidth });
+      };
+
+      const onUp = () => {
+        resizeStartRef.current = null;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        if (attachmentId) {
+          extensionOptions.onAttachmentResize?.(attachmentId, latestWidth);
+        }
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [attachmentId, extensionOptions, kind, renderWidth, updateAttributes]
+  );
+
+  return (
+    <NodeViewWrapper
+      as="span"
+      className={`email-attachment-node-view${selected ? " is-selected" : ""}`}
+      draggable
+      data-email-attachment="true"
+      data-attachment-id={String(node.attrs.attachmentId || "")}
+      data-attachment-kind={kind}
+      data-icon-size={String(iconSize)}
+      data-render-width={kind === "image" ? String(renderWidth) : undefined}
+      style={{
+        ["--email-attachment-icon-size" as any]: `${iconSize}px`,
+        ["--email-attachment-render-width" as any]: kind === "image" ? `${renderWidth}px` : undefined,
+      }}
+    >
+      <div className="email-attachment-node-main" contentEditable={false} data-drag-handle title="Arrastrar adjunto">
+        {kind === "image" ? (
+          <span className="email-attachment-image-wrap">
+            {previewUrl ? (
+              <img src={previewUrl} alt={filename} className="email-attachment-image" draggable={false} />
+            ) : (
+              <span className="email-attachment-image-fallback">Imagen</span>
+            )}
+            <span className="email-attachment-meta email-attachment-meta-image">
+              <span className="email-attachment-name" title={filename}>{filename}</span>
+              <span className="email-attachment-size">{formatAttachmentSize(sizeBytes)}</span>
+            </span>
+          </span>
+        ) : (
+          <span className="email-attachment-file-wrap">
+            <span className="email-attachment-icon-wrap email-attachment-icon-wrap-file">
+              <EmailAttachmentIcon size={iconSize} />
+            </span>
+            <span className="email-attachment-meta email-attachment-meta-file">
+              <span className="email-attachment-name" title={filename}>{filename}</span>
+              <span className="email-attachment-size">{formatAttachmentSize(sizeBytes)}</span>
+            </span>
+          </span>
+        )}
+      </div>
+      {selected && kind === "image" ? (
+        <div className="email-attachment-node-controls" contentEditable={false}>
+          <button type="button" onClick={() => setPresetSize(220, true)} title="Tamaño pequeño">S</button>
+          <button type="button" onClick={() => setPresetSize(360, true)} title="Tamaño medio">M</button>
+          <button type="button" onClick={() => setPresetSize(520, true)} title="Tamaño grande">L</button>
+          <button
+            type="button"
+            className="email-attachment-resize-handle"
+            onMouseDown={onResizeStart}
+            title="Redimensionar imagen"
+            aria-label="Redimensionar imagen"
+          >
+            ↔
+          </button>
+        </div>
+      ) : null}
+    </NodeViewWrapper>
+  );
+};
+
+const EmailAttachment = TiptapNode.create({
+  name: "emailAttachment",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: true,
+  addOptions() {
+    return {
+      resolveAttachment: null,
+      onAttachmentResize: null,
+    } as {
+      resolveAttachment: ((id: string) => RichTextAttachmentCatalogItem | null) | null;
+      onAttachmentResize: ((id: string, width: number) => void) | null;
+    };
+  },
+  addAttributes() {
+    return {
+      attachmentId: {
+        default: "",
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-attachment-id") || "",
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          "data-attachment-id": String(attributes.attachmentId || ""),
+        }),
+      },
+      kind: {
+        default: "document",
+        parseHTML: (element: HTMLElement) => {
+          const raw = String(element.getAttribute("data-kind") || "").trim().toLowerCase();
+          return raw === "image" ? "image" : "document";
+        },
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          "data-kind": attributes.kind === "image" ? "image" : "document",
+        }),
+      },
+      filename: {
+        default: "",
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-filename") || "",
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          "data-filename": String(attributes.filename || ""),
+        }),
+      },
+      sizeBytes: {
+        default: 0,
+        parseHTML: (element: HTMLElement) => Number(element.getAttribute("data-size-bytes") || 0) || 0,
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          "data-size-bytes": String(Number(attributes.sizeBytes || 0) || 0),
+        }),
+      },
+      renderWidth: {
+        default: ATTACHMENT_IMAGE_DEFAULT_WIDTH,
+        parseHTML: (element: HTMLElement) =>
+          clampAttachmentImageWidth(Number(element.getAttribute("data-render-width")) || ATTACHMENT_IMAGE_DEFAULT_WIDTH),
+        renderHTML: (attributes: Record<string, unknown>) => ({
+          "data-render-width": String(
+            clampAttachmentImageWidth(Number(attributes.renderWidth) || ATTACHMENT_IMAGE_DEFAULT_WIDTH)
+          ),
+        }),
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      { tag: "span[data-email-attachment='true']" },
+      { tag: "div[data-email-attachment='true']" },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    const kind = HTMLAttributes.kind === "image" ? "image" : "document";
+    const filename = String(HTMLAttributes.filename || "Documento");
+    const sizeBytes = Number(HTMLAttributes.sizeBytes || 0) || 0;
+    const renderWidth = clampAttachmentImageWidth(Number(HTMLAttributes.renderWidth) || ATTACHMENT_IMAGE_DEFAULT_WIDTH);
+    return [
+      "span",
+      mergeAttributes(HTMLAttributes, {
+        class: "email-inline-attachment",
+        "data-email-attachment": "true",
+        "data-kind": kind,
+        style: kind === "image" ? `--email-attachment-render-width:${renderWidth}px` : undefined,
+      }),
+      kind === "image"
+        ? [
+            "span",
+            { class: "email-inline-attachment-image-wrap" },
+            ["span", { class: "email-inline-attachment-image-fallback" }, "Imagen"],
+            [
+              "span",
+              { class: "email-inline-attachment-meta email-inline-attachment-meta-image" },
+              ["span", { class: "email-inline-attachment-name", title: filename }, filename],
+              ["span", { class: "email-inline-attachment-size" }, formatAttachmentSize(sizeBytes)],
+            ],
+          ]
+        : [
+            "span",
+            { class: "email-inline-attachment-file-wrap" },
+            [
+              "span",
+              { class: "email-inline-attachment-icon-wrap", "aria-hidden": "true" },
+              [
+                "svg",
+                { viewBox: "0 0 20 20", width: "20", height: "20" },
+                [
+                  "path",
+                  {
+                    d: "M5 2.75A1.75 1.75 0 0 0 3.25 4.5v11A1.75 1.75 0 0 0 5 17.25h10A1.75 1.75 0 0 0 16.75 15.5V7.19a1.75 1.75 0 0 0-.5-1.23l-2.72-2.71a1.75 1.75 0 0 0-1.23-.5H5Zm0 1.5h6.75v2.5c0 .97.78 1.75 1.75 1.75h1.75v7a.25.25 0 0 1-.25.25H5a.25.25 0 0 1-.25-.25v-11c0-.14.11-.25.25-.25Zm1.5 7.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75Zm0 2.5a.75.75 0 0 1 .75-.75h3.75a.75.75 0 0 1 0 1.5H7.25a.75.75 0 0 1-.75-.75Z",
+                    fill: "currentColor",
+                  },
+                ],
+              ],
+            ],
+            [
+              "span",
+              { class: "email-inline-attachment-meta" },
+              ["span", { class: "email-inline-attachment-name", title: filename }, filename],
+              ["span", { class: "email-inline-attachment-size" }, formatAttachmentSize(sizeBytes)],
+            ],
+          ],
+    ];
+  },
+  addCommands() {
+    return {
+      insertEmailAttachment:
+        (attrs: {
+          attachmentId: string;
+          kind: EmailAttachmentKind;
+          filename: string;
+          sizeBytes: number;
+          renderWidth?: number;
+        }) =>
+        ({ chain }: { chain: () => any }) =>
+          chain()
+            .insertContent({
+              type: this.name,
+              attrs: {
+                attachmentId: attrs.attachmentId,
+                kind: attrs.kind,
+                filename: attrs.filename,
+                sizeBytes: Number(attrs.sizeBytes || 0) || 0,
+                renderWidth: clampAttachmentImageWidth(Number(attrs.renderWidth) || ATTACHMENT_IMAGE_DEFAULT_WIDTH),
+              },
+            })
+            .run(),
+      removeEmailAttachmentById:
+        (attachmentId: string) =>
+        ({ state, dispatch }: { state: any; dispatch?: ((tr: any) => void) | undefined }) => {
+          const ranges: Array<{ from: number; to: number }> = [];
+          state.doc.descendants((node: any, pos: number) => {
+            if (node.type?.name === this.name && String(node.attrs?.attachmentId || "") === String(attachmentId || "")) {
+              ranges.push({ from: pos, to: pos + node.nodeSize });
+            }
+          });
+          if (!ranges.length) return false;
+          if (dispatch) {
+            const tr = state.tr;
+            ranges
+              .sort((a, b) => b.from - a.from)
+              .forEach((range) => {
+                tr.delete(range.from, range.to);
+              });
+            dispatch(tr);
+          }
+          return true;
+        },
+    } as any;
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(EmailAttachmentNodeView);
   },
 });
 
@@ -478,6 +835,16 @@ export interface RichTextEditorProps {
   className?: string;
   /** Extra content rendered at the end of the toolbar (receives the TipTap editor) */
   toolbarExtra?: (editor: Editor) => React.ReactNode;
+  /** Optional overlay rendered on top of the editable content area. */
+  contentOverlay?: React.ReactNode;
+  /** Gives access to the underlying TipTap editor instance. */
+  onEditorReady?: (editor: Editor | null) => void;
+  /** Attachment metadata used to render inline previews in the editor. */
+  attachmentCatalog?: Record<string, RichTextAttachmentCatalogItem>;
+  /** Called when inline image width changes. */
+  onAttachmentResize?: (attachmentId: string, width: number) => void;
+  /** Called whenever the set of inline attachment IDs in body changes. */
+  onAttachmentIdsChange?: (attachmentIds: string[]) => void;
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -485,29 +852,56 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   onChange,
   placeholder = "Escribe aquí…",
   minHeight = 200,
-  className,  toolbarExtra,}) => {
+  className,
+  toolbarExtra,
+  contentOverlay,
+  onEditorReady,
+  attachmentCatalog,
+  onAttachmentResize,
+  onAttachmentIdsChange,
+}) => {
   /** Track whether the last HTML change came from the editor itself. */
   const internalChange = useRef(false);
+  const attachmentCatalogRef = useRef<Record<string, RichTextAttachmentCatalogItem>>(attachmentCatalog || {});
+  const onAttachmentResizeRef = useRef<typeof onAttachmentResize>(onAttachmentResize);
+  const onAttachmentIdsChangeRef = useRef<typeof onAttachmentIdsChange>(onAttachmentIdsChange);
+
+  useEffect(() => {
+    attachmentCatalogRef.current = attachmentCatalog || {};
+  }, [attachmentCatalog]);
+
+  useEffect(() => {
+    onAttachmentResizeRef.current = onAttachmentResize;
+  }, [onAttachmentResize]);
+
+  useEffect(() => {
+    onAttachmentIdsChangeRef.current = onAttachmentIdsChange;
+  }, [onAttachmentIdsChange]);
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
+        link: { openOnClick: false, autolink: true },
+        underline: {},
       }),
-      Underline,
       TextStyle,
       Color,
       FontFamily,
       FontSize,
+      EmailAttachment.configure({
+        resolveAttachment: (id: string) => attachmentCatalogRef.current[String(id || "")] || null,
+        onAttachmentResize: (id: string, width: number) => onAttachmentResizeRef.current?.(id, width),
+      }),
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
-      Link.configure({ openOnClick: false, autolink: true }),
       Placeholder.configure({ placeholder }),
     ],
     content: value || "",
     onUpdate: ({ editor: ed }) => {
       internalChange.current = true;
       onChange(ed.getHTML());
+      onAttachmentIdsChangeRef.current?.(listInlineAttachmentIds(ed));
     },
   });
 
@@ -523,6 +917,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       editor.commands.setContent(value || "", { emitUpdate: false });
     }
   }, [value, editor]);
+
+  useEffect(() => {
+    if (!onEditorReady) return;
+    onEditorReady(editor || null);
+    return () => onEditorReady(null);
+  }, [editor, onEditorReady]);
 
   if (!editor) return null;
 
@@ -542,17 +942,27 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           {toolbarExtra(editor)}
         </div>
       ) : null}
-      <EditorContent
-        editor={editor}
-        style={{
-          minHeight,
-          padding: "12px 14px",
-          fontSize: 14,
-          lineHeight: 1.6,
-          outline: "none",
-        }}
-      />
+      <div className="rich-text-editor-content-wrap">
+        {contentOverlay ? <div className="rich-text-editor-content-overlay">{contentOverlay}</div> : null}
+        <EditorContent
+          editor={editor}
+          style={{
+            minHeight,
+            padding: "12px 14px",
+            fontSize: 14,
+            lineHeight: 1.6,
+            outline: "none",
+          }}
+        />
+      </div>
       <style>{`
+        .rich-text-editor-content-wrap { position: relative; }
+        .rich-text-editor-content-overlay {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          z-index: 20;
+        }
         .ProseMirror { outline: none; min-height: ${minHeight}px; }
         .ProseMirror p { margin: 0.25em 0; }
         .ProseMirror h1 { font-size: 1.6em; margin: 0.4em 0 0.2em; }
@@ -568,6 +978,227 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           color: #94a3b8;
           pointer-events: none;
           height: 0;
+        }
+        .ProseMirror .email-attachment-node-view {
+          display: inline-flex;
+          flex-direction: column;
+          vertical-align: middle;
+          margin: 0.1em 0.2em;
+        }
+        .ProseMirror .email-attachment-node-main {
+          display: inline-flex;
+          align-items: flex-start;
+          gap: 8px;
+          border: 1px solid rgba(15, 23, 42, 0.14);
+          border-radius: 12px;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+          padding: 8px;
+          max-width: min(100%, 520px);
+          vertical-align: middle;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+          cursor: grab;
+        }
+        .ProseMirror .email-attachment-node-main:active {
+          cursor: grabbing;
+        }
+        .ProseMirror .email-attachment-node-view.is-selected .email-attachment-node-main {
+          border-color: rgba(43, 108, 176, 0.42);
+          box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.16);
+        }
+        .ProseMirror .email-attachment-file-wrap {
+          display: inline-flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          min-width: 88px;
+        }
+        .ProseMirror .email-attachment-icon-wrap-file {
+          width: var(--email-attachment-icon-size, 42px);
+          height: var(--email-attachment-icon-size, 42px);
+          color: #1f5e99;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(36, 89, 143, 0.2);
+          border-radius: 10px;
+          background: #f2f7ff;
+          padding: 6px;
+          box-sizing: border-box;
+        }
+        .ProseMirror .email-attachment-image-wrap {
+          width: min(100%, var(--email-attachment-render-width, 360px));
+          display: inline-flex;
+          flex-direction: column;
+          gap: 6px;
+          min-width: 140px;
+        }
+        .ProseMirror .email-attachment-image {
+          width: 100%;
+          display: block;
+          border-radius: 10px;
+          border: 1px solid rgba(15, 23, 42, 0.11);
+          background: #fff;
+          box-shadow: 0 2px 8px -6px rgba(15, 23, 42, 0.45);
+        }
+        .ProseMirror .email-attachment-image-fallback {
+          width: 100%;
+          min-height: 84px;
+          border-radius: 10px;
+          border: 1px dashed rgba(15, 23, 42, 0.18);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: 700;
+          color: #64748b;
+          background: #f8fbff;
+        }
+        .ProseMirror .email-attachment-meta {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+          text-align: center;
+        }
+        .ProseMirror .email-attachment-meta-image {
+          text-align: left;
+        }
+        .ProseMirror .email-attachment-name {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12.5px;
+          color: #0f172a;
+          font-weight: 700;
+          text-align: center;
+        }
+        .ProseMirror .email-attachment-size {
+          font-size: 11px;
+          color: #64748b;
+          line-height: 1.2;
+        }
+        .ProseMirror .email-attachment-node-controls {
+          margin-top: 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 6px;
+          border-radius: 9px;
+          border: 1px solid rgba(15, 23, 42, 0.11);
+          background: #f8fbff;
+        }
+        .ProseMirror .email-attachment-node-controls button {
+          border: 1px solid #d6deea;
+          border-radius: 7px;
+          background: #fff;
+          color: #334155;
+          min-height: 24px;
+          padding: 3px 8px;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .ProseMirror .email-attachment-node-controls .email-attachment-resize-handle {
+          min-width: 30px;
+          color: #24598f;
+        }
+        .email-inline-attachment {
+          display: inline-flex;
+          align-items: flex-start;
+          gap: 8px;
+          border: 1px solid rgba(15, 23, 42, 0.14);
+          border-radius: 12px;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+          padding: 8px;
+          max-width: min(100%, 520px);
+          margin: 0.1em 0.2em;
+          vertical-align: middle;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        }
+        .email-inline-attachment-file-wrap {
+          display: inline-flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          min-width: 88px;
+        }
+        .email-inline-attachment-icon-wrap,
+        .email-inline-attachment-icon {
+          width: var(--email-attachment-icon-size, 42px);
+          height: var(--email-attachment-icon-size, 42px);
+          color: #1f5e99;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          border: 1px solid rgba(36, 89, 143, 0.2);
+          border-radius: 10px;
+          background: #f2f7ff;
+          padding: 6px;
+          box-sizing: border-box;
+        }
+        .email-inline-attachment-image-wrap {
+          width: min(100%, var(--email-attachment-render-width, 360px));
+          display: inline-flex;
+          flex-direction: column;
+          gap: 6px;
+          min-width: 140px;
+        }
+        .email-inline-attachment-image {
+          width: 100%;
+          display: block;
+          border-radius: 10px;
+          border: 1px solid rgba(15, 23, 42, 0.11);
+          background: #fff;
+          box-shadow: 0 2px 8px -6px rgba(15, 23, 42, 0.45);
+        }
+        .email-inline-attachment-image-fallback,
+        .email-inline-attachment-image-placeholder {
+          width: min(100%, var(--email-attachment-render-width, 360px));
+          min-height: 84px;
+          border-radius: 10px;
+          border: 1px dashed rgba(15, 23, 42, 0.2);
+          background: #f8fbff;
+          color: #64748b;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 700;
+          padding: 8px;
+          box-sizing: border-box;
+        }
+        .email-inline-attachment-icon-wrap svg,
+        .email-inline-attachment-icon svg {
+          width: 100%;
+          height: 100%;
+          display: block;
+        }
+        .email-inline-attachment-meta {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+          text-align: center;
+        }
+        .email-inline-attachment-meta-image {
+          text-align: left;
+        }
+        .email-inline-attachment-name {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12.5px;
+          color: #0f172a;
+          font-weight: 700;
+          text-align: center;
+        }
+        .email-inline-attachment-size {
+          font-size: 11px;
+          color: #64748b;
+          line-height: 1.2;
         }
       `}</style>
     </div>

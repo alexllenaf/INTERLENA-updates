@@ -114,6 +114,7 @@ import {
   type TodoTablePrefs,
   type TodoSourceAccess
 } from "./calendar/calendarHelpers";
+import { confirmDialog } from "../shared/confirmDialog";
 
 const CalendarPage: React.FC = () => {
   const { t, locale } = useI18n();
@@ -1588,7 +1589,13 @@ const CalendarPage: React.FC = () => {
   };
 
   const removeTodoItem = async (appId: number, todoId: string) => {
-    const confirmed = window.confirm("Delete this to-do item?");
+    const confirmed = await confirmDialog({
+      title: t("Delete to-do item"),
+      message: t("Delete this to-do item?"),
+      confirmLabel: t("Delete"),
+      cancelLabel: t("Cancel"),
+      tone: "danger"
+    });
     if (!confirmed) return;
     const app = applications.find((entry) => entry.id === appId);
     if (!app) return;
@@ -1783,7 +1790,13 @@ const CalendarPage: React.FC = () => {
     opts?: { confirm?: boolean }
   ): Promise<boolean> => {
     if (opts?.confirm !== false) {
-      const confirmed = window.confirm("Delete this document? This action cannot be undone.");
+      const confirmed = await confirmDialog({
+        title: t("Delete document"),
+        message: t("Delete this document? This action cannot be undone."),
+        confirmLabel: t("Delete"),
+        cancelLabel: t("Cancel"),
+        tone: "danger"
+      });
       if (!confirmed) return false;
     }
     try {

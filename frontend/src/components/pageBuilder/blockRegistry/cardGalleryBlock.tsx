@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { createPortal } from "react-dom";
 import { useAppData } from "../../../state";
 import { type Application, type Settings } from "../../../types";
+import ExpandedFieldsSection, { type ExpandedFieldRow } from "../../expanded/ExpandedFieldsSection";
 import {
   TRACKER_BASE_COLUMN_ORDER,
   TRACKER_COLUMN_LABELS,
@@ -14,6 +15,7 @@ import {
   normalizeString,
   normalizeStringArray
 } from "../../../shared/normalize";
+import { COMPACT_TEXT_MAX_CHARS } from "../../../shared/textControl";
 import BlockPanel from "../../BlockPanel";
 import { EditableTableToolbar } from "../../blocks/BlockRenderer";
 import {
@@ -57,6 +59,7 @@ import {
   columnMenuIconTypeTodo
 } from "../../columnMenuIcons";
 import { normalizeTodoStatus } from "../../../constants";
+import { confirmDialog } from "../../../shared/confirmDialog";
 
 // API Gallery Types
 type APIImage = {
@@ -588,8 +591,6 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       visibleColumns: string[];
       imageColumn: string;
     }>({ titleColumn: "", visibleColumns: [], imageColumn: "" });
-    const [draggedField, setDraggedField] = useState<string | null>(null);
-    const [dragOverField, setDragOverField] = useState<string | null>(null);
     const [activeSourceRowIndex, setActiveSourceRowIndex] = useState<number | null>(null);
     const [fieldMenuOpen, setFieldMenuOpen] = useState<string | null>(null);
     const [fieldMenuPos, setFieldMenuPos] = useState<{ top: number; left: number } | null>(null);
@@ -1126,6 +1127,7 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
         field: CardGalleryCustomField | CardField,
         options: EditableTableSelectOption[] | undefined,
         expandedComplexEditors: boolean,
+        textControl: "input" | "textarea" | undefined,
         onOptionsChange?: (next: EditableTableSelectOption[]) => void
       ): TypeRegistryContext => ({
         column: {
@@ -1141,7 +1143,9 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
               }
             : undefined,
         ui: {
-          expandedComplexEditors
+          expandedComplexEditors,
+          textControl,
+          textRows: textControl === "textarea" ? 3 : undefined
         }
       }),
       []
@@ -1175,6 +1179,7 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
         typeContextOverride,
         selectActionsOverride,
         optionsOverride,
+        textControl,
         expandedComplexEditors = false
       }: {
         field: CardGalleryCustomField | CardField;
@@ -1187,6 +1192,7 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
         typeContextOverride?: TypeRegistryContext | null;
         selectActionsOverride?: ColumnTypeSelectActions;
         optionsOverride?: EditableTableSelectOption[];
+        textControl?: "input" | "textarea";
         expandedComplexEditors?: boolean;
       }) => {
         const resolvedOptions = normalizeSelectOptions(selectOptions);
@@ -1197,6 +1203,7 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
             field,
             field.kind === "select" ? resolvedOptions : undefined,
             expandedComplexEditors,
+            textControl,
             onOptionsChange
               ? (next) => onOptionsChange(normalizeSelectOptions(next))
               : undefined
@@ -1282,6 +1289,50 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       [buildFieldTypeContext, serializeTypedFieldValue]
     );
 
+    const textInputModeByFieldLabel = useMemo<Record<string, "input" | "textarea">>(() => {
+      const next: Record<string, "input" | "textarea"> = {};
+
+      draftFieldsForEditor.forEach((field) => {
+        if (field.kind !== "text") return;
+
+        const samples: string[] = [];
+        if (isLinkedMode && tableSnapshot) {
+          const colIndex = tableSnapshot.columns.indexOf(field.label);
+          if (colIndex >= 0) {
+            tableSnapshot.rows.forEach((row) => {
+              const raw = row[colIndex];
+              if (raw === null || raw === undefined) return;
+              samples.push(String(raw));
+            });
+          }
+        } else {
+          manualCards.forEach((card) => {
+            const match = (card.fields || []).find((entry) => entry.label === field.label);
+            if (typeof match?.value === "string") {
+              samples.push(match.value);
+            }
+          });
+        }
+        samples.push(field.value || "");
+
+        let maxLength = 0;
+        let hasLineBreak = false;
+        samples.forEach((sample) => {
+          if (!sample) return;
+          if (sample.includes("\n")) hasLineBreak = true;
+          const normalizedLength = sample.trim().length;
+          if (normalizedLength > maxLength) {
+            maxLength = normalizedLength;
+          }
+        });
+
+        const shouldUseCompact = !hasLineBreak && maxLength <= COMPACT_TEXT_MAX_CHARS;
+        next[field.label] = shouldUseCompact ? "input" : "textarea";
+      });
+
+      return next;
+    }, [draftFieldsForEditor, isLinkedMode, manualCards, tableSnapshot]);
+
     const updateDraftField = (index: number, patch: Partial<CardGalleryCustomField>) => {
       setDraftFields((prev) =>
         prev.map((field, i) => (i === index ? { ...field, ...patch } : field))
@@ -1365,13 +1416,6 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       });
     };
 
-    const handleFieldReorder = (targetField: string) => {
-      if (!draggedField || draggedField === targetField) return;
-      reorderVisibleColumn(draggedField, targetField);
-      setDraggedField(null);
-      setDragOverField(null);
-    };
-
     const openFieldMenu = (fieldLabel: string, event: React.MouseEvent) => {
       const target = event.currentTarget as HTMLElement;
       const rect = target.getBoundingClientRect();
@@ -1418,8 +1462,14 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       closeFieldMenu();
     };
 
-    const deleteField = (fieldLabel: string) => {
-      const confirmed = window.confirm(`¿Eliminar el campo "${fieldLabel}"?`);
+    const deleteField = async (fieldLabel: string) => {
+      const confirmed = await confirmDialog({
+        title: "Eliminar campo",
+        message: `¿Eliminar el campo "${fieldLabel}"?`,
+        confirmLabel: "Eliminar",
+        cancelLabel: "Cancelar",
+        tone: "danger"
+      });
       if (!confirmed) return;
 
       if (isLinkedMode) {
@@ -1814,6 +1864,81 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       },
       [linkedTableId, linkedTableTarget, saveSettings, settings, tableSnapshot]
     );
+
+    const expandedEditorRows = useMemo<ExpandedFieldRow[]>(() => {
+      return draftFieldsForEditor.reduce<ExpandedFieldRow[]>((acc, field) => {
+        const fieldIndex = draftFields.findIndex((item) => item.key === field.key);
+        if (fieldIndex < 0) return acc;
+
+        acc.push({
+          key: field.label,
+          label: field.label,
+          canReorder: mode === "edit",
+          dragAriaLabel: `Reordenar campo ${field.label}`,
+          onLabelClick:
+            mode === "edit"
+              ? (event) => {
+                  openFieldMenu(field.label, event);
+                }
+              : undefined,
+          value: renderTypedFieldCell({
+            field,
+            rawValue: field.value,
+            canEdit: mode === "edit",
+            expandedComplexEditors: true,
+            textControl: field.kind === "text" ? textInputModeByFieldLabel[field.label] || "textarea" : undefined,
+            selectOptions:
+              field.kind === "select"
+                ? isLinkedMode
+                  ? field.selectOptions || buildSelectOptionsFromTable(field.label)
+                  : field.selectOptions
+                : undefined,
+            onOptionsChange:
+              field.kind === "select"
+                ? (nextOptions) => {
+                    if (isLinkedMode) {
+                      updateLinkedSelectOptions(field.label, nextOptions);
+                      return;
+                    }
+                    updateDraftField(fieldIndex, { selectOptions: nextOptions });
+                  }
+                : undefined,
+            typeDefOverride: isLinkedMode
+              ? linkedEditableModel?.schemaColumnByLabel?.[field.label]?.typeDef || null
+              : null,
+            typeContextOverride: isLinkedMode
+              ? linkedEditableModel?.schemaColumnByLabel?.[field.label]?.typeContext || null
+              : null,
+            selectActionsOverride:
+              isLinkedMode && linkedEditableModel?.schemaColumnByLabel?.[field.label]
+                ? linkedEditableModel.schemaColumnByLabel[field.label].typeDef.getSelectActions?.(
+                    linkedEditableModel.schemaColumnByLabel[field.label].typeContext
+                  )
+                : undefined,
+            optionsOverride: isLinkedMode
+              ? (linkedEditableModel?.schemaColumnByLabel?.[field.label]?.selectOptions as
+                  | EditableTableSelectOption[]
+                  | undefined)
+              : undefined,
+            onCommit: (next) => updateDraftField(fieldIndex, { value: next })
+          })
+        });
+
+        return acc;
+      }, []);
+    }, [
+      buildSelectOptionsFromTable,
+      draftFields,
+      draftFieldsForEditor,
+      isLinkedMode,
+      linkedEditableModel,
+      mode,
+      openFieldMenu,
+      renderTypedFieldCell,
+      textInputModeByFieldLabel,
+      updateDraftField,
+      updateLinkedSelectOptions
+    ]);
 
     const commitInlineCardFieldValue = useCallback(
       (card: GalleryCardView, field: CardField, nextValue: string, nextOptions?: EditableTableSelectOption[]) => {
@@ -2535,10 +2660,18 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
                                 className="card-gallery-cover-button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (window.confirm("¿Eliminar imagen de portada?")) {
+                                  void (async () => {
+                                    const confirmed = await confirmDialog({
+                                      title: "Eliminar imagen de portada",
+                                      message: "¿Eliminar imagen de portada?",
+                                      confirmLabel: "Eliminar",
+                                      cancelLabel: "Cancelar",
+                                      tone: "danger"
+                                    });
+                                    if (!confirmed) return;
                                     setDraftImageUrl("");
                                     setCoverMenuExpanded(false);
-                                  }
+                                  })();
                                 }}
                                 aria-label="Eliminar imagen de portada"
                               >
@@ -2646,103 +2779,20 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
                         />
                       </section>
 
-                      <section className="card-gallery-config-fields">
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <h3>Campos personalizados</h3>
-                          {mode === "edit" && (
-                            <button className="ghost" type="button" onClick={addCustomFieldToDraft}>
-                              + Añadir campo
-                            </button>
-                          )}
-                        </div>
-                        <div className="card-gallery-properties">
-                          {draftFieldsForEditor.map((field) => {
-                            const fieldIndex = draftFields.findIndex((item) => item.key === field.key);
-                            if (fieldIndex < 0) return null;
-                            return (
-                            <div 
-                              key={field.key} 
-                              className={`card-gallery-field-editor ${dragOverField === field.label ? "drag-over" : ""}`}
-                              onDragOver={(event) => {
-                                if (mode !== "edit" || !draggedField || draggedField === field.label) return;
-                                event.preventDefault();
-                                setDragOverField(field.label);
-                              }}
-                              onDragLeave={() => setDragOverField(null)}
-                              onDrop={(event) => {
-                                if (mode !== "edit") return;
-                                event.preventDefault();
-                                handleFieldReorder(field.label);
-                              }}
-                            >
-                              <div className="card-gallery-field-header">
-                                {mode === "edit" && (
-                                  <div
-                                    className="card-gallery-field-drag-handle row-grip-handle"
-                                    draggable
-                                    aria-label={`Reordenar campo ${field.label}`}
-                                    title="Arrastrar para reordenar"
-                                    onDragStart={(event) => {
-                                      event.dataTransfer.setData("text/plain", field.label);
-                                      event.dataTransfer.effectAllowed = "move";
-                                      setDraggedField(field.label);
-                                    }}
-                                    onDragEnd={() => {
-                                      setDraggedField(null);
-                                      setDragOverField(null);
-                                    }}
-                                  />
-                                )}
-                                <span 
-                                  className="card-gallery-field-label"
-                                  onClick={(event) => {
-                                    if (mode === "edit") {
-                                      openFieldMenu(field.label, event);
-                                    }
-                                  }}
-                                  title="Click para ajustes"
-                                >
-                                  {field.label}
-                                </span>
-                              </div>
-                              <div className="card-gallery-field-value">
-                                {renderTypedFieldCell({
-                                  field,
-                                  rawValue: field.value,
-                                  canEdit: mode === "edit",
-                                  expandedComplexEditors: true,
-                                  selectOptions:
-                                    field.kind === "select"
-                                      ? field.selectOptions || buildSelectOptionsFromTable(field.label)
-                                      : undefined,
-                                  onOptionsChange:
-                                    field.kind === "select"
-                                      ? (nextOptions) => {
-                                          if (isLinkedMode) {
-                                            updateLinkedSelectOptions(field.label, nextOptions);
-                                          } else {
-                                            updateDraftField(fieldIndex, { selectOptions: nextOptions });
-                                          }
-                                        }
-                                      : undefined,
-                                  typeDefOverride: linkedEditableModel?.schemaColumnByLabel?.[field.label]?.typeDef || null,
-                                  typeContextOverride: linkedEditableModel?.schemaColumnByLabel?.[field.label]?.typeContext || null,
-                                  selectActionsOverride: linkedEditableModel?.schemaColumnByLabel?.[field.label]
-                                    ? linkedEditableModel.schemaColumnByLabel[field.label].typeDef.getSelectActions?.(
-                                        linkedEditableModel.schemaColumnByLabel[field.label].typeContext
-                                      )
-                                    : undefined,
-                                  optionsOverride: linkedEditableModel?.schemaColumnByLabel?.[field.label]?.selectOptions as
-                                    | EditableTableSelectOption[]
-                                    | undefined,
-                                  onCommit: (next) => updateDraftField(fieldIndex, { value: next })
-                                })}
-                              </div>
-                            </div>
-                            );
-                          })}
-                        </div>
-                      </section>
+                      <ExpandedFieldsSection
+                        title="Campos personalizados"
+                        addLabel="Añadir campo"
+                        emptyRowsLabel="No hay campos configurados."
+                        clickForSettingsLabel="Click para ajustes"
+                        dragToReorderLabel="Arrastrar para reordenar"
+                        showAddButton={mode === "edit"}
+                        onAddField={addCustomFieldToDraft}
+                        rows={expandedEditorRows}
+                        onReorderField={(fromFieldLabel, toFieldLabel) => {
+                          if (mode !== "edit") return;
+                          reorderVisibleColumn(fromFieldLabel, toFieldLabel);
+                        }}
+                      />
                     </>
                   ) : (
                     <>
@@ -2811,85 +2861,20 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
                         />
                       </section>
 
-                      <section className="card-gallery-config-fields">
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <h3>Campos personalizados</h3>
-                          {mode === "edit" && (
-                            <button className="ghost" type="button" onClick={addCustomFieldToDraft}>
-                              + Añadir campo
-                            </button>
-                          )}
-                        </div>
-                        <div className="card-gallery-properties">
-                          {draftFieldsForEditor.map((field) => {
-                            const fieldIndex = draftFields.findIndex((item) => item.key === field.key);
-                            if (fieldIndex < 0) return null;
-                            return (
-                            <div
-                              key={field.key}
-                              className={`card-gallery-field-editor ${dragOverField === field.label ? "drag-over" : ""}`}
-                              onDragOver={(event) => {
-                                if (mode !== "edit" || !draggedField || draggedField === field.label) return;
-                                event.preventDefault();
-                                setDragOverField(field.label);
-                              }}
-                              onDragLeave={() => setDragOverField(null)}
-                              onDrop={(event) => {
-                                if (mode !== "edit") return;
-                                event.preventDefault();
-                                handleFieldReorder(field.label);
-                              }}
-                            >
-                              <div className="card-gallery-field-header">
-                                {mode === "edit" && (
-                                  <div
-                                    className="card-gallery-field-drag-handle row-grip-handle"
-                                    draggable
-                                    aria-label={`Reordenar campo ${field.label}`}
-                                    title="Arrastrar para reordenar"
-                                    onDragStart={(event) => {
-                                      event.dataTransfer.setData("text/plain", field.label);
-                                      event.dataTransfer.effectAllowed = "move";
-                                      setDraggedField(field.label);
-                                    }}
-                                    onDragEnd={() => {
-                                      setDraggedField(null);
-                                      setDragOverField(null);
-                                    }}
-                                  />
-                                )}
-                                <span
-                                  className="card-gallery-field-label"
-                                  onClick={(event) => {
-                                    if (mode === "edit") {
-                                      openFieldMenu(field.label, event);
-                                    }
-                                  }}
-                                  title="Click para ajustes"
-                                >
-                                  {field.label}
-                                </span>
-                              </div>
-                              <div className="card-gallery-field-value">
-                                {renderTypedFieldCell({
-                                  field,
-                                  rawValue: field.value,
-                                  canEdit: mode === "edit",
-                                  expandedComplexEditors: true,
-                                  selectOptions:
-                                    field.kind === "select" ? field.selectOptions : undefined,
-                                  onOptionsChange:
-                                    field.kind === "select"
-                                      ? (nextOptions) => updateDraftField(fieldIndex, { selectOptions: nextOptions })
-                                      : undefined,
-                                  onCommit: (next) => updateDraftField(fieldIndex, { value: next })
-                                })}
-                              </div>
-                            </div>
-                            );
-                          })}
-                        </div>
-                      </section>
+                      <ExpandedFieldsSection
+                        title="Campos personalizados"
+                        addLabel="Añadir campo"
+                        emptyRowsLabel="No hay campos configurados."
+                        clickForSettingsLabel="Click para ajustes"
+                        dragToReorderLabel="Arrastrar para reordenar"
+                        showAddButton={mode === "edit"}
+                        onAddField={addCustomFieldToDraft}
+                        rows={expandedEditorRows}
+                        onReorderField={(fromFieldLabel, toFieldLabel) => {
+                          if (mode !== "edit") return;
+                          reorderVisibleColumn(fromFieldLabel, toFieldLabel);
+                        }}
+                      />
                     </>
                   )}
 

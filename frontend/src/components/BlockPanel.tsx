@@ -403,6 +403,8 @@ const BlockPanel: React.FC<Props> = ({
     });
     return next;
   }, [style, derived.vars]);
+  const colorInputValue =
+    blockStyle.color && parseHexColor(blockStyle.color) ? blockStyle.color : "#ffffff";
 
   const Tag = as;
   const menu = canOpenMenu && open && pos && typeof document !== "undefined"
@@ -474,7 +476,7 @@ const BlockPanel: React.FC<Props> = ({
                     {t("Custom")}
                     <input
                       type="color"
-                      value={parseHexColor(blockStyle.color || "#ffffff") ? (blockStyle.color as string) : "#ffffff"}
+                      value={colorInputValue}
                       onChange={(event) => updateBlockStyle({ color: event.target.value })}
                     />
                   </label>

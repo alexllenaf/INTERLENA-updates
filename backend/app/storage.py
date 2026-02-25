@@ -197,6 +197,10 @@ class StorageManager:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         stamp = f"{timestamp}-{reason}"
         backup_dir = self.paths.backups_dir / stamp
+        suffix = 1
+        while backup_dir.exists():
+            backup_dir = self.paths.backups_dir / f"{stamp}-{suffix}"
+            suffix += 1
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         manifest: Dict[str, Any] = {
@@ -214,7 +218,7 @@ class StorageManager:
 
         if uploads_dir and uploads_dir.exists():
             dest_uploads = backup_dir / "uploads"
-            shutil.copytree(uploads_dir, dest_uploads)
+            shutil.copytree(uploads_dir, dest_uploads, dirs_exist_ok=True)
 
         (backup_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"

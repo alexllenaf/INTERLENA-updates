@@ -72,6 +72,11 @@ type HtmlEditorState = {
   previewRootVars: string;
 };
 
+type PendingDeleteState = {
+  blockId: string;
+  label: string;
+};
+
 export type CrossPageDropPayload = {
   sourcePageId: string;
   sourceBlockId: string;
@@ -502,6 +507,7 @@ const PageEditor: React.FC<Props> = ({
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [htmlEditor, setHtmlEditor] = useState<HtmlEditorState | null>(null);
   const [isHtmlEditorExpanded, setIsHtmlEditorExpanded] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<PendingDeleteState | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
@@ -729,17 +735,32 @@ const PageEditor: React.FC<Props> = ({
     updateBlocks(compactBlocks(next));
   };
 
-  const handleDelete = (blockId: string) => {
+  const resolveDeleteLabel = (blockId: string) => {
     const targetBlock = pageConfig.blocks.find((block) => block.id === blockId);
     const rawTitle =
       targetBlock && targetBlock.props && typeof (targetBlock.props as Record<string, unknown>).title === "string"
         ? String((targetBlock.props as Record<string, unknown>).title)
         : "";
-    const label = rawTitle.trim() || targetBlock?.type || "block";
-    const confirmed = window.confirm(`Delete "${label}" block? This action cannot be undone.`);
-    if (!confirmed) return;
-    const next = pageConfig.blocks.filter((block) => block.id !== blockId);
+    return rawTitle.trim() || targetBlock?.type || "block";
+  };
+
+  const requestDeleteBlock = (blockId: string) => {
+    setPendingDelete({
+      blockId,
+      label: resolveDeleteLabel(blockId)
+    });
+  };
+
+  const confirmDeleteBlock = () => {
+    if (!pendingDelete) return;
+    const exists = pageConfig.blocks.some((block) => block.id === pendingDelete.blockId);
+    if (!exists) {
+      setPendingDelete(null);
+      return;
+    }
+    const next = pageConfig.blocks.filter((block) => block.id !== pendingDelete.blockId);
     updateBlocks(compactBlocks(next));
+    setPendingDelete(null);
   };
 
   const readCurrentBlockSnapshot = (blockId: string) => {
@@ -950,7 +971,7 @@ const PageEditor: React.FC<Props> = ({
       key: `delete-${block.id}`,
       label: "Eliminar bloque",
       tone: "danger" as const,
-      onClick: () => handleDelete(block.id)
+      onClick: () => requestDeleteBlock(block.id)
     }
   ];
 
@@ -1092,6 +1113,27 @@ const PageEditor: React.FC<Props> = ({
                     </button>
                   </div>
                 </footer>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+      {pendingDelete && typeof document !== "undefined"
+        ? createPortal(
+            <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setPendingDelete(null)}>
+              <div className="modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="confirm-modal-body">
+                  <h3>Eliminar bloque</h3>
+                  <p>¿Eliminar bloque "{pendingDelete.label}"?</p>
+                </div>
+                <div className="confirm-modal-actions">
+                  <button className="ghost" type="button" onClick={() => setPendingDelete(null)}>
+                    Cancelar
+                  </button>
+                  <button className="danger" type="button" onClick={confirmDeleteBlock}>
+                    Eliminar
+                  </button>
+                </div>
               </div>
             </div>,
             document.body

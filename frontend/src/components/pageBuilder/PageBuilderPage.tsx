@@ -1,18 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAppData } from "../../state";
-import { useUndo } from "../../undoContext";
-// Diagnostic traces (flag-gated) for rehydrate/flush lifecycle.
+import { getPageBlocks, resolvePageByLegacyKey, savePageBlocks } from "../../api";
 import { summarizePageConfig, tracePageConfig } from "../../pageConfigDebug";
+import { useAppData } from "../../state";
+import { CanonicalBlock } from "../../types";
+import { useUndo } from "../../undoContext";
 import PageEditor, { type CrossPageDropPayload } from "./PageEditor";
 import { BlockSlotResolver } from "./blockRegistry";
 import { createPageConfigFromTemplate } from "./defaultPages";
-import {
-  hasStoredPageConfig,
-  normalizePageConfig,
-  persistPageConfigLocal,
-  readPageConfig,
-  writePageConfig
-} from "./pageConfigStore";
+import { normalizePageConfig, readPageConfig } from "./pageConfigStore";
 import { PAGE_CONFIG_VERSION, PageBlockConfig, PageBlockType, PageConfig } from "./types";
 
 type Props = {
@@ -25,10 +20,75 @@ type Props = {
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
 };
 
-const parseUpdatedAt = (value: string | undefined): number => {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
+const withTimestamp = (config: PageConfig): PageConfig => ({
+  ...config,
+  updated_at: new Date().toISOString()
+});
+
+const normalizeBlockLayout = (layout: Record<string, unknown> | null | undefined) => {
+  if (!layout || typeof layout !== "object") {
+    return { colSpan: 1 };
+  }
+  const colSpanRaw = Number(layout.colSpan);
+  const colStartRaw = layout.colStart === undefined ? undefined : Number(layout.colStart);
+  const rowStartRaw = layout.rowStart === undefined ? undefined : Number(layout.rowStart);
+  return {
+    colSpan: Number.isFinite(colSpanRaw) && colSpanRaw > 0 ? Math.round(colSpanRaw) : 1,
+    ...(typeof colStartRaw === "number" && Number.isFinite(colStartRaw)
+      ? { colStart: Math.round(colStartRaw) }
+      : {}),
+    ...(typeof rowStartRaw === "number" && Number.isFinite(rowStartRaw)
+      ? { rowStart: Math.round(rowStartRaw) }
+      : {})
+  };
+};
+
+const toCanonicalBlocks = (pageConfig: PageConfig): CanonicalBlock[] => {
+  return pageConfig.blocks.map((block) => {
+    const props = (block.props || {}) as Record<string, unknown>;
+    const hasText = Object.prototype.hasOwnProperty.call(props, "text");
+    return {
+      id: block.id,
+      type: block.type,
+      parent_id: null,
+      layout: normalizeBlockLayout(block.layout as unknown as Record<string, unknown>),
+      props,
+      ...(hasText ? { content: { text: props.text } } : {})
+    };
+  });
+};
+
+const fromCanonicalBlocks = (
+  pageId: string,
+  blocks: CanonicalBlock[],
+  fallback: PageConfig
+): PageConfig => {
+  const raw = {
+    id: pageId,
+    version: PAGE_CONFIG_VERSION,
+    blocks: (blocks || []).map((block) => {
+      const props = { ...(block.props || {}) };
+      if (
+        !Object.prototype.hasOwnProperty.call(props, "text") &&
+        block.content &&
+        typeof block.content === "object" &&
+        !Array.isArray(block.content)
+      ) {
+        const content = block.content as Record<string, unknown>;
+        if (Object.prototype.hasOwnProperty.call(content, "text")) {
+          props.text = content.text;
+        }
+      }
+      return {
+        id: block.id,
+        type: block.type,
+        layout: normalizeBlockLayout(block.layout),
+        props
+      };
+    })
+  };
+
+  return normalizePageConfig(pageId, raw, fallback);
 };
 
 const PageBuilderPage: React.FC<Props> = ({
@@ -40,97 +100,97 @@ const PageBuilderPage: React.FC<Props> = ({
   resolveDuplicateProps,
   createBlockForType
 }) => {
-  const { settings, saveSettings } = useAppData();
+  const { settings } = useAppData();
   const { executeCommand, undoManager } = useUndo();
+
   const trace = useCallback(
     (event: string, payload?: Record<string, unknown>) => {
       tracePageConfig(`builder:${pageId}:${event}`, payload);
     },
     [pageId]
   );
+
   const fallback = useMemo(
     () => fallbackConfig || createPageConfigFromTemplate(pageId),
     [fallbackConfig, pageId]
   );
 
-  const [pageConfig, setPageConfig] = useState<PageConfig>(() => fallback);
+  const [pageConfig, setPageConfig] = useState<PageConfig>(() => withTimestamp(fallback));
 
-  const configSavedJsonRef = useRef<string>("");
-  const configLocalJsonRef = useRef<string>("");
   const pageConfigRef = useRef<PageConfig>(pageConfig);
-  const configSaveTimerRef = useRef<number | null>(null);
-  const pendingFlushConfigRef = useRef<PageConfig | null>(null);
+  const configSavedJsonRef = useRef<string>("");
+  const configLocalJsonRef = useRef<string>(JSON.stringify(pageConfig));
+  const canonicalPageIdRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingFlushRef = useRef<PageConfig | null>(null);
   const settingsRef = useRef(settings);
-  const saveSettingsRef = useRef(saveSettings);
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
 
-  useEffect(() => {
-    saveSettingsRef.current = saveSettings;
-  }, [saveSettings]);
-
   const flushPageConfig = useCallback(
     (forceConfig?: PageConfig) => {
       const persist = async () => {
-        const currentSettings = settingsRef.current;
         const nextConfig = forceConfig || pageConfigRef.current;
-        if (!currentSettings || !nextConfig) {
-          trace("flush:skip:missing-input", {
-            hasSettings: Boolean(currentSettings),
-            hasConfig: Boolean(nextConfig)
-          });
-          return;
-        }
-        const hasUpdatedAt = typeof nextConfig.updated_at === "string" && nextConfig.updated_at.trim().length > 0;
-        if (!forceConfig && !hasUpdatedAt) {
-          trace("flush:skip:unstamped-config", {
-            config: summarizePageConfig(nextConfig)
-          });
-          return;
-        }
         const nextJson = JSON.stringify(nextConfig);
+
         if (!nextJson || nextJson === configSavedJsonRef.current) {
           trace("flush:skip:unchanged", {
             config: summarizePageConfig(nextConfig)
           });
           return;
         }
+
         trace("flush:start", {
-          config: summarizePageConfig(nextConfig)
+          config: summarizePageConfig(nextConfig),
+          hasCanonicalPageId: Boolean(canonicalPageIdRef.current)
         });
-        const nextSettings = writePageConfig(currentSettings, pageId, nextConfig);
-        const updated = await saveSettingsRef.current({
-          page_configs: nextSettings.page_configs
-        });
-        if (updated) {
-          configSavedJsonRef.current = nextJson;
-          undoManager.saveCheckpoint();
-          trace("flush:success", {
+
+        const canonicalPageId = canonicalPageIdRef.current;
+        if (!canonicalPageId) {
+          trace("flush:skip:no-canonical-page-id", {
             config: summarizePageConfig(nextConfig)
           });
-        } else {
-          trace("flush:save-returned-null", {
-            config: summarizePageConfig(nextConfig)
+          return;
+        }
+
+        try {
+          const persisted = await savePageBlocks(canonicalPageId, toCanonicalBlocks(nextConfig));
+          const canonicalConfig = withTimestamp(
+            fromCanonicalBlocks(pageId, persisted.blocks || [], nextConfig)
+          );
+          const canonicalJson = JSON.stringify(canonicalConfig);
+          pageConfigRef.current = canonicalConfig;
+          configLocalJsonRef.current = canonicalJson;
+          configSavedJsonRef.current = canonicalJson;
+          setPageConfig((prev) => (JSON.stringify(prev) === canonicalJson ? prev : canonicalConfig));
+          trace("flush:canonical-success", {
+            config: summarizePageConfig(canonicalConfig)
+          });
+          undoManager.saveCheckpoint();
+        } catch (error) {
+          trace("flush:canonical-error", {
+            message: error instanceof Error ? error.message : String(error)
           });
         }
+
       };
       void persist();
     },
-    [pageId, trace]
+    [pageId, trace, undoManager]
   );
 
   const scheduleFlushPageConfig = useCallback(
     (forceConfig?: PageConfig) => {
-      if (configSaveTimerRef.current) {
-        window.clearTimeout(configSaveTimerRef.current);
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
       }
-      pendingFlushConfigRef.current = forceConfig || null;
-      configSaveTimerRef.current = window.setTimeout(() => {
-        const pending = pendingFlushConfigRef.current;
-        pendingFlushConfigRef.current = null;
-        configSaveTimerRef.current = null;
+      pendingFlushRef.current = forceConfig || null;
+      saveTimerRef.current = window.setTimeout(() => {
+        const pending = pendingFlushRef.current;
+        pendingFlushRef.current = null;
+        saveTimerRef.current = null;
         flushPageConfig(pending || undefined);
       }, 260);
     },
@@ -143,75 +203,81 @@ const PageBuilderPage: React.FC<Props> = ({
   }, [pageConfig]);
 
   useEffect(() => {
-    if (!settings) return;
-    const fromSettings = normalizePageConfig(pageId, settings.page_configs?.[pageId], fallback);
-    const loaded = readPageConfig(settings, pageId, fallback);
-    const loadedJson = JSON.stringify(loaded);
-    const settingsJson = JSON.stringify(fromSettings);
-    const loadedTs = parseUpdatedAt(loaded.updated_at);
-    const localTs = parseUpdatedAt(pageConfigRef.current?.updated_at);
-    const localJson = configLocalJsonRef.current;
-    trace("rehydrate:start", {
-      localTs,
-      loadedTs,
-      local: summarizePageConfig(pageConfigRef.current),
-      loaded: summarizePageConfig(loaded),
-      fromSettings: summarizePageConfig(fromSettings)
-    });
-    configSavedJsonRef.current = settingsJson;
+    let cancelled = false;
 
-    // Never rollback to an older config when async settings updates arrive out of order.
-    const sameTimestampConflict = localTs > 0 && loadedTs > 0 && localTs === loadedTs && localJson !== loadedJson;
-    if ((localTs > loadedTs || sameTimestampConflict) && localJson) {
-      trace("rehydrate:skip-rollback", {
-        localTs,
-        loadedTs,
-        sameTimestampConflict
+    const load = async () => {
+      trace("rehydrate:start", {
+        fallback: summarizePageConfig(fallback)
       });
-      scheduleFlushPageConfig(pageConfigRef.current);
-      return;
-    }
 
-    setPageConfig((prev) => {
-      const prevJson = JSON.stringify(prev);
-      return prevJson === loadedJson ? prev : loaded;
-    });
+      try {
+        const resolved = await resolvePageByLegacyKey(pageId, true);
+        if (cancelled) return;
 
-    // If local config is newer than backend, sync it back.
-    if (loadedJson !== settingsJson) {
-      trace("rehydrate:sync-loaded-to-settings", {
-        loaded: summarizePageConfig(loaded),
-        fromSettings: summarizePageConfig(fromSettings)
+        canonicalPageIdRef.current = resolved.id;
+
+        const blocksPayload = await getPageBlocks(resolved.id);
+        if (cancelled) return;
+
+        const loaded = withTimestamp(fromCanonicalBlocks(pageId, blocksPayload.blocks || [], fallback));
+        const loadedJson = JSON.stringify(loaded);
+
+        setPageConfig(loaded);
+        pageConfigRef.current = loaded;
+        configLocalJsonRef.current = loadedJson;
+        configSavedJsonRef.current = loadedJson;
+
+        trace("rehydrate:canonical-success", {
+          resolvedPageId: resolved.id,
+          config: summarizePageConfig(loaded)
+        });
+
+        if ((blocksPayload.blocks || []).length === 0 && fallback.blocks.length > 0) {
+          const seeded = withTimestamp(fallback);
+          setPageConfig(seeded);
+          pageConfigRef.current = seeded;
+          configLocalJsonRef.current = JSON.stringify(seeded);
+          scheduleFlushPageConfig(seeded);
+        }
+        return;
+      } catch (error) {
+        trace("rehydrate:canonical-error", {
+          message: error instanceof Error ? error.message : String(error)
+        });
+        canonicalPageIdRef.current = null;
+      }
+
+      const currentSettings = settingsRef.current;
+      const legacyLoaded = currentSettings
+        ? readPageConfig(currentSettings, pageId, fallback)
+        : fallback;
+      const next = withTimestamp(legacyLoaded);
+      const nextJson = JSON.stringify(next);
+
+      setPageConfig(next);
+      pageConfigRef.current = next;
+      configLocalJsonRef.current = nextJson;
+      configSavedJsonRef.current = nextJson;
+
+      trace("rehydrate:legacy-fallback", {
+        config: summarizePageConfig(next)
       });
-      scheduleFlushPageConfig(loaded);
-    }
+    };
 
-    if (!hasStoredPageConfig(settings, pageId)) {
-      const seeded: PageConfig = {
-        ...loaded,
-        updated_at: new Date().toISOString()
-      };
-      const seededJson = JSON.stringify(seeded);
-      setPageConfig(seeded);
-      pageConfigRef.current = seeded;
-      configLocalJsonRef.current = seededJson;
-      persistPageConfigLocal(pageId, seeded);
-      settingsRef.current = writePageConfig(settings, pageId, seeded);
-      trace("rehydrate:seed-missing-config", {
-        seeded: summarizePageConfig(seeded)
-      });
-      scheduleFlushPageConfig(seeded);
-    }
-  }, [fallback, pageId, scheduleFlushPageConfig, settings, trace]);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [fallback, pageId, scheduleFlushPageConfig, trace]);
 
   useEffect(() => {
     return () => {
-      if (configSaveTimerRef.current) {
-        window.clearTimeout(configSaveTimerRef.current);
-        configSaveTimerRef.current = null;
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
       }
-      const pending = pendingFlushConfigRef.current;
-      pendingFlushConfigRef.current = null;
+      const pending = pendingFlushRef.current;
+      pendingFlushRef.current = null;
       flushPageConfig(pending || undefined);
     };
   }, [flushPageConfig]);
@@ -239,39 +305,25 @@ const PageBuilderPage: React.FC<Props> = ({
         description: "Edit page",
         timestamp: Date.now(),
         do: () => {
-          const applied: PageConfig = {
-            ...next,
-            updated_at: new Date().toISOString()
-          };
+          const applied = withTimestamp(next);
           setPageConfig(applied);
           pageConfigRef.current = applied;
           configLocalJsonRef.current = JSON.stringify(applied);
-          persistPageConfigLocal(pageId, applied);
           trace("change:from-editor", {
             config: summarizePageConfig(applied)
           });
-          const currentSettings = settingsRef.current;
-          if (currentSettings) {
-            settingsRef.current = writePageConfig(currentSettings, pageId, applied);
-          }
+
           scheduleFlushPageConfig(applied);
         },
         undo: () => {
-          const reverted: PageConfig = {
-            ...previousConfig,
-            updated_at: new Date().toISOString()
-          };
+          const reverted = withTimestamp(previousConfig);
           setPageConfig(reverted);
           pageConfigRef.current = reverted;
           configLocalJsonRef.current = JSON.stringify(reverted);
-          persistPageConfigLocal(pageId, reverted);
           trace("undo:revert-page-config", {
             config: summarizePageConfig(reverted)
           });
-          const currentSettings = settingsRef.current;
-          if (currentSettings) {
-            settingsRef.current = writePageConfig(currentSettings, pageId, reverted);
-          }
+
           scheduleFlushPageConfig(reverted);
         }
       });
@@ -298,65 +350,44 @@ const PageBuilderPage: React.FC<Props> = ({
 
       setPageConfig(targetNext);
       pageConfigRef.current = targetNext;
-      const targetJson = JSON.stringify(targetNext);
-      configLocalJsonRef.current = targetJson;
-      persistPageConfigLocal(pageId, targetNext);
-
-      const currentSettings = settingsRef.current;
-      if (!currentSettings) {
-        trace("cross-page-drop:missing-settings", {
-          sourcePageId: payload.sourcePageId,
-          sourceBlockId: payload.sourceBlockId
-        });
-        scheduleFlushPageConfig(targetNext);
-        return;
-      }
+      configLocalJsonRef.current = JSON.stringify(targetNext);
+      scheduleFlushPageConfig(targetNext);
 
       const sourceFallback: PageConfig = {
         id: payload.sourcePageId,
         version: PAGE_CONFIG_VERSION,
         blocks: []
       };
-      const sourceCurrent = readPageConfig(currentSettings, payload.sourcePageId, sourceFallback);
-      const sourceNext: PageConfig = {
-        ...sourceCurrent,
-        updated_at: nowIso,
-        blocks: sourceCurrent.blocks.filter((block) => block.id !== payload.sourceBlockId)
-      };
 
-      let nextSettings = writePageConfig(currentSettings, payload.sourcePageId, sourceNext);
-      nextSettings = writePageConfig(nextSettings, pageId, targetNext);
-      settingsRef.current = nextSettings;
-
-      trace("cross-page-drop:apply", {
-        sourcePageId: payload.sourcePageId,
-        sourceBlockId: payload.sourceBlockId,
-        targetPageId: pageId,
-        targetConfig: summarizePageConfig(targetNext),
-        sourceConfig: summarizePageConfig(sourceNext)
-      });
-
-      void saveSettingsRef.current({
-        page_configs: nextSettings.page_configs
-      }).then((updated) => {
-        if (!updated) {
-          trace("cross-page-drop:save-returned-null", {
+      void (async () => {
+        try {
+          const sourceResolved = await resolvePageByLegacyKey(payload.sourcePageId, true);
+          const sourcePayload = await getPageBlocks(sourceResolved.id);
+          const sourceCurrent = fromCanonicalBlocks(
+            payload.sourcePageId,
+            sourcePayload.blocks || [],
+            sourceFallback
+          );
+          const sourceNext: PageConfig = {
+            ...sourceCurrent,
+            updated_at: nowIso,
+            blocks: sourceCurrent.blocks.filter((block) => block.id !== payload.sourceBlockId)
+          };
+          await savePageBlocks(sourceResolved.id, toCanonicalBlocks(sourceNext));
+          trace("cross-page-drop:source-updated", {
             sourcePageId: payload.sourcePageId,
             sourceBlockId: payload.sourceBlockId
           });
-          scheduleFlushPageConfig(targetNext);
-          return;
+        } catch (error) {
+          trace("cross-page-drop:source-update-error", {
+            sourcePageId: payload.sourcePageId,
+            sourceBlockId: payload.sourceBlockId,
+            message: error instanceof Error ? error.message : String(error)
+          });
         }
-        configSavedJsonRef.current = targetJson;
-        undoManager.saveCheckpoint();
-        trace("cross-page-drop:save-success", {
-          sourcePageId: payload.sourcePageId,
-          sourceBlockId: payload.sourceBlockId,
-          targetPageId: pageId
-        });
-      });
+      })();
     },
-    [handlePageConfigChange, pageId, scheduleFlushPageConfig, trace, undoManager]
+    [handlePageConfigChange, pageId, scheduleFlushPageConfig, trace]
   );
 
   return (

@@ -17,6 +17,12 @@ export type BrandProfile = {
   avatarAlt: string;
 };
 
+export type PipelineCardConfig = {
+  pipeline_field?: string;
+  title_column?: string;
+  visible_fields?: string[];
+};
+
 export type ImapEmailSyncSettings = {
   host: string;
   port: number;
@@ -63,9 +69,136 @@ export type Settings = {
   table_density?: "compact" | "comfortable";
   dark_mode: boolean;
   custom_properties: CustomProperty[];
+  pipeline_card_config?: PipelineCardConfig;
   brand_profile?: BrandProfile;
   page_configs?: Record<string, unknown>;
   email_sync?: EmailSyncSettings;
+};
+
+export type CanonicalPage = {
+  id: string;
+  title: string;
+  icon?: string | null;
+  cover?: string | null;
+  legacy_key?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type CanonicalBlock = {
+  id: string;
+  type: string;
+  parent_id?: string | null;
+  position?: string | null;
+  layout: Record<string, unknown>;
+  props: Record<string, unknown>;
+  content?: unknown;
+};
+
+export type PageResolveResult = {
+  page: CanonicalPage;
+};
+
+export type PageBlocksResult = {
+  page_id: string;
+  blocks: CanonicalBlock[];
+};
+
+export type CanonicalDatabase = {
+  id: string;
+  name: string;
+  properties: number;
+  views: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type DatabaseRecordsResult = {
+  database: {
+    id: string;
+    name: string;
+    created_at?: string | null;
+    updated_at?: string | null;
+  };
+  view?: {
+    id: string;
+    name: string;
+    type: string;
+    config: Record<string, unknown>;
+  } | null;
+  properties: Array<{
+    id: string;
+    name: string;
+    type: string;
+    config: Record<string, unknown>;
+    property_order: number;
+  }>;
+  records: Array<{
+    id: string;
+    database_id: string;
+    page_id: string;
+    page_title?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    properties: Record<string, unknown>;
+  }>;
+};
+
+export type CanonicalDatabaseDetail = {
+  database: {
+    id: string;
+    name: string;
+    created_at?: string | null;
+    updated_at?: string | null;
+  };
+  properties: Array<{
+    id: string;
+    name: string;
+    type: string;
+    config: Record<string, unknown>;
+    property_order: number;
+  }>;
+  views: Array<{
+    id: string;
+    database_id: string;
+    name: string;
+    type: string;
+    config: Record<string, unknown>;
+    created_at?: string | null;
+    updated_at?: string | null;
+  }>;
+};
+
+export type CanonicalDatabaseRecord = {
+  id: string;
+  database_id: string;
+  page_id: string;
+  page_title?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  properties: Record<string, unknown>;
+};
+
+export type OnboardingStatus = {
+  completed: boolean;
+};
+
+export type OnboardingTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+};
+
+export type OnboardingCompleteInput = {
+  template_id: string;
+  workspace_name?: string;
+};
+
+export type OnboardingCompleteResult = {
+  completed: boolean;
+  home_page_id: string;
+  seed_version: string;
 };
 
 export type UpdateInfo = {
@@ -155,6 +288,7 @@ export type View = {
   name: string;
   view_type: string;
   config: Record<string, unknown>;
+  database_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };

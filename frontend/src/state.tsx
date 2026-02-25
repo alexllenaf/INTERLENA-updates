@@ -3,11 +3,15 @@ import {
   API_BASE,
   ApiError,
   createApplication as apiCreate,
+  createView,
   deleteApplication as apiDelete,
+  getDatabaseByName,
   getApplications,
   getSettings,
+  getViews,
   updateApplication as apiUpdate,
-  updateSettings as apiUpdateSettings
+  updateSettings as apiUpdateSettings,
+  updateView
 } from "./api";
 // Diagnostic traces (flag-gated) to inspect page-config save/merge races.
 import { summarizePageConfigs, tracePageConfig } from "./pageConfigDebug";
@@ -70,15 +74,128 @@ const mergePageConfigs = (...sources: Array<unknown>): Record<string, unknown> =
 };
 
 const mergeSettingsForSave = (current: Settings | null, next: Partial<Settings>): Partial<Settings> => {
-  if (!current) return next;
-  const currentPages =
-    current.page_configs && typeof current.page_configs === "object" ? current.page_configs : {};
-  const nextPages = next.page_configs && typeof next.page_configs === "object" ? next.page_configs : {};
+  const { page_configs: _nextPageConfigs, ...nextWithoutPageConfigs } = next;
+  if (!current) return nextWithoutPageConfigs;
+  const { page_configs: _currentPageConfigs, ...currentWithoutPageConfigs } = current;
   return {
-    ...current,
-    ...next,
-    page_configs: mergePageConfigs(currentPages, nextPages)
+    ...currentWithoutPageConfigs,
+    ...nextWithoutPageConfigs
   };
+};
+
+const TRACKER_DATABASE_NAME = "Applications";
+const TRACKER_SETTINGS_VIEW_NAME = "__tracker_settings__";
+const TRACKER_CANONICAL_SETTINGS_KEYS: Array<keyof Settings> = [
+  "stages",
+  "outcomes",
+  "job_types",
+  "stage_colors",
+  "outcome_colors",
+  "job_type_colors",
+  "table_columns",
+  "hidden_columns",
+  "column_widths",
+  "column_labels",
+  "table_density",
+  "custom_properties",
+  "pipeline_card_config"
+];
+const TRACKER_CANONICAL_SETTINGS_KEY_SET = new Set<string>(
+  TRACKER_CANONICAL_SETTINGS_KEYS.map((key) => String(key))
+);
+
+const pickCanonicalTrackerSettings = (source: unknown): Partial<Settings> => {
+  if (!isRecord(source)) return {};
+  const out: Partial<Settings> = {};
+  TRACKER_CANONICAL_SETTINGS_KEYS.forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+    (out as Record<string, unknown>)[String(key)] = source[String(key)];
+  });
+  return out;
+};
+
+const splitSettingsPatch = (next: Partial<Settings>): {
+  trackerPatch: Partial<Settings>;
+  regularPatch: Partial<Settings>;
+} => {
+  const trackerPatch: Partial<Settings> = {};
+  const regularPatch: Partial<Settings> = {};
+  Object.entries(next).forEach(([key, value]) => {
+    if (key === "page_configs") return;
+    if (TRACKER_CANONICAL_SETTINGS_KEY_SET.has(key)) {
+      (trackerPatch as Record<string, unknown>)[key] = value;
+      return;
+    }
+    (regularPatch as Record<string, unknown>)[key] = value;
+  });
+  return { trackerPatch, regularPatch };
+};
+
+const loadCanonicalTrackerSettings = async (): Promise<Partial<Settings>> => {
+  try {
+    const database = await getDatabaseByName(TRACKER_DATABASE_NAME);
+    const views = await getViews();
+    const trackerView =
+      views.find(
+        (view) =>
+          view.database_id === database.id &&
+          view.name === TRACKER_SETTINGS_VIEW_NAME
+      ) || null;
+    if (!trackerView || !isRecord(trackerView.config)) return {};
+    const config = trackerView.config as Record<string, unknown>;
+    const configSettings = isRecord(config.settings) ? config.settings : config;
+    return pickCanonicalTrackerSettings(configSettings);
+  } catch {
+    return {};
+  }
+};
+
+const persistCanonicalTrackerSettings = async (
+  patch: Partial<Settings>
+): Promise<Partial<Settings>> => {
+  if (Object.keys(patch).length === 0) return {};
+
+  const database = await getDatabaseByName(TRACKER_DATABASE_NAME);
+  const views = await getViews();
+  const trackerView =
+    views.find(
+      (view) =>
+        view.database_id === database.id &&
+        view.name === TRACKER_SETTINGS_VIEW_NAME
+    ) || null;
+
+  const previousConfig =
+    trackerView && isRecord(trackerView.config)
+      ? (trackerView.config as Record<string, unknown>)
+      : {};
+  const previousSettings = pickCanonicalTrackerSettings(
+    isRecord(previousConfig.settings) ? previousConfig.settings : previousConfig
+  );
+  const mergedSettings: Partial<Settings> = {
+    ...previousSettings,
+    ...patch
+  };
+  const nextConfig: Record<string, unknown> = {
+    ...previousConfig,
+    kind: "tracker_settings",
+    schema_version: 1,
+    settings: mergedSettings
+  };
+
+  if (!trackerView) {
+    await createView({
+      name: TRACKER_SETTINGS_VIEW_NAME,
+      view_type: "table",
+      config: nextConfig,
+      database_id: database.id
+    });
+    return mergedSettings;
+  }
+
+  await updateView(trackerView.view_id, {
+    config: nextConfig
+  });
+  return mergedSettings;
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -110,17 +227,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       for (let attempt = 0; attempt <= delays.length; attempt += 1) {
         try {
-          const [settingsData, applicationsData] = await Promise.all([
+          const [settingsData, applicationsData, canonicalTrackerSettings] = await Promise.all([
             getSettings(),
-            getApplications()
+            getApplications(),
+            loadCanonicalTrackerSettings()
           ]);
-          const mergedPageConfigs = mergePageConfigs(pageConfigsRef.current, settingsData.page_configs);
+          const settingsWithCanonical = {
+            ...settingsData,
+            ...canonicalTrackerSettings
+          };
+          const mergedPageConfigs = mergePageConfigs(
+            pageConfigsRef.current,
+            settingsWithCanonical.page_configs
+          );
           pageConfigsRef.current = mergedPageConfigs;
           tracePageConfig("state:refresh:apply-settings", {
             pages: summarizePageConfigs(mergedPageConfigs)
           });
           setSettings({
-            ...settingsData,
+            ...settingsWithCanonical,
             page_configs: mergedPageConfigs
           });
           setApplications(applicationsData);
@@ -156,21 +281,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pageConfigsRef.current = mergePageConfigs(pageConfigsRef.current, nextPages);
     }
     const stickyPages = mergePageConfigs(settingsRef.current?.page_configs, pageConfigsRef.current, nextPages);
-    const mergedWithStickyPages: Partial<Settings> = {
-      ...mergeSettingsForSave(settingsRef.current, next),
-      page_configs: stickyPages
-    };
+    const { page_configs: _ignoredPageConfigs, ...nextWithoutPageConfigs } = next;
     tracePageConfig("state:saveSettings:request", {
       requestSeq,
       nextPages: summarizePageConfigs(nextPages),
       stickyPages: summarizePageConfigs(stickyPages)
     });
+
+    const { trackerPatch, regularPatch } = splitSettingsPatch(nextWithoutPageConfigs);
+    const mergedWithoutPageConfigs: Partial<Settings> = mergeSettingsForSave(
+      settingsRef.current,
+      regularPatch
+    );
+    const hasRegularPatch = Object.keys(regularPatch).length > 0;
+    const hasTrackerPatch = Object.keys(trackerPatch).length > 0;
+
+    if (!hasRegularPatch && !hasTrackerPatch) {
+      const current = settingsRef.current;
+      if (current) {
+        const mergedLocal = {
+          ...current,
+          page_configs: stickyPages
+        };
+        settingsRef.current = mergedLocal;
+        setSettings(mergedLocal);
+      }
+      return current;
+    }
+
     try {
-      const updated = await apiUpdateSettings(mergedWithStickyPages);
-      tracePageConfig("state:saveSettings:response", {
-        requestSeq,
-        responsePages: summarizePageConfigs(updated.page_configs)
-      });
+      let updatedSettings = settingsRef.current;
+      if (hasRegularPatch) {
+        updatedSettings = await apiUpdateSettings(mergedWithoutPageConfigs);
+        tracePageConfig("state:saveSettings:response", {
+          requestSeq,
+          responsePages: summarizePageConfigs(updatedSettings?.page_configs)
+        });
+      }
+
+      let trackerApplied: Partial<Settings> = {};
+      if (hasTrackerPatch) {
+        trackerApplied = await persistCanonicalTrackerSettings(trackerPatch);
+      }
+
       if (requestSeq < saveAppliedSeqRef.current) {
         tracePageConfig("state:saveSettings:drop-stale-response", {
           requestSeq,
@@ -178,17 +331,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         return settingsRef.current;
       }
+
       saveAppliedSeqRef.current = requestSeq;
-      const mergedPageConfigs = mergePageConfigs(pageConfigsRef.current, updated.page_configs);
+      const mergedPageConfigs = mergePageConfigs(
+        pageConfigsRef.current,
+        updatedSettings?.page_configs
+      );
       pageConfigsRef.current = mergedPageConfigs;
       const mergedSettings = {
-        ...updated,
+        ...(settingsRef.current || {}),
+        ...(updatedSettings || {}),
+        ...trackerApplied,
         page_configs: mergedPageConfigs
-      };
+      } as Settings;
       tracePageConfig("state:saveSettings:applied", {
         requestSeq,
         mergedPages: summarizePageConfigs(mergedPageConfigs)
       });
+      settingsRef.current = mergedSettings;
       setSettings(mergedSettings);
       return mergedSettings;
     } catch (err) {

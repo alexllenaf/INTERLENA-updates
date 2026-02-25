@@ -340,6 +340,47 @@
   outline-offset: 1px;
 }
 
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.confirm-dialog-modal {
+  width: min(430px, 100%);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.confirm-dialog-body h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.confirm-dialog-body p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .sidebar-footer {
   margin-top: auto;
   display: flex;

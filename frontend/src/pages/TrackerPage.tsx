@@ -35,6 +35,7 @@ import {
   TRACKER_DEFAULT_COLUMN_WIDTHS as DEFAULT_COLUMN_WIDTHS,
   DEFAULT_COLUMN_WIDTH
 } from "../shared/columnSchema";
+import { confirmDialog } from "../shared/confirmDialog";
 import {
   CheckboxCell,
   NumberCell,
@@ -1195,7 +1196,13 @@ const TrackerPage: React.FC = () => {
 
   const deleteCustomProperty = async (col: string) => {
     if (!col.startsWith("prop__")) return;
-    const ok = window.confirm("Delete this property? This will remove it from your table.");
+    const ok = await confirmDialog({
+      title: t("Delete property"),
+      message: t("Delete this property? This will remove it from your table."),
+      confirmLabel: t("Delete"),
+      cancelLabel: t("Cancel"),
+      tone: "danger"
+    });
     if (!ok) return;
 
     const key = col.replace("prop__", "");
@@ -1286,9 +1293,13 @@ const TrackerPage: React.FC = () => {
   const handleBulkDelete = async () => {
     const targets = [...selectedIds];
     if (targets.length === 0) return;
-    const confirmed = window.confirm(
-      `Delete ${targets.length} selected row${targets.length === 1 ? "" : "s"}?`
-    );
+    const confirmed = await confirmDialog({
+      title: t("Delete rows"),
+      message: t(`Delete ${targets.length} selected row${targets.length === 1 ? "" : "s"}?`),
+      confirmLabel: t("Delete"),
+      cancelLabel: t("Cancel"),
+      tone: "danger"
+    });
     if (!confirmed) return;
     
     const deletedApps = targets.map((id) => applicationsRef.current.find((a) => a.id === id)).filter(Boolean) as Application[];
@@ -1387,7 +1398,13 @@ const TrackerPage: React.FC = () => {
     opts?: { confirm?: boolean; sync?: boolean }
   ): Promise<boolean> => {
     if (opts?.confirm !== false) {
-      const confirmed = window.confirm("Delete this document? This action cannot be undone.");
+      const confirmed = await confirmDialog({
+        title: t("Delete document"),
+        message: t("Delete this document? This action cannot be undone."),
+        confirmLabel: t("Delete"),
+        cancelLabel: t("Cancel"),
+        tone: "danger"
+      });
       if (!confirmed) return false;
     }
     try {
@@ -2289,7 +2306,13 @@ const TrackerPage: React.FC = () => {
     };
     
     const requestDeleteApplication = async (id: number) => {
-      const confirmed = window.confirm("Delete this row?");
+      const confirmed = await confirmDialog({
+        title: t("Delete row"),
+        message: t("Delete this row?"),
+        confirmLabel: t("Delete"),
+        cancelLabel: t("Cancel"),
+        tone: "danger"
+      });
       if (!confirmed) return;
       await deleteApplication(id);
     };

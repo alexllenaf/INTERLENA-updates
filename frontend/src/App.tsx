@@ -1,17 +1,31 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { getUpdateInfo, openExternal } from "./api";
+import {
+  ApiError,
+  completeOnboarding,
+  createPage as createCanonicalPage,
+  deletePage,
+  getOnboardingStatus,
+  getOnboardingTemplates,
+  getUpdateInfo,
+  listPages as listCanonicalPages,
+  resolvePageByLegacyKey,
+  updatePage as updateCanonicalPage,
+  openExternal
+} from "./api";
 import CameraModal from "./components/CameraModal";
+import ConfirmDialogHost from "./components/ConfirmDialogHost";
 import { getCrossPageDragState } from "./components/pageBuilder/crossPageDragStore";
 import { PencilIcon, TrashIcon, CameraIcon, GearIcon } from "./components/SidebarIcons";
 import { useI18n } from "./i18n";
 import { CORE_PAGE_PLUGINS } from "./pagePlugins";
+import { confirmDialog } from "./shared/confirmDialog";
 import { Command, UndoManager } from "./shared/undoManager";
 import { AppProvider, useAppData } from "./state";
 import { UndoProvider } from "./undoContext";
 import BlockPanel from "./components/BlockPanel";
 import CustomSheetPage from "./pages/CustomSheetPage";
-import { BrandProfile, UpdateInfo } from "./types";
+import { BrandProfile, OnboardingTemplate, UpdateInfo } from "./types";
 
 const SettingsPage = React.lazy(() => import("./pages/SettingsPage"));
 
@@ -61,7 +75,6 @@ type SidebarRenameTarget =
     };
 
 const NAV_LABELS_STORAGE_KEY = "sidebar_nav_labels_v1";
-const CUSTOM_SHEETS_STORAGE_KEY = "sidebar_custom_sheets_v1";
 const DRAG_HOVER_OPEN_DELAY_MS = 220;
 const DRAG_HOVER_STALE_MS = 5000;
 
@@ -93,42 +106,11 @@ const writeNavLabelOverrides = (labels: Record<string, string>) => {
   }
 };
 
-const readCustomSheets = (): CustomSheet[] => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(CUSTOM_SHEETS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => {
-        if (!item || typeof item !== "object") return null;
-        const rec = item as Record<string, unknown>;
-        const id = typeof rec.id === "string" ? rec.id.trim() : "";
-        const name = typeof rec.name === "string" ? rec.name.trim() : "";
-        if (!id || !name) return null;
-        return { id, name };
-      })
-      .filter((item): item is CustomSheet => Boolean(item));
-  } catch {
-    return [];
-  }
-};
-
-const writeCustomSheets = (sheets: CustomSheet[]) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(CUSTOM_SHEETS_STORAGE_KEY, JSON.stringify(sheets));
-  } catch {
-    // ignore storage failures
-  }
-};
-
 const createSheetId = () => `sheet-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const AppShell: React.FC = () => {
   const { t } = useI18n();
-  const { loading, error, settings, saveSettings } = useAppData();
+  const { loading, error, refresh, settings, saveSettings } = useAppData();
   const navigate = useNavigate();
   const location = useLocation();
   const isDashboard = CORE_PAGE_PLUGINS.some(
@@ -138,6 +120,13 @@ const AppShell: React.FC = () => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState(true);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(true);
+  const [onboardingTemplates, setOnboardingTemplates] = useState<OnboardingTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("blank_v1");
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [profile, setProfile] = useState<BrandProfile>(DEFAULT_PROFILE);
   const [editingField, setEditingField] = useState<"name" | "role" | null>(null);
   const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
@@ -146,7 +135,7 @@ const AppShell: React.FC = () => {
   const [navLabelOverrides, setNavLabelOverrides] = useState<Record<string, string>>(() =>
     readNavLabelOverrides()
   );
-  const [customSheets, setCustomSheets] = useState<CustomSheet[]>(() => readCustomSheets());
+  const [customSheets, setCustomSheets] = useState<CustomSheet[]>([]);
   const [renameTarget, setRenameTarget] = useState<SidebarRenameTarget | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [sheetToDelete, setSheetToDelete] = useState<CustomSheet | null>(null);
@@ -181,9 +170,15 @@ const AppShell: React.FC = () => {
   const runNonUndoableAction = useCallback(
     async (label: string, action: () => Promise<void> | void) => {
       if (undoManager.canUndo || undoManager.canRedo || undoManager.isDirty) {
-        const proceed = window.confirm(
-          t('"{label}" cannot be undone. Current undo history will be cleared. Continue?', { label })
-        );
+        const proceed = await confirmDialog({
+          title: t("Clear undo history"),
+          message: t('"{label}" cannot be undone. Current undo history will be cleared. Continue?', {
+            label
+          }),
+          confirmLabel: t("Continue"),
+          cancelLabel: t("Cancel"),
+          tone: "danger"
+        });
         if (!proceed) return;
       }
       undoManager.clear();
@@ -213,6 +208,61 @@ const AppShell: React.FC = () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadOnboarding = async () => {
+      try {
+        const [status, templates] = await Promise.all([
+          getOnboardingStatus(),
+          getOnboardingTemplates()
+        ]);
+        if (!active) return;
+        setOnboardingTemplates(templates);
+        setOnboardingCompleted(Boolean(status.completed));
+        if (templates.length > 0) {
+          setSelectedTemplateId((current) =>
+            current && templates.some((template) => template.id === current)
+              ? current
+              : templates[0].id
+          );
+        }
+      } catch {
+        if (!active) return;
+        setOnboardingCompleted(true);
+      } finally {
+        if (active) {
+          setOnboardingLoading(false);
+        }
+      }
+    };
+    void loadOnboarding();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const syncCustomSheetsFromCanonical = useCallback(async () => {
+    try {
+      const pages = await listCanonicalPages();
+      const sheets = pages
+        .filter((page) => typeof page.legacy_key === "string" && page.legacy_key.startsWith("sheet:"))
+        .map((page) => ({
+          id: page.legacy_key!.slice("sheet:".length),
+          name: (page.title || "").trim() || "Untitled"
+        }))
+        .filter((sheet) => Boolean(sheet.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setCustomSheets(sheets);
+    } catch {
+      // ignore and keep current sidebar state
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!onboardingCompleted) return;
+    void syncCustomSheetsFromCanonical();
+  }, [onboardingCompleted, syncCustomSheetsFromCanonical]);
 
   useEffect(() => {
     let alive = true;
@@ -264,6 +314,43 @@ const AppShell: React.FC = () => {
       openExternal(updateUrl);
     });
   };
+
+  const handleCompleteOnboarding = useCallback(async () => {
+    if (!selectedTemplateId || onboardingBusy) return;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      await completeOnboarding({
+        template_id: selectedTemplateId,
+        workspace_name: workspaceNameDraft.trim() || undefined
+      });
+      setOnboardingCompleted(true);
+      await refresh();
+      await syncCustomSheetsFromCanonical();
+      navigate("/");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setOnboardingCompleted(true);
+        await refresh();
+        await syncCustomSheetsFromCanonical();
+        navigate("/");
+      } else {
+        setOnboardingError(
+          error instanceof Error ? error.message : t("Unable to complete onboarding.")
+        );
+      }
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }, [
+    navigate,
+    onboardingBusy,
+    refresh,
+    selectedTemplateId,
+    syncCustomSheetsFromCanonical,
+    t,
+    workspaceNameDraft
+  ]);
 
   useEffect(() => {
     const warmPages = () => {
@@ -326,10 +413,6 @@ const AppShell: React.FC = () => {
   useEffect(() => {
     writeNavLabelOverrides(navLabelOverrides);
   }, [navLabelOverrides]);
-
-  useEffect(() => {
-    writeCustomSheets(customSheets);
-  }, [customSheets]);
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -573,19 +656,43 @@ const AppShell: React.FC = () => {
     void runUndoableCommand({
       description: t("Rename page"),
       timestamp: Date.now(),
-      do: () => {
+      do: async () => {
         setCustomSheets((prev) =>
           prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: trimmed } : sheet))
         );
+        try {
+          const resolved = await resolvePageByLegacyKey(`sheet:${sheetId}`, false);
+          if (resolved?.id) {
+            await updateCanonicalPage(resolved.id, { title: trimmed });
+          }
+        } catch {
+          // keep local name as fallback
+        }
         closeRenameModal();
       },
-      undo: () => {
+      undo: async () => {
         setCustomSheets((prev) =>
           prev.map((sheet) => (sheet.id === sheetId ? { ...sheet, name: oldName } : sheet))
         );
+        try {
+          const resolved = await resolvePageByLegacyKey(`sheet:${sheetId}`, false);
+          if (resolved?.id) {
+            await updateCanonicalPage(resolved.id, { title: oldName });
+          }
+        } catch {
+          // ignore undo persistence failures
+        }
       }
     });
-  }, [closeRenameModal, customSheets, navLabelOverrides, renameDraft, renameTarget, runUndoableCommand, t]);
+  }, [
+    closeRenameModal,
+    customSheets,
+    navLabelOverrides,
+    renameDraft,
+    renameTarget,
+    runUndoableCommand,
+    t
+  ]);
 
   const addCustomSheet = () => {
     const id = createSheetId();
@@ -595,12 +702,24 @@ const AppShell: React.FC = () => {
     void runUndoableCommand({
       description: t("Add new sheet"),
       timestamp: Date.now(),
-      do: () => {
+      do: async () => {
+        await createCanonicalPage({
+          title: name,
+          legacy_key: `sheet:${id}`
+        });
         setCustomSheets((prev) => [...prev, next]);
         navigate(`/sheet/${id}`);
       },
-      undo: () => {
+      undo: async () => {
         setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== id));
+        try {
+          const resolved = await resolvePageByLegacyKey(`sheet:${id}`, false);
+          if (resolved?.id) {
+            await deletePage(resolved.id);
+          }
+        } catch {
+          // ignore undo persistence failures
+        }
         if (location.pathname === `/sheet/${id}`) {
           navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
         }
@@ -610,30 +729,16 @@ const AppShell: React.FC = () => {
 
   const deleteCustomSheetConfigData = useCallback(
     async (sheetId: string) => {
-      const pageId = `sheet:${sheetId}`;
-      if (typeof window !== "undefined") {
-        try {
-          const localKey = "page_configs_local_v1";
-          const raw = window.localStorage.getItem(localKey);
-          if (raw) {
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed[pageId]) {
-              delete parsed[pageId];
-              window.localStorage.setItem(localKey, JSON.stringify(parsed));
-            }
-          }
-        } catch {
-          // ignore storage failures
+      try {
+        const resolved = await resolvePageByLegacyKey(`sheet:${sheetId}`, false);
+        if (resolved?.id) {
+          await deletePage(resolved.id);
         }
+      } catch {
+        // ignore cleanup failures
       }
-      if (!settings?.page_configs || !(pageId in settings.page_configs)) return;
-      const nextPageConfigs = { ...settings.page_configs };
-      delete nextPageConfigs[pageId];
-      await saveSettings({
-        page_configs: nextPageConfigs
-      });
     },
-    [saveSettings, settings]
+    []
   );
 
   const confirmDeleteCustomSheet = useCallback(async () => {
@@ -656,6 +761,78 @@ const AppShell: React.FC = () => {
     !!updateInfo?.update_available &&
     !!updateInfo?.url &&
     (!resolvedVersion || !updateInfo?.latest_version || isNewerVersion(updateInfo.latest_version, resolvedVersion));
+
+  if (onboardingLoading) {
+    return (
+      <UndoProvider undoManager={undoManager}>
+        <div className="app-shell">
+          <main className="content">
+            <div className="empty">{t("Loading workspace...")}</div>
+          </main>
+        </div>
+      </UndoProvider>
+    );
+  }
+
+  if (!onboardingCompleted) {
+    return (
+      <UndoProvider undoManager={undoManager}>
+        <div className="app-shell">
+          <main className="content">
+            <div className="modal settings-modal" style={{ maxWidth: 820, margin: "48px auto" }}>
+              <div className="modal-header">
+                <div>
+                  <h3>{t("Welcome")}</h3>
+                  <p>{t("Select a starter template for your local workspace.")}</p>
+                </div>
+              </div>
+              <div className="settings-section">
+                <h4>{t("Template")}</h4>
+                <div className="settings-grid two-col">
+                  {onboardingTemplates.map((template) => (
+                    <label key={template.id} className="settings-option">
+                      <input
+                        type="radio"
+                        name="onboarding-template"
+                        value={template.id}
+                        checked={selectedTemplateId === template.id}
+                        onChange={() => setSelectedTemplateId(template.id)}
+                      />
+                      <span>
+                        <strong>{template.name}</strong>
+                        <small>{template.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="settings-section">
+                <h4>{t("Workspace name (optional)")}</h4>
+                <input
+                  className="text-input"
+                  type="text"
+                  value={workspaceNameDraft}
+                  onChange={(event) => setWorkspaceNameDraft(event.target.value)}
+                  placeholder={t("My Workspace")}
+                />
+              </div>
+              {onboardingError && <div className="alert">{onboardingError}</div>}
+              <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={onboardingBusy || !selectedTemplateId}
+                  onClick={() => void handleCompleteOnboarding()}
+                >
+                  {onboardingBusy ? t("Preparing...") : t("Create workspace")}
+                </button>
+              </div>
+            </div>
+          </main>
+        </div>
+      </UndoProvider>
+    );
+  }
 
   return (
     <UndoProvider undoManager={undoManager}>
@@ -1079,6 +1256,7 @@ const App: React.FC = () => {
   return (
     <AppProvider>
       <AppShell />
+      <ConfirmDialogHost />
     </AppProvider>
   );
 };

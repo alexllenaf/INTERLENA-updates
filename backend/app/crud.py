@@ -9,6 +9,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .models import Application, EmailMessage, EmailSyncCursor, View
+from .services.canonical import canonical_schema_ready, upsert_application_record
 from .services.emails import fetch_email_body_from_provider
 from .settings_store import get_settings
 from .utils import (
@@ -133,6 +134,12 @@ def create_application(db: Session, payload: Dict[str, Any]) -> Application:
     db.add(app)
     db.commit()
     db.refresh(app)
+    if canonical_schema_ready(db):
+        try:
+            upsert_application_record(db, app)
+            db.commit()
+        except Exception:
+            db.rollback()
     return app
 
 
@@ -169,6 +176,12 @@ def update_application(db: Session, app: Application, payload: Dict[str, Any]) -
     db.add(app)
     db.commit()
     db.refresh(app)
+    if canonical_schema_ready(db):
+        try:
+            upsert_application_record(db, app)
+            db.commit()
+        except Exception:
+            db.rollback()
     return app
 
 

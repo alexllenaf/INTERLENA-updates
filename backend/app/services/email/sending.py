@@ -5,8 +5,10 @@ Depends on: ``tokens``, ``oauth`` (sibling modules).
 from __future__ import annotations
 
 import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 import json
+import mimetypes
 import os
 import random
 import re
@@ -47,6 +49,9 @@ GMAIL_SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/s
 EMAIL_DAILY_LIMIT = 500
 EMAIL_DAILY_WARNING_THRESHOLD = 450
 GMAIL_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+MAX_CAMPAIGN_ATTACHMENTS = 10
+MAX_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_ATTACHMENT_SINGLE_BYTES = 10 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # HTML detection & plain-text extraction
@@ -90,7 +95,11 @@ def _html_to_plain(html: str) -> str:
 
 
 def _build_mime_email(
-    to: str, from_addr: str, subject: str, body: str,
+    to: str,
+    from_addr: str,
+    subject: str,
+    body: str,
+    attachments: Optional[list[dict[str, Any]]] = None,
 ) -> MimeEmailMessage:
     """Build a MimeEmailMessage, sending as HTML with plain-text fallback
     when *body* contains HTML tags, otherwise plain text."""
@@ -106,6 +115,14 @@ def _build_mime_email(
         mime.add_alternative(body, subtype="html")
     else:
         mime.set_content(body)
+
+    for attachment in attachments or []:
+        mime.add_attachment(
+            attachment["data"],
+            maintype=attachment["maintype"],
+            subtype=attachment["subtype"],
+            filename=attachment["filename"],
+        )
     return mime
 
 # ---------------------------------------------------------------------------
@@ -118,8 +135,73 @@ def validate_no_header_injection(value: str, field_name: str) -> None:
         raise ValueError(f"Invalid {field_name}: header injection detected")
 
 
-def send_gmail_message(access_token: str, to_email: str, subject: str, body: str, from_email: str = "") -> tuple[bool, str, str]:
-    mime = _build_mime_email(to=to_email, from_addr=from_email.strip(), subject=subject, body=body)
+def _safe_attachment_filename(raw: str, index: int) -> str:
+    candidate = os.path.basename(str(raw or "").strip())
+    if not candidate:
+        candidate = f"attachment-{index + 1}"
+    return candidate.replace("\x00", "").strip() or f"attachment-{index + 1}"
+
+
+def _decode_campaign_attachments(attachments: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], Optional[str]]:
+    if len(attachments) > MAX_CAMPAIGN_ATTACHMENTS:
+        return [], f"Máximo {MAX_CAMPAIGN_ATTACHMENTS} adjuntos por envío."
+
+    decoded: list[dict[str, Any]] = []
+    total_size = 0
+    for index, item in enumerate(attachments):
+        filename = _safe_attachment_filename(str(item.get("filename") or ""), index)
+        raw_base64 = str(item.get("data_base64") or "").strip()
+        if not raw_base64:
+            return [], f"El adjunto '{filename}' no contiene datos."
+
+        try:
+            data = base64.b64decode(raw_base64, validate=True)
+        except (ValueError, binascii.Error):
+            return [], f"El adjunto '{filename}' no es válido (base64)."
+
+        if not data:
+            return [], f"El adjunto '{filename}' está vacío."
+        if len(data) > MAX_ATTACHMENT_SINGLE_BYTES:
+            max_size = round(MAX_ATTACHMENT_SINGLE_BYTES / (1024 * 1024))
+            return [], f"'{filename}' supera el límite de {max_size} MB por archivo."
+
+        total_size += len(data)
+        if total_size > MAX_ATTACHMENT_TOTAL_BYTES:
+            max_total = round(MAX_ATTACHMENT_TOTAL_BYTES / (1024 * 1024))
+            return [], f"El tamaño total de adjuntos supera {max_total} MB."
+
+        content_type = str(item.get("content_type") or "").strip().lower()
+        if "/" not in content_type:
+            guessed, _ = mimetypes.guess_type(filename)
+            content_type = guessed or "application/octet-stream"
+        maintype, subtype = content_type.split("/", 1)
+        decoded.append(
+            {
+                "filename": filename,
+                "data": data,
+                "maintype": maintype,
+                "subtype": subtype,
+            }
+        )
+
+    return decoded, None
+
+
+def send_gmail_message(
+    access_token: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    from_email: str = "",
+    attachments: Optional[list[dict[str, Any]]] = None,
+) -> tuple[bool, str, str]:
+    mime = _build_mime_email(
+        to=to_email,
+        from_addr=from_email.strip(),
+        subject=subject,
+        body=body,
+        attachments=attachments,
+    )
     return _gmail_send_message(access_token=access_token, mime_bytes=mime.as_bytes())
 
 
@@ -429,6 +511,7 @@ def send_gmail_campaign(
     subject_template: str,
     body_template: str,
     contacts: list[dict[str, Any]],
+    attachments: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     auth_ok, auth_message, auth = _resolve_google_send_auth(db)
     if not auth_ok:
@@ -464,6 +547,33 @@ def send_gmail_campaign(
     results: list[dict[str, Any]] = []
     sent = 0
     errors = 0
+
+    decoded_attachments: list[dict[str, Any]] = []
+    if attachments:
+        decoded_attachments, attachment_error = _decode_campaign_attachments(attachments)
+        if attachment_error:
+            return {
+                "ok": False,
+                "batch_id": "",
+                "sent_by": sent_by,
+                "total": len(contacts),
+                "sent": 0,
+                "errors": len(contacts),
+                "warning": attachment_error,
+                "daily_limit": stats_before["daily_limit"],
+                "sent_today": stats_before["sent_today"],
+                "remaining_today": stats_before["remaining_today"],
+                "results": [
+                    {
+                        "email": str(item.get("email") or ""),
+                        "name": str(item.get("name") or ""),
+                        "status": "error",
+                        "message": attachment_error,
+                        "provider_message_id": None,
+                    }
+                    for item in contacts
+                ],
+            }
 
     for item in contacts:
         recipient = str(item.get("email") or "").strip()
@@ -514,7 +624,13 @@ def send_gmail_campaign(
         subject = render_email_template(subject_template, values)
         body = render_email_template(body_template, values)
 
-        mime = _build_mime_email(to=recipient, from_addr=sent_by, subject=subject, body=body)
+        mime = _build_mime_email(
+            to=recipient,
+            from_addr=sent_by,
+            subject=subject,
+            body=body,
+            attachments=decoded_attachments,
+        )
 
         ok, message, provider_message_id = _gmail_send_message(access_token=access_token, mime_bytes=mime.as_bytes())
         status = "sent" if ok else "error"

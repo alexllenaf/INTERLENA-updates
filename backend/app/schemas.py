@@ -113,6 +113,7 @@ class ViewBase(BaseModel):
     name: str
     view_type: str
     config: Dict[str, Any]
+    database_id: Optional[str] = None
 
 
 class ViewCreate(ViewBase):
@@ -123,6 +124,7 @@ class ViewUpdate(BaseModel):
     name: Optional[str] = None
     view_type: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    database_id: Optional[str] = None
 
 
 class ViewOut(ViewBase):
@@ -139,6 +141,109 @@ class SettingsOut(BaseModel):
 
 class SettingsIn(BaseModel):
     settings: Dict[str, Any]
+
+
+class PageOut(BaseModel):
+    id: str
+    title: str
+    icon: Optional[str] = None
+    cover: Optional[str] = None
+    legacy_key: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class PageCreateIn(BaseModel):
+    title: str
+    legacy_key: Optional[str] = None
+
+
+class PageUpdateIn(BaseModel):
+    title: Optional[str] = None
+    icon: Optional[str] = None
+    cover: Optional[str] = None
+
+
+class PageResolveOut(BaseModel):
+    page: PageOut
+
+
+class CanonicalBlockIn(BaseModel):
+    id: Optional[str] = None
+    type: str
+    parent_id: Optional[str] = None
+    layout: Dict[str, Any] = Field(default_factory=dict)
+    props: Dict[str, Any] = Field(default_factory=dict)
+    content: Optional[Any] = None
+
+
+class CanonicalBlockOut(BaseModel):
+    id: str
+    type: str
+    parent_id: Optional[str] = None
+    position: Optional[str] = None
+    layout: Dict[str, Any] = Field(default_factory=dict)
+    props: Dict[str, Any] = Field(default_factory=dict)
+    content: Optional[Any] = None
+
+
+class PageBlocksOut(BaseModel):
+    page_id: str
+    blocks: List[CanonicalBlockOut] = Field(default_factory=list)
+
+
+class PageBlocksIn(BaseModel):
+    blocks: List[CanonicalBlockIn] = Field(default_factory=list)
+
+
+class DatabaseRecordsOut(BaseModel):
+    database: Dict[str, Any]
+    view: Optional[Dict[str, Any]] = None
+    properties: List[Dict[str, Any]] = Field(default_factory=list)
+    records: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class DatabaseDetailOut(BaseModel):
+    database: Dict[str, Any]
+    properties: List[Dict[str, Any]] = Field(default_factory=list)
+    views: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class DatabaseRecordIn(BaseModel):
+    values: Dict[str, Any] = Field(default_factory=dict)
+    page: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DatabaseRecordOut(BaseModel):
+    id: str
+    database_id: str
+    page_id: str
+    page_title: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OnboardingStatusOut(BaseModel):
+    completed: bool
+
+
+class OnboardingTemplateOut(BaseModel):
+    id: str
+    name: str
+    description: str
+    version: str
+
+
+class OnboardingCompleteIn(BaseModel):
+    template_id: str
+    workspace_name: Optional[str] = None
+
+
+class OnboardingCompleteOut(BaseModel):
+    completed: bool
+    home_page_id: str
+    seed_version: str
 
 
 class UpdateInfoOut(BaseModel):
@@ -243,10 +348,17 @@ class EmailSendContactIn(BaseModel):
     custom_fields: Dict[str, str] = Field(default_factory=dict)
 
 
+class EmailSendAttachmentIn(BaseModel):
+    filename: str
+    content_type: Optional[str] = None
+    data_base64: str
+
+
 class EmailSendBatchIn(BaseModel):
     subject_template: str
     body_template: str
     contacts: List[EmailSendContactIn] = Field(default_factory=list)
+    attachments: List[EmailSendAttachmentIn] = Field(default_factory=list)
 
 
 class EmailSendContactOut(BaseModel):

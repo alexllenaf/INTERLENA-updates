@@ -153,6 +153,18 @@ const BLOCK_PRESET_LIST = [
     layout: { colSpan: 60 }
   }),
   preset({
+    id: "databaseView.default",
+    type: "databaseView",
+    props: {
+      title: "Database View",
+      description: "Render records from a canonical database view.",
+      databaseId: "",
+      viewId: "",
+      emptyMessage: "No records for this view."
+    },
+    layout: { colSpan: 60 }
+  }),
+  preset({
     id: "tracker.table",
     type: "editableTable",
     props: {
@@ -380,7 +392,8 @@ export const DEFAULT_PRESET_ID_BY_BLOCK_TYPE: Record<PageBlockType, string> = {
   chart: "chart.default",
   kpi: "kpi.default",
   pipeline: "pipeline.default",
-  email: "email.default"
+  email: "email.default",
+  databaseView: "databaseView.default"
 };
 
 const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: string }> = {
@@ -427,6 +440,10 @@ const BLOCK_LIBRARY_LABELS: Record<PageBlockType, { label: string; description: 
   email: {
     label: "Correo",
     description: "Correo con sync de metadatos y cache de cuerpo."
+  },
+  databaseView: {
+    label: "Database view",
+    description: "Table view backed by canonical databases."
   }
 };
 

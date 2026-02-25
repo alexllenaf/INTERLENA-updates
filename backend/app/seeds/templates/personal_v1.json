@@ -1,0 +1,80 @@
+{
+  "id": "personal_v1",
+  "version": "personal_v1",
+  "name": "Personal Starter",
+  "description": "Workspace personal con tareas y notas.",
+  "home_page": "home",
+  "pages": [
+    {
+      "id": "home",
+      "title": "Home",
+      "icon": "house",
+      "blocks": [
+        {
+          "id": "home:welcome",
+          "type": "text",
+          "layout": { "colSpan": 60 },
+          "props": {
+            "text": "Bienvenido. Organiza tus prioridades de la semana."
+          },
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  { "type": "text", "text": "Bienvenido. Organiza tus prioridades de la semana." }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "id": "tasks_db",
+      "name": "Tasks",
+      "properties": [
+        { "id": "title", "name": "Title", "type": "text", "config": {} },
+        {
+          "id": "status",
+          "name": "Status",
+          "type": "select",
+          "config": { "options": ["Todo", "Doing", "Done"] }
+        },
+        { "id": "due_date", "name": "Due Date", "type": "date", "config": {} },
+        {
+          "id": "priority",
+          "name": "Priority",
+          "type": "select",
+          "config": { "options": ["Low", "Medium", "High"] }
+        }
+      ],
+      "views": [
+        { "id": "tasks_table", "name": "Table", "type": "table", "config": { "sort": ["Due Date"] } }
+      ],
+      "records": [
+        {
+          "id": "task_1",
+          "page": { "id": "task_1_page", "title": "Preparar CV" },
+          "values": {
+            "Title": "Preparar CV",
+            "Status": "Todo",
+            "Priority": "High"
+          }
+        },
+        {
+          "id": "task_2",
+          "page": { "id": "task_2_page", "title": "Enviar seguimiento" },
+          "values": {
+            "Title": "Enviar seguimiento",
+            "Status": "Doing",
+            "Priority": "Medium"
+          }
+        }
+      ]
+    }
+  ]
+}

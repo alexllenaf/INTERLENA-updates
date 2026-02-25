@@ -112,7 +112,17 @@ def _cleanup_nat(engine: Engine) -> None:
 
 
 def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            Application.__table__,
+            View.__table__,
+            Setting.__table__,
+            EmailMessage.__table__,
+            EmailSyncCursor.__table__,
+            EmailSendLog.__table__,
+        ],
+    )
     _ensure_columns(engine, "applications", Application.__table__.columns)
     _ensure_columns(engine, "views", View.__table__.columns)
     _ensure_columns(engine, "settings", Setting.__table__.columns)

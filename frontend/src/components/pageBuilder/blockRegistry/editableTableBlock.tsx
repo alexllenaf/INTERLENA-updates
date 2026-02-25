@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import * as XLSX from "xlsx";
 import { saveBlobAsFile } from "../../../api";
 import { useAppData } from "../../../state";
 import BlockPanel from "../../BlockPanel";
@@ -47,6 +48,7 @@ import {
   columnMenuIconTypeText,
   columnMenuIconTypeTodo
 } from "../../columnMenuIcons";
+import { confirmDialog } from "../../../shared/confirmDialog";
 
 const DEFAULT_TABLE_COLUMNS = ["Column 1", "Column 2", "Column 3"];
 const DEFAULT_TABLE_ROWS = [["", "", ""]];
@@ -135,6 +137,113 @@ const buildCsv = (columns: string[], tableRows: string[][]): string => {
       .join(",")
   );
   return [header, ...body].join("\n");
+};
+
+type ParsedImportTable = {
+  columns: string[];
+  rows: string[][];
+};
+
+const trimTrailingEmptyCells = (row: string[]): string[] => {
+  let end = row.length;
+  while (end > 0 && row[end - 1].trim().length === 0) {
+    end -= 1;
+  }
+  return row.slice(0, end);
+};
+
+const stringifyImportedCell = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+};
+
+const rowHasContent = (row: string[]): boolean => row.some((cell) => cell.trim().length > 0);
+
+const dedupeImportedColumns = (rawColumns: string[]): string[] => {
+  const seen = new Map<string, number>();
+  return rawColumns.map((raw, index) => {
+    const base = raw.trim() || `Column ${index + 1}`;
+    const count = seen.get(base) || 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base} (${count + 1})`;
+  });
+};
+
+const buildImportedColumns = (headerRow: string[], widthHint: number): string[] => {
+  const width = Math.max(1, Math.min(widthHint, MAX_TABLE_COLUMNS));
+  const rawColumns = Array.from({ length: width }, (_, index) => headerRow[index] || "");
+  return dedupeImportedColumns(rawColumns);
+};
+
+const parseTabularFile = async (file: File): Promise<ParsedImportTable> => {
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: "array",
+    raw: false,
+    cellDates: false
+  });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    throw new Error("No se encontro ninguna hoja en el archivo.");
+  }
+  const sheet = workbook.Sheets[firstSheetName];
+  if (!sheet) {
+    throw new Error("No se pudo leer la primera hoja del archivo.");
+  }
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    blankrows: false
+  });
+  const normalizedRows = rawRows
+    .filter((row): row is unknown[] => Array.isArray(row))
+    .map((row) => trimTrailingEmptyCells(row.map((cell) => stringifyImportedCell(cell))))
+    .filter((row) => row.length > 0);
+  if (normalizedRows.length === 0) {
+    throw new Error("El archivo no contiene datos para importar.");
+  }
+  const headerRow = normalizedRows[0];
+  const sourceRows = normalizedRows.slice(1);
+  const widthHint = Math.max(headerRow.length, ...sourceRows.map((row) => row.length), 1);
+
+  if (sourceRows.length === 0) {
+    const fallbackColumns = buildImportedColumns([], widthHint);
+    return {
+      columns: fallbackColumns,
+      rows: [
+        Array.from({ length: fallbackColumns.length }, (_, index) => headerRow[index] || "")
+      ]
+    };
+  }
+
+  const columns = buildImportedColumns(headerRow, widthHint);
+  const rows = sourceRows
+    .filter((row) => rowHasContent(row))
+    .slice(0, MAX_TABLE_ROWS)
+    .map((row) => Array.from({ length: columns.length }, (_, index) => row[index] || ""));
+  return { columns, rows };
+};
+
+const normalizeColumnKey = (value: string): string => value.trim().toLowerCase();
+
+const mapImportedRowsToColumns = (imported: ParsedImportTable, targetColumns: string[]): string[][] => {
+  const sourceIndexByKey = new Map<string, number>();
+  imported.columns.forEach((column, index) => {
+    const key = normalizeColumnKey(column);
+    if (!key || sourceIndexByKey.has(key)) return;
+    sourceIndexByKey.set(key, index);
+  });
+  return imported.rows.map((sourceRow) =>
+    targetColumns.map((targetColumn, targetIndex) => {
+      const byNameIndex = sourceIndexByKey.get(normalizeColumnKey(targetColumn));
+      const sourceIndex = byNameIndex ?? targetIndex;
+      return String(sourceRow[sourceIndex] || "");
+    })
+  );
 };
 
 const normalizeBoolLike = (raw: string): boolean => {
@@ -570,6 +679,7 @@ type TableCalcOp =
 
 type TableSortConfig = { column: string; direction: "asc" | "desc" } | null;
 type TableColumnKind = EditableTableColumnKind;
+type TableImportMode = "replace" | "append";
 type ColumnMenuView = "root" | "type" | "filter" | "sort" | "group" | "calculate";
 
 type TableRowEntry = {
@@ -639,7 +749,12 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   const [dragOverRowIndex, setDragOverRowIndex] = useState<number | null>(null);
   const draggedRowRef = useRef<number | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const importMenuRef = useRef<HTMLDivElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importModeRef = useRef<TableImportMode>("replace");
   const columns = useMemo(() => effectiveModel.columns, [effectiveModel.columns]);
   const persistedColumnKinds = useMemo(() => effectiveModel.columnKinds, [effectiveModel.columnKinds]);
   const [columnKinds, setColumnKinds] = useState<Record<string, TableColumnKind>>(persistedColumnKinds);
@@ -709,15 +824,16 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
   }, [columns]);
 
   useEffect(() => {
-    if (!exportMenuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
-        setExportMenuOpen(false);
-      }
+    if (!exportMenuOpen && !importMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (exportMenuRef.current?.contains(target) || importMenuRef.current?.contains(target)) return;
+      setExportMenuOpen(false);
+      setImportMenuOpen(false);
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [exportMenuOpen]);
+  }, [exportMenuOpen, importMenuOpen]);
 
   useEffect(() => {
     if (!isSchemaBacked) return;
@@ -912,6 +1028,54 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     patchBlockProps({ customColumnTypes: normalized });
   };
 
+  const triggerImportPicker = (nextMode: TableImportMode) => {
+    if (!canEdit || importing) return;
+    importModeRef.current = nextMode;
+    setImportMenuOpen(false);
+    importInputRef.current?.click();
+  };
+
+  const handleImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+
+    try {
+      setImporting(true);
+      const imported = await parseTabularFile(file);
+      if (importModeRef.current === "append") {
+        const mappedRows = mapImportedRowsToColumns(imported, columns);
+        persistTable(columns, [...rows, ...mappedRows]);
+        return;
+      }
+
+      if (isSchemaBacked) {
+        persistTable(columns, mapImportedRowsToColumns(imported, columns));
+        return;
+      }
+
+      const nextColumns = normalizeTableColumns(imported.columns);
+      const nextRows = normalizeTableRows(imported.rows, nextColumns.length);
+      const nextColumnKinds = normalizeTableColumnKinds(columnKinds, nextColumns);
+      persistTable(nextColumns, nextRows, {
+        customColumnTypes: nextColumnKinds,
+        customSelectOptions: serializeCustomSelectOptions(
+          readLegacySelectOptionsFromProps(nextColumns),
+          nextColumns
+        )
+      });
+      setColumnKinds(nextColumnKinds);
+    } catch (error) {
+      console.error("Failed to import table file", error);
+      const message =
+        error instanceof Error ? error.message : "No se pudo importar el archivo seleccionado.";
+      window.alert(message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const renameColumnMeta = (oldName: string, newName: string, columnList: string[]) => {
     if (oldName === newName) return;
     setHiddenColumns((prev) => prev.map((column) => (column === oldName ? newName : column)));
@@ -999,13 +1163,17 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     );
   };
 
-  const handleDeleteColumn = (colIndex: number) => {
+  const handleDeleteColumn = async (colIndex: number) => {
     if (!canEditStructure) return;
     if (columns.length <= 1) return;
     const columnLabel = columns[colIndex] || `Column ${colIndex + 1}`;
-    const confirmed = window.confirm(
-      `Delete "${columnLabel}" column? This action cannot be undone.`
-    );
+    const confirmed = await confirmDialog({
+      title: "Delete column",
+      message: `Delete "${columnLabel}" column? This action cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger"
+    });
     if (!confirmed) return;
     const column = columns[colIndex];
     const nextColumns = columns.filter((_, index) => index !== colIndex);
@@ -1135,10 +1303,14 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
     setEditRowDraft(null);
   };
 
-  const handleDeleteRow = (rowIndex: number) => {
-    const confirmed = window.confirm(
-      `Delete row ${rowIndex + 1}? This action cannot be undone.`
-    );
+  const handleDeleteRow = async (rowIndex: number) => {
+    const confirmed = await confirmDialog({
+      title: "Delete row",
+      message: `Delete row ${rowIndex + 1}? This action cannot be undone.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger"
+    });
     if (!confirmed) return;
     const nextRows = rows.filter((_, index) => index !== rowIndex);
     persistTable(columns, nextRows);
@@ -1942,7 +2114,7 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
         disabled: !canEditStructure || menuColIndex < 0 || columns.length <= 1,
         action: () => {
           if (!canEditStructure || menuColIndex < 0 || columns.length <= 1) return;
-          handleDeleteColumn(menuColIndex);
+          void handleDeleteColumn(menuColIndex);
         }
       }
     ];
@@ -2065,15 +2237,78 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
           trailing: (
             <>
               {extraActions}
+              <div className="export-dropdown" ref={importMenuRef}>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={!canEdit || importing}
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    setImportMenuOpen((open) => !open);
+                  }}
+                >
+                  {importing ? "Importing..." : "Import ▾"}
+                </button>
+                {importMenuOpen && (
+                  <div className="export-dropdown-menu">
+                    <button type="button" onClick={() => triggerImportPicker("replace")} disabled={importing}>
+                      Replace with file
+                    </button>
+                    <button type="button" onClick={() => triggerImportPicker("append")} disabled={importing}>
+                      Append rows from file
+                    </button>
+                  </div>
+                )}
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  style={{ display: "none" }}
+                  onChange={(event) => {
+                    void handleImportFileChange(event);
+                  }}
+                />
+              </div>
               <div className="export-dropdown" ref={exportMenuRef}>
-                <button className="ghost" type="button" onClick={() => setExportMenuOpen((v) => !v)}>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => {
+                    setImportMenuOpen(false);
+                    setExportMenuOpen((open) => !open);
+                  }}
+                >
                   Export ▾
                 </button>
                 {exportMenuOpen && (
                   <div className="export-dropdown-menu">
-                    <button type="button" onClick={() => { void exportRowsAsCsv("all"); setExportMenuOpen(false); }}>Export All</button>
-                    <button type="button" onClick={() => { void exportRowsAsCsv("favorites"); setExportMenuOpen(false); }}>Export Favorites</button>
-                    <button type="button" onClick={() => { void exportRowsAsCsv("active"); setExportMenuOpen(false); }}>Export Active</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void exportRowsAsCsv("all");
+                        setExportMenuOpen(false);
+                      }}
+                    >
+                      Export All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void exportRowsAsCsv("favorites");
+                        setExportMenuOpen(false);
+                      }}
+                    >
+                      Export Favorites
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void exportRowsAsCsv("active");
+                        setExportMenuOpen(false);
+                      }}
+                    >
+                      Export Active
+                    </button>
                   </div>
                 )}
               </div>
@@ -2305,7 +2540,9 @@ export const DefaultEditableTable: React.FC<DefaultEditableTableProps> = ({
                         <button
                           className="icon-button danger"
                           type="button"
-                          onClick={() => handleDeleteRow(rowIndex)}
+                          onClick={() => {
+                            void handleDeleteRow(rowIndex);
+                          }}
                           aria-label="Delete"
                           disabled={!canEdit}
                         >

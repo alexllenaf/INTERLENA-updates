@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { PageBuilderPage } from "../components/pageBuilder";
 import { PAGE_CONFIG_VERSION, type PageConfig } from "../components/pageBuilder/types";
@@ -23,11 +23,14 @@ const CustomSheetPage: React.FC<Props> = ({ sheets }) => {
   }
 
   const pageId = `sheet:${sheetId}`;
-  const fallbackConfig: PageConfig = {
-    id: pageId,
-    version: PAGE_CONFIG_VERSION,
-    blocks: []
-  };
+  const fallbackConfig: PageConfig = useMemo(
+    () => ({
+      id: pageId,
+      version: PAGE_CONFIG_VERSION,
+      blocks: []
+    }),
+    [pageId]
+  );
 
   return (
     <PageBuilderPage

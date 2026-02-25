@@ -5,10 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.applications import router as applications_router
 from .api.backups import router as backups_router
+from .api.databases import router as databases_router
 from .api.emails import router as emails_router
 from .api.exports import router as exports_router
 from .api.gmail_oauth import router as gmail_oauth_router
 from .api.health import router as health_router
+from .api.onboarding import router as onboarding_router
+from .api.pages import router as pages_router
 from .api.settings import router as settings_router
 from .api.views import router as views_router
 from .config import get_settings
@@ -56,6 +59,9 @@ app.include_router(backups_router)
 app.include_router(settings_router)
 app.include_router(applications_router)
 app.include_router(views_router)
+app.include_router(pages_router)
+app.include_router(databases_router)
+app.include_router(onboarding_router)
 app.include_router(exports_router)
 app.include_router(emails_router)
 app.include_router(gmail_oauth_router)

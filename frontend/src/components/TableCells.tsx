@@ -87,6 +87,72 @@ export const TextCell: React.FC<TextCellProps> = ({
   );
 };
 
+type TextAreaCellProps = {
+  value?: string | null;
+  placeholder?: string;
+  rows?: number;
+  readOnly?: boolean;
+  onCommit: (next: string) => void;
+};
+
+export const TextAreaCell: React.FC<TextAreaCellProps> = ({
+  value,
+  placeholder,
+  rows = 3,
+  readOnly = false,
+  onCommit
+}) => {
+  const [draft, setDraft] = useState(value ?? "");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setDraft(value ?? "");
+    setDirty(false);
+  }, [value]);
+
+  const commit = () => {
+    if (readOnly) return;
+    if (!dirty) return;
+    const next = draft;
+    if (next === (value ?? "")) {
+      setDirty(false);
+      return;
+    }
+    onCommit(next);
+    setDirty(false);
+  };
+
+  return (
+    <textarea
+      className="cell-textarea"
+      value={draft}
+      rows={rows}
+      style={{ margin: 0, height: `${Math.max(rows, 1) * 22}px`, width: "100%" }}
+      onChange={(event) => {
+        if (readOnly) return;
+        setDraft(event.target.value);
+        setDirty(true);
+      }}
+      onBlur={() => {
+        if (readOnly) return;
+        commit();
+      }}
+      onKeyDown={(event) => {
+        if (readOnly) return;
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          setDraft(value ?? "");
+          setDirty(false);
+        }
+      }}
+      placeholder={placeholder}
+      readOnly={readOnly}
+    />
+  );
+};
+
 type DateCellProps = {
   value?: string | null;
   onCommit: (next: string) => void;

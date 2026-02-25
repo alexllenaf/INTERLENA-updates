@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
+
+
+def _utcnow() -> datetime:
+    return datetime.utcnow()
 
 
 class Application(Base):
@@ -38,8 +53,8 @@ class Application(Base):
     documents_files = Column(Text)
     contacts = Column(Text)
     favorite = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow)
     last_viewed = Column(DateTime)
     created_by = Column(String)
     properties_json = Column(Text)
@@ -52,8 +67,8 @@ class View(Base):
     name = Column(String, nullable=False)
     view_type = Column(String, nullable=False)
     config = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow)
 
 
 class Setting(Base):
@@ -81,8 +96,8 @@ class EmailMessage(Base):
     folder = Column(String, nullable=False)
     body = Column(Text)
     body_downloaded_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
 
 
 class EmailSyncCursor(Base):
@@ -111,4 +126,121 @@ class EmailSendLog(Base):
     status = Column(String, nullable=False)
     error_message = Column(Text)
     provider_message_id = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class Page(Base):
+    __tablename__ = "pages"
+
+    id = Column(String, primary_key=True, index=True)
+    title = Column(Text, nullable=False)
+    icon = Column(Text)
+    cover = Column(Text)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class Block(Base):
+    __tablename__ = "blocks"
+    __table_args__ = (
+        Index("ix_blocks_page_id_position", "page_id", "position"),
+        Index("ix_blocks_page_parent", "page_id", "parent_id"),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    page_id = Column(String, ForeignKey("pages.id"), nullable=False, index=True)
+    parent_id = Column(String, ForeignKey("blocks.id"), nullable=True, index=True)
+    position = Column(String, nullable=False)
+    type = Column(String, nullable=False)
+    content_json = Column(Text, nullable=False, default="{}")
+    props_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class Database(Base):
+    __tablename__ = "databases"
+
+    id = Column(String, primary_key=True, index=True)
+    name = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class DatabaseProperty(Base):
+    __tablename__ = "database_properties"
+    __table_args__ = (
+        Index("ix_database_properties_database_order", "database_id", "property_order"),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    database_id = Column(String, ForeignKey("databases.id"), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    type = Column(String, nullable=False)
+    config_json = Column(Text, nullable=False, default="{}")
+    property_order = Column(Integer, nullable=False, default=0)
+
+
+class Record(Base):
+    __tablename__ = "records"
+
+    id = Column(String, primary_key=True, index=True)
+    database_id = Column(String, ForeignKey("databases.id"), nullable=False, index=True)
+    page_id = Column(String, ForeignKey("pages.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class RecordProperty(Base):
+    __tablename__ = "record_properties"
+    __table_args__ = (
+        Index("ix_record_properties_property_id", "property_id"),
+    )
+
+    record_id = Column(String, ForeignKey("records.id"), primary_key=True)
+    property_id = Column(String, ForeignKey("database_properties.id"), primary_key=True)
+    value_json = Column(Text, nullable=False, default="null")
+
+
+class RecordRelation(Base):
+    __tablename__ = "record_relations"
+    __table_args__ = (
+        Index("ix_record_relations_from", "from_record_id"),
+        Index("ix_record_relations_to", "to_record_id"),
+    )
+
+    property_id = Column(String, ForeignKey("database_properties.id"), primary_key=True)
+    from_record_id = Column(String, ForeignKey("records.id"), primary_key=True)
+    to_record_id = Column(String, ForeignKey("records.id"), primary_key=True)
+
+
+class DatabaseView(Base):
+    __tablename__ = "database_views"
+
+    id = Column(String, primary_key=True, index=True)
+    database_id = Column(String, ForeignKey("databases.id"), nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    type = Column(String, nullable=False)
+    config_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class MetaKV(Base):
+    __tablename__ = "meta"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False)
+
+
+class MigrationMap(Base):
+    __tablename__ = "migration_map"
+    __table_args__ = (
+        Index("ix_migration_map_new_table_new_id", "new_table", "new_id"),
+    )
+
+    legacy_table = Column(String, primary_key=True)
+    legacy_id = Column(String, primary_key=True)
+    new_table = Column(String, primary_key=True)
+    new_id = Column(String, nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)

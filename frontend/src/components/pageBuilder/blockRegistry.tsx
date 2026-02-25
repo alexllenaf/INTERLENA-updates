@@ -12,6 +12,7 @@ import { EDITABLE_TABLE_BLOCK_DEFINITION } from "./blockRegistry/editableTableBl
 import { INFORMATIONAL_TABLE_BLOCK_DEFINITION } from "./blockRegistry/informationalTableBlock";
 import { KPI_BLOCK_DEFINITION } from "./blockRegistry/kpiBlock";
 import { PIPELINE_BLOCK_DEFINITION } from "./blockRegistry/pipelineBlock";
+import { DATABASE_VIEW_BLOCK_DEFINITION } from "./blockRegistry/databaseViewBlock";
 import { TEXT_BLOCK_DEFINITION } from "./blockRegistry/textBlock";
 import { TODO_TABLE_BLOCK_DEFINITION } from "./blockRegistry/todoTableBlock";
 import { TITLE_DESCRIPTION_BLOCK_DEFINITION } from "./blockRegistry/titleDescriptionBlock";
@@ -37,7 +38,8 @@ export const PAGE_BLOCK_REGISTRY: BlockRegistry = {
   chart: CHART_BLOCK_DEFINITION,
   kpi: KPI_BLOCK_DEFINITION,
   pipeline: PIPELINE_BLOCK_DEFINITION,
-  email: EMAIL_BLOCK_DEFINITION
+  email: EMAIL_BLOCK_DEFINITION,
+  databaseView: DATABASE_VIEW_BLOCK_DEFINITION
 };
 
 export const createDefaultPageBlock = <TType extends PageBlockType>(

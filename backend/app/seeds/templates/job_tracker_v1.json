@@ -1,0 +1,84 @@
+{
+  "id": "job_tracker_v1",
+  "version": "job_tracker_v1",
+  "name": "Job Tracker",
+  "description": "Plantilla enfocada en seguimiento de candidaturas.",
+  "home_page": "home",
+  "pages": [
+    {
+      "id": "home",
+      "title": "Job Tracker Home",
+      "icon": "briefcase",
+      "blocks": [
+        {
+          "id": "job:welcome",
+          "type": "text",
+          "layout": { "colSpan": 60 },
+          "props": {
+            "text": "Registra empresas, etapas, fechas clave y próximos pasos."
+          },
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  { "type": "text", "text": "Registra empresas, etapas, fechas clave y próximos pasos." }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "id": "applications_db",
+      "name": "Applications",
+      "properties": [
+        { "id": "company", "name": "Company", "type": "text", "config": {} },
+        { "id": "position", "name": "Position", "type": "text", "config": {} },
+        {
+          "id": "stage",
+          "name": "Stage",
+          "type": "select",
+          "config": { "options": ["Applied", "Interview", "Offer", "Rejected"] }
+        },
+        {
+          "id": "outcome",
+          "name": "Outcome",
+          "type": "select",
+          "config": { "options": ["In Progress", "Offer", "Rejected", "On Hold"] }
+        },
+        { "id": "application_date", "name": "Application Date", "type": "date", "config": {} }
+      ],
+      "views": [
+        { "id": "applications_table", "name": "Table", "type": "table", "config": {} },
+        { "id": "applications_board", "name": "Pipeline", "type": "board", "config": { "groupBy": "Stage" } }
+      ],
+      "records": [
+        {
+          "id": "app_1",
+          "page": { "id": "app_1_page", "title": "Acme - Product Analyst" },
+          "values": {
+            "Company": "Acme",
+            "Position": "Product Analyst",
+            "Stage": "Interview",
+            "Outcome": "In Progress"
+          }
+        },
+        {
+          "id": "app_2",
+          "page": { "id": "app_2_page", "title": "Globex - Data Analyst" },
+          "values": {
+            "Company": "Globex",
+            "Position": "Data Analyst",
+            "Stage": "Applied",
+            "Outcome": "In Progress"
+          }
+        }
+      ]
+    }
+  ]
+}

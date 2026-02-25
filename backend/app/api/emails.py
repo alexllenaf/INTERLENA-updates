@@ -231,6 +231,7 @@ def send_batch_api(payload: EmailSendBatchIn, db: Session = Depends(get_db)) -> 
         subject_template=payload.subject_template,
         body_template=payload.body_template,
         contacts=[item.model_dump() for item in payload.contacts],
+        attachments=[item.model_dump() for item in payload.attachments],
     )
     return EmailSendBatchOut(**result)
 

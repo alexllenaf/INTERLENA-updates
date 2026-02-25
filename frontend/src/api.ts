@@ -1,6 +1,12 @@
 import {
   Application,
   ApplicationInput,
+  CanonicalBlock,
+  CanonicalDatabaseDetail,
+  CanonicalDatabaseRecord,
+  CanonicalDatabase,
+  CanonicalPage,
+  DatabaseRecordsResult,
   EmailBodyResult,
   EmailConnectionTestInput,
   EmailConnectionTestResult,
@@ -14,6 +20,12 @@ import {
   EmailSendContact,
   EmailSendStats,
   GoogleAccount,
+  OnboardingCompleteInput,
+  OnboardingCompleteResult,
+  OnboardingStatus,
+  OnboardingTemplate,
+  PageBlocksResult,
+  PageResolveResult,
   Settings,
   UpdateInfo,
   View
@@ -342,6 +354,477 @@ export async function updateSettings(settings: Partial<Settings>): Promise<Setti
   return data.settings;
 }
 
+export async function listPages(): Promise<CanonicalPage[]> {
+  return request<CanonicalPage[]>("/pages");
+}
+
+export async function createPage(payload: {
+  title: string;
+  legacy_key?: string;
+}): Promise<CanonicalPage> {
+  return request<CanonicalPage>("/pages", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updatePage(
+  pageId: string,
+  payload: {
+    title?: string;
+    icon?: string | null;
+    cover?: string | null;
+  }
+): Promise<CanonicalPage> {
+  return request<CanonicalPage>(`/pages/${encodeURIComponent(pageId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function resolvePageByLegacyKey(
+  legacyKey: string,
+  createIfMissing = true
+): Promise<CanonicalPage> {
+  const query = new URLSearchParams();
+  query.set("create_if_missing", createIfMissing ? "true" : "false");
+  const data = await request<PageResolveResult>(
+    `/pages/resolve/${encodeURIComponent(legacyKey)}?${query.toString()}`
+  );
+  return data.page;
+}
+
+export async function getPageBlocks(pageId: string): Promise<PageBlocksResult> {
+  return request<PageBlocksResult>(`/pages/${encodeURIComponent(pageId)}/blocks`);
+}
+
+export async function getPageBlocksByLegacyKey(legacyKey: string): Promise<PageBlocksResult> {
+  return request<PageBlocksResult>(`/pages/by-legacy/${encodeURIComponent(legacyKey)}/blocks`);
+}
+
+export async function savePageBlocks(pageId: string, blocks: CanonicalBlock[]): Promise<PageBlocksResult> {
+  return request<PageBlocksResult>(`/pages/${encodeURIComponent(pageId)}/blocks`, {
+    method: "PUT",
+    body: JSON.stringify({ blocks })
+  });
+}
+
+export async function deletePage(pageId: string): Promise<void> {
+  await request(`/pages/${encodeURIComponent(pageId)}`, {
+    method: "DELETE"
+  });
+}
+
+export async function getDatabases(): Promise<CanonicalDatabase[]> {
+  return request<CanonicalDatabase[]>("/databases");
+}
+
+export async function getDatabaseByName(databaseName: string): Promise<{
+  id: string;
+  name: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}> {
+  return request(`/databases/by-name/${encodeURIComponent(databaseName)}`);
+}
+
+export async function getDatabaseDetail(databaseId: string): Promise<CanonicalDatabaseDetail> {
+  return request<CanonicalDatabaseDetail>(`/databases/${encodeURIComponent(databaseId)}`);
+}
+
+export async function getDatabaseRecords(
+  databaseId: string,
+  params: { view_id?: string } = {}
+): Promise<DatabaseRecordsResult> {
+  const query = new URLSearchParams();
+  if (params.view_id) query.set("view_id", params.view_id);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<DatabaseRecordsResult>(`/databases/${encodeURIComponent(databaseId)}/records${suffix}`);
+}
+
+export async function createDatabaseRecord(
+  databaseId: string,
+  payload: { values?: Record<string, unknown>; page?: Record<string, unknown> }
+): Promise<CanonicalDatabaseRecord> {
+  return request<CanonicalDatabaseRecord>(`/databases/${encodeURIComponent(databaseId)}/records`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateDatabaseRecord(
+  databaseId: string,
+  recordId: string,
+  payload: { values?: Record<string, unknown>; page?: Record<string, unknown> }
+): Promise<CanonicalDatabaseRecord> {
+  return request<CanonicalDatabaseRecord>(
+    `/databases/${encodeURIComponent(databaseId)}/records/${encodeURIComponent(recordId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export async function deleteDatabaseRecord(databaseId: string, recordId: string): Promise<void> {
+  await request(
+    `/databases/${encodeURIComponent(databaseId)}/records/${encodeURIComponent(recordId)}`,
+    {
+      method: "DELETE"
+    }
+  );
+}
+
+export async function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return request<OnboardingStatus>("/onboarding/status");
+}
+
+export async function getOnboardingTemplates(): Promise<OnboardingTemplate[]> {
+  return request<OnboardingTemplate[]>("/onboarding/templates");
+}
+
+export async function completeOnboarding(
+  payload: OnboardingCompleteInput
+): Promise<OnboardingCompleteResult> {
+  return request<OnboardingCompleteResult>("/onboarding/complete", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+const APPLICATIONS_DATABASE_NAME = "Applications";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const parseUnknownJson = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+const toNumericOrNull = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const toIntegerOrNull = (value: unknown): number | null => {
+  const parsed = toNumericOrNull(value);
+  return parsed === null ? null : Math.trunc(parsed);
+};
+
+const toTextOrNull = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") return String(value);
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const toBoolean = (value: unknown): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "si";
+  }
+  return false;
+};
+
+const parseTodoItemsValue = (value: unknown): Application["todo_items"] => {
+  const parsed = parseUnknownJson(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => isRecord(entry))
+    .map((entry, index) => {
+      const id = toTextOrNull(entry.id) || `todo-${index}`;
+      const task = toTextOrNull(entry.task) || "";
+      if (!task) return null;
+      return {
+        id,
+        task,
+        due_date: toTextOrNull(entry.due_date) || undefined,
+        status: toTextOrNull(entry.status) || undefined,
+        task_location: toTextOrNull(entry.task_location) || undefined,
+        notes: toTextOrNull(entry.notes) || undefined,
+        documents_links: toTextOrNull(entry.documents_links) || undefined
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+};
+
+const parseDocumentsFilesValue = (value: unknown): Application["documents_files"] => {
+  const parsed = parseUnknownJson(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => isRecord(entry))
+    .map((entry, index) => {
+      const id = toTextOrNull(entry.id) || `file-${index}`;
+      const name = toTextOrNull(entry.name) || "";
+      if (!name) return null;
+      return {
+        id,
+        name,
+        size: toIntegerOrNull(entry.size) ?? undefined,
+        content_type: toTextOrNull(entry.content_type) || undefined,
+        uploaded_at: toTextOrNull(entry.uploaded_at) || undefined
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+};
+
+const parseContactsValue = (value: unknown): Application["contacts"] => {
+  const parsed = parseUnknownJson(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => isRecord(entry))
+    .map((entry, index) => {
+      const id = toTextOrNull(entry.id) || `contact-${index}`;
+      const name = toTextOrNull(entry.name) || "";
+      if (!name) return null;
+      return {
+        id,
+        name,
+        first_name: toTextOrNull(entry.first_name) || undefined,
+        last_name: toTextOrNull(entry.last_name) || undefined,
+        information: toTextOrNull(entry.information) || undefined,
+        email: toTextOrNull(entry.email) || undefined,
+        phone: toTextOrNull(entry.phone) || undefined
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+};
+
+const parsePropertiesValue = (value: unknown): Record<string, string> => {
+  const parsed = parseUnknownJson(value);
+  if (!isRecord(parsed)) return {};
+  const out: Record<string, string> = {};
+  Object.entries(parsed).forEach(([key, raw]) => {
+    if (raw === null || raw === undefined) return;
+    out[key] = String(raw);
+  });
+  return out;
+};
+
+const stableNumericIdFromRecordId = (recordId: string): number => {
+  let hash = 0;
+  for (let i = 0; i < recordId.length; i += 1) {
+    hash = (hash * 31 + recordId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash || 1);
+};
+
+const mapCanonicalRecordToApplication = (record: CanonicalDatabaseRecord): Application => {
+  const raw = isRecord(record.properties) ? record.properties : {};
+  const numericId = toIntegerOrNull(raw.id) ?? stableNumericIdFromRecordId(record.id);
+  const applicationId =
+    toTextOrNull(raw.application_id) || `app-${numericId}-${String(record.id).slice(0, 8)}`;
+
+  return {
+    id: numericId,
+    application_id: applicationId,
+    company_name: toTextOrNull(raw.company_name) || "",
+    position: toTextOrNull(raw.position) || "",
+    job_type: toTextOrNull(raw.job_type) || "",
+    stage: toTextOrNull(raw.stage) || "",
+    outcome: toTextOrNull(raw.outcome) || "",
+    pipeline_order: toIntegerOrNull(raw.pipeline_order),
+    location: toTextOrNull(raw.location),
+    application_date: toTextOrNull(raw.application_date),
+    interview_datetime: toTextOrNull(raw.interview_datetime),
+    followup_date: toTextOrNull(raw.followup_date),
+    interview_rounds: toIntegerOrNull(raw.interview_rounds),
+    interview_type: toTextOrNull(raw.interview_type),
+    interviewers: toTextOrNull(raw.interviewers),
+    company_score: toNumericOrNull(raw.company_score),
+    last_round_cleared: toTextOrNull(raw.last_round_cleared),
+    total_rounds: toIntegerOrNull(raw.total_rounds),
+    my_interview_score: toNumericOrNull(raw.my_interview_score),
+    improvement_areas: toTextOrNull(raw.improvement_areas),
+    skill_to_upgrade: toTextOrNull(raw.skill_to_upgrade),
+    job_description: toTextOrNull(raw.job_description),
+    notes: toTextOrNull(raw.notes),
+    todo_items: parseTodoItemsValue(raw.todo_items),
+    documents_links: toTextOrNull(raw.documents_links),
+    documents_files: parseDocumentsFilesValue(raw.documents_files),
+    contacts: parseContactsValue(raw.contacts),
+    favorite: toBoolean(raw.favorite),
+    created_at: toTextOrNull(raw.created_at) || record.created_at || null,
+    updated_at: toTextOrNull(raw.updated_at) || record.updated_at || null,
+    last_viewed: toTextOrNull(raw.last_viewed),
+    created_by: toTextOrNull(raw.created_by),
+    properties: parsePropertiesValue(raw.properties_json)
+  };
+};
+
+const buildApplicationPageTitle = (app: Pick<Application, "company_name" | "position">): string => {
+  const company = (app.company_name || "").trim();
+  const position = (app.position || "").trim();
+  if (company && position) return `${company} - ${position}`;
+  if (company) return company;
+  if (position) return position;
+  return "Application";
+};
+
+type CanonicalApplicationsSnapshot = {
+  databaseId: string;
+  records: CanonicalDatabaseRecord[];
+  applications: Application[];
+  recordIdByLegacyId: Map<number, string>;
+};
+
+const loadCanonicalApplicationsSnapshot = async (): Promise<CanonicalApplicationsSnapshot> => {
+  const database = await getDatabaseByName(APPLICATIONS_DATABASE_NAME);
+  const payload = await getDatabaseRecords(database.id);
+  const records = payload.records as CanonicalDatabaseRecord[];
+  const applications = records.map(mapCanonicalRecordToApplication);
+  const recordIdByLegacyId = new Map<number, string>();
+  applications.forEach((app, index) => {
+    recordIdByLegacyId.set(app.id, records[index].id);
+  });
+  return {
+    databaseId: database.id,
+    records,
+    applications,
+    recordIdByLegacyId
+  };
+};
+
+const filterCanonicalApplications = (
+  applications: Application[],
+  params: {
+    q?: string;
+    outcomes?: string[];
+    stages?: string[];
+    job_types?: string[];
+    favorites_only?: boolean;
+  }
+): Application[] => {
+  const query = (params.q || "").trim().toLowerCase();
+  const outcomeSet = new Set((params.outcomes || []).map((value) => value.trim()).filter(Boolean));
+  const stageSet = new Set((params.stages || []).map((value) => value.trim()).filter(Boolean));
+  const jobTypeSet = new Set((params.job_types || []).map((value) => value.trim()).filter(Boolean));
+
+  return applications.filter((app) => {
+    if (params.favorites_only && !app.favorite) return false;
+    if (outcomeSet.size > 0 && !outcomeSet.has(app.outcome || "")) return false;
+    if (stageSet.size > 0 && !stageSet.has(app.stage || "")) return false;
+    if (jobTypeSet.size > 0 && !jobTypeSet.has(app.job_type || "")) return false;
+    if (!query) return true;
+    const haystack = [
+      app.company_name,
+      app.position,
+      app.location || "",
+      app.notes || ""
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+};
+
+const buildCanonicalValuesForCreate = (
+  payload: ApplicationInput,
+  nextNumericId: number
+): Record<string, unknown> => {
+  const nowIso = new Date().toISOString();
+  return {
+    id: nextNumericId,
+    application_id:
+      toTextOrNull(payload.application_id) || `app-${nextNumericId}-${Date.now().toString(36)}`,
+    company_name: payload.company_name,
+    position: payload.position,
+    job_type: payload.job_type,
+    stage: payload.stage,
+    outcome: payload.outcome,
+    pipeline_order: payload.pipeline_order ?? null,
+    location: payload.location ?? null,
+    application_date: payload.application_date ?? null,
+    interview_datetime: payload.interview_datetime ?? null,
+    followup_date: payload.followup_date ?? null,
+    interview_rounds: payload.interview_rounds ?? null,
+    interview_type: payload.interview_type ?? null,
+    interviewers: payload.interviewers ?? null,
+    company_score: payload.company_score ?? null,
+    last_round_cleared: payload.last_round_cleared ?? null,
+    total_rounds: payload.total_rounds ?? null,
+    my_interview_score: payload.my_interview_score ?? null,
+    improvement_areas: payload.improvement_areas ?? null,
+    skill_to_upgrade: payload.skill_to_upgrade ?? null,
+    job_description: payload.job_description ?? null,
+    notes: payload.notes ?? null,
+    todo_items: payload.todo_items || [],
+    documents_links: payload.documents_links ?? null,
+    documents_files: payload.documents_files || [],
+    contacts: payload.contacts || [],
+    favorite: Boolean(payload.favorite),
+    created_at: nowIso,
+    updated_at: nowIso,
+    created_by: payload.created_by || "local",
+    properties_json: payload.properties || {}
+  };
+};
+
+const buildCanonicalValuesForUpdate = (
+  payload: Partial<ApplicationInput>
+): Record<string, unknown> => {
+  const next: Record<string, unknown> = {
+    updated_at: new Date().toISOString()
+  };
+
+  const assignIfPresent = <K extends keyof ApplicationInput>(key: K, targetKey?: string) => {
+    if (!(key in payload)) return;
+    next[targetKey || key] = payload[key] ?? null;
+  };
+
+  assignIfPresent("company_name");
+  assignIfPresent("position");
+  assignIfPresent("job_type");
+  assignIfPresent("stage");
+  assignIfPresent("outcome");
+  assignIfPresent("pipeline_order");
+  assignIfPresent("location");
+  assignIfPresent("application_date");
+  assignIfPresent("interview_datetime");
+  assignIfPresent("followup_date");
+  assignIfPresent("interview_rounds");
+  assignIfPresent("interview_type");
+  assignIfPresent("interviewers");
+  assignIfPresent("company_score");
+  assignIfPresent("last_round_cleared");
+  assignIfPresent("total_rounds");
+  assignIfPresent("my_interview_score");
+  assignIfPresent("improvement_areas");
+  assignIfPresent("skill_to_upgrade");
+  assignIfPresent("job_description");
+  assignIfPresent("notes");
+  assignIfPresent("todo_items");
+  assignIfPresent("documents_links");
+  assignIfPresent("documents_files");
+  assignIfPresent("contacts");
+  if ("favorite" in payload) {
+    next.favorite = Boolean(payload.favorite);
+  }
+  if ("created_by" in payload) {
+    next.created_by = payload.created_by ?? null;
+  }
+  if ("properties" in payload) {
+    next.properties_json = payload.properties || {};
+  }
+
+  return next;
+};
+
 export async function getApplications(params: {
   q?: string;
   outcomes?: string[];
@@ -349,28 +832,58 @@ export async function getApplications(params: {
   job_types?: string[];
   favorites_only?: boolean;
 } = {}): Promise<Application[]> {
-  const query = new URLSearchParams();
-  if (params.q) query.set("q", params.q);
-  params.outcomes?.forEach((outcome) => query.append("outcomes", outcome));
-  params.stages?.forEach((stage) => query.append("stages", stage));
-  params.job_types?.forEach((job) => query.append("job_types", job));
-  if (params.favorites_only) query.set("favorites_only", "true");
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  return request<Application[]>(`/applications${suffix}`);
+  const snapshot = await loadCanonicalApplicationsSnapshot();
+  const filtered = filterCanonicalApplications(snapshot.applications, params);
+  return [...filtered].sort((left, right) => {
+    const leftTs = Date.parse(left.updated_at || left.created_at || "");
+    const rightTs = Date.parse(right.updated_at || right.created_at || "");
+    if (Number.isFinite(leftTs) && Number.isFinite(rightTs) && leftTs !== rightTs) {
+      return rightTs - leftTs;
+    }
+    return right.id - left.id;
+  });
 }
 
 export async function createApplication(payload: ApplicationInput): Promise<Application> {
-  return request<Application>("/applications", {
-    method: "POST",
-    body: JSON.stringify(sanitizeApplicationPayload(payload as Record<string, unknown>))
+  const sanitized = sanitizeApplicationPayload(payload as Record<string, unknown>) as ApplicationInput;
+  const snapshot = await loadCanonicalApplicationsSnapshot();
+  const maxId = snapshot.applications.reduce((max, item) => Math.max(max, item.id || 0), 0);
+  const nextId = maxId + 1;
+  const created = await createDatabaseRecord(snapshot.databaseId, {
+    values: buildCanonicalValuesForCreate(sanitized, nextId),
+    page: {
+      title: buildApplicationPageTitle({
+        company_name: sanitized.company_name,
+        position: sanitized.position
+      }),
+      icon: "briefcase"
+    }
   });
+  return mapCanonicalRecordToApplication(created);
 }
 
 export async function updateApplication(id: number, payload: Partial<ApplicationInput>): Promise<Application> {
-  return request<Application>(`/applications/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(sanitizeApplicationPayload(payload as Record<string, unknown>))
+  const sanitized = sanitizeApplicationPayload(payload as Record<string, unknown>) as Partial<ApplicationInput>;
+  const snapshot = await loadCanonicalApplicationsSnapshot();
+  const recordId = snapshot.recordIdByLegacyId.get(id);
+  if (!recordId) {
+    throw new Error("Canonical record not found");
+  }
+  const current = snapshot.applications.find((item) => item.id === id) || null;
+  const nextCompany =
+    "company_name" in sanitized ? String(sanitized.company_name || "") : current?.company_name || "";
+  const nextPosition =
+    "position" in sanitized ? String(sanitized.position || "") : current?.position || "";
+  const updated = await updateDatabaseRecord(snapshot.databaseId, recordId, {
+    values: buildCanonicalValuesForUpdate(sanitized),
+    page: {
+      title: buildApplicationPageTitle({
+        company_name: nextCompany,
+        position: nextPosition
+      })
+    }
   });
+  return mapCanonicalRecordToApplication(updated);
 }
 
 export async function uploadDocuments(
@@ -398,14 +911,16 @@ export function documentDownloadUrl(appId: number, fileId: string): string {
 }
 
 export async function deleteApplication(id: number): Promise<void> {
-  await request(`/applications/${id}`, { method: "DELETE" });
+  const snapshot = await loadCanonicalApplicationsSnapshot();
+  const recordId = snapshot.recordIdByLegacyId.get(id);
+  if (!recordId) {
+    throw new Error("Canonical record not found");
+  }
+  await deleteDatabaseRecord(snapshot.databaseId, recordId);
 }
 
 export async function bulkDelete(ids: number[]): Promise<void> {
-  await request("/applications/bulk-delete", {
-    method: "POST",
-    body: JSON.stringify(ids)
-  });
+  await Promise.all(ids.map((id) => deleteApplication(id)));
 }
 
 export async function getViews(): Promise<View[]> {
@@ -508,6 +1023,11 @@ export async function sendEmailBatch(payload: {
     email: string;
     company?: string;
     custom_fields?: Record<string, string>;
+  }>;
+  attachments?: Array<{
+    filename: string;
+    content_type?: string;
+    data_base64: string;
   }>;
 }): Promise<EmailSendBatchResult> {
   return request<EmailSendBatchResult>("/email/send/batch", {
