@@ -24,6 +24,8 @@ export const KPI_SOURCE_TABLE_LINK_KEY = "kpi.sourceTable";
 export const CHART_SOURCE_TABLE_LINK_KEY = "chart.sourceTable";
 export const PIPELINE_SOURCE_TABLE_LINK_KEY = "pipeline.sourceTable";
 export const CARD_GALLERY_SOURCE_TABLE_LINK_KEY = "cardGallery.sourceTable";
+export const INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY = "informationalTable.sourceTable";
+export const INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY = "informationalTable.sourceEmail";
 
 export const normalizeBlockLinks = (raw: unknown): BlockLinksMap => {
   if (!isRecord(raw)) return {};

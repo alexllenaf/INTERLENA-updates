@@ -19,7 +19,7 @@ export const PAGE_BLOCK_TYPES = [
 
 export type PageBlockType = (typeof PAGE_BLOCK_TYPES)[number];
 
-export type ChartSize = "small" | "medium" | "large" | "xlarge";
+export type ChartSize = "small" | "medium" | "large";
 export type ChartVisualType = "bar" | "line" | "area" | "pie" | "timeline";
 export type ChartMetricOp = "count_rows" | "count_values" | "sum" | "avg";
 
@@ -37,6 +37,14 @@ export type BlockLinksMap = Record<string, string>;
 
 type LinkableBlockProps = {
   links?: BlockLinksMap;
+};
+
+export type CanonicalBlockLinkRef = {
+  canonicalPageId: string;
+  legacyPageId: string;
+  blockId: string;
+  title?: string;
+  type?: string;
 };
 
 export type TextBlockProps = LinkableBlockProps & {
@@ -164,6 +172,22 @@ export type InformationalTableBlockProps = LinkableBlockProps & {
   contentSlotId?: string;
   columns?: string[];
   rows?: string[][];
+  columnWidths?: Record<string, number>;
+  sourceMode?: "manual" | "editableTable" | "email";
+  sourceCanonicalTableRef?: CanonicalBlockLinkRef;
+  sourceColumnOrder?: string[];
+  sourceVisibleColumns?: string[];
+  emailRecentLimit?: number;
+  emailLookbackDays?: number;
+  emailAccountFilter?: string;
+  emailCompanyFilter?: string;
+  emailContactFilter?: string | string[];
+  emailFolderFilter?: string;
+  emailSummaryVolumeDays?: number;
+  emailSummaryTimelineDays?: number;
+  emailSummaryAwaitingReplyDays?: number;
+  emailSummaryAwaitingResponseDays?: number;
+  emailSummaryCardOrder?: Array<"recentVolume" | "receivedTimeline" | "awaitingReply" | "awaitingResponse">;
 };
 
 export type CalendarBlockProps = LinkableBlockProps & {
@@ -216,8 +240,20 @@ export type EmailBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contactId: string;
+  readEnabled?: boolean;
+  sendEnabled?: boolean;
   folder: string;
   cacheSize: number;
+  readStartDate?: string;
+  readLoadFullContent?: boolean;
+  readAccountFilter?: string;
+  readSearchHistory?: Array<
+    | string
+    | {
+        query: string;
+        scope?: "all" | "from" | "subject" | "attachment" | "message";
+      }
+  >;
   sendSubjectTemplate?: string;
   sendBodyTemplate?: string;
   sendContactLimit?: number;

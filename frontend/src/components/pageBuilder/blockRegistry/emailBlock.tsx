@@ -5,18 +5,44 @@ import RichTextEditor from "../../RichTextEditor";
 import MergeTagPicker, { buildMergeTagsFromContacts } from "../../MergeTagPicker";
 import {
   ApiError,
-  disconnectGoogleOAuth,
+  getEmailBody,
+  getEmailReadStats,
+  listEmailMetadata,
   disconnectSingleGoogleAccount,
   getGoogleOAuthStartUrl,
   getEmailSendStats,
-  listEmailSendContacts,
   listGoogleAccounts,
   selectGoogleAccount,
   sendEmailBatch,
 } from "../../../api";
+import {
+  READ_MAILBOX_ALL,
+  READ_MAILBOX_INBOX,
+  READ_MAILBOX_SENT,
+  buildEmailAccountOptions,
+  formatMailboxLabel,
+  isInboxMailbox,
+  isSentMailbox,
+  normalizeMailboxName,
+  resolveEmailMetadataFolderParam
+} from "../../../features/email/readFilters";
+import {
+  buildEmailContactsFromApplications,
+  buildSelectedEmailReadContacts
+} from "../../../features/email/trackerContacts";
 import { buildHighlightChunks } from "../../../features/tracker/highlight";
 import { confirmDialog } from "../../../shared/confirmDialog";
-import { type EmailSendBatchResult, type EmailSendContact, type EmailSendStats, type GoogleAccount } from "../../../types";
+import {
+  type EmailMetadata,
+  type EmailReadStats,
+  type EmailSendBatchResult,
+  type EmailSendContact,
+  type EmailSendStats,
+  type GoogleAccount,
+  type Settings,
+} from "../../../types";
+import { useAppData } from "../../../state";
+import { formatDateDisplay } from "../../../utils";
 import { createSlotContext, renderHeader } from "./shared";
 import { type BlockDefinition } from "./types";
 
@@ -52,6 +78,9 @@ const renderTemplate = (template: string, values: Record<string, string>) =>
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
 
+const isWorkflowToggleEnabled = (value: unknown, fallback = true) =>
+  typeof value === "boolean" ? value : fallback;
+
 type LinkPreviewItem = {
   label: string;
   url: string;
@@ -84,11 +113,11 @@ const extractLinkPreviewItems = (raw: string): LinkPreviewItem[] => {
 
 const toReadableFieldValue = (raw: string): string => {
   const parsed = tryParseJsonValue(raw);
-  if (!parsed) return String(raw || "");
+  if (!parsed) return formatDateDisplay(raw);
   try {
     return JSON.stringify(parsed, null, 2);
   } catch {
-    return String(raw || "");
+    return formatDateDisplay(raw);
   }
 };
 
@@ -118,6 +147,7 @@ const StepHeader: React.FC<{
   blocked?: boolean;
   inlineContent?: React.ReactNode;
   rightContent?: React.ReactNode;
+  className?: string;
 }> = ({
   label,
   active = false,
@@ -125,13 +155,19 @@ const StepHeader: React.FC<{
   blocked = false,
   inlineContent,
   rightContent,
+  className,
 }) => (
-  <div className={cx("email-send-step-header", active && "is-active", done && "is-done", (Boolean(inlineContent) || Boolean(rightContent)) && "has-inline")}>
+  <div
+    className={cx(
+      "email-send-step-header",
+      className,
+      active && "is-active",
+      done && "is-done",
+      (Boolean(inlineContent) || Boolean(rightContent)) && "has-inline"
+    )}
+  >
     {label ? <span className="email-send-step-label">{label}</span> : null}
     {inlineContent ? <div className="email-send-step-inline email-send-step-inline-left">{inlineContent}</div> : null}
-    <span className={cx("email-send-step-state", done ? "is-done" : active ? "is-active" : blocked ? "is-blocked" : "")}>
-      {done ? "Listo" : active ? "En curso" : blocked ? "Pendiente" : "Listo para editar"}
-    </span>
     {rightContent ? <div className="email-send-step-inline-right">{rightContent}</div> : null}
   </div>
 );
@@ -164,6 +200,13 @@ const MetricRemainingIcon = () => (
   </svg>
 );
 
+const MetricUsageIcon = () => (
+  <svg viewBox="0 0 20 20" aria-hidden="true">
+    <path d="M10 2.75a7.25 7.25 0 1 0 7.25 7.25.75.75 0 0 0-1.5 0A5.75 5.75 0 1 1 10 4.25a.75.75 0 0 0 0-1.5Z" />
+    <path d="M10 3.5a.75.75 0 0 1 .75-.75A7.26 7.26 0 0 1 17.25 9a.75.75 0 0 1-1.5 0 5.76 5.76 0 0 0-5-4.75A.75.75 0 0 1 10 3.5Z" />
+  </svg>
+);
+
 const PreviewEyeIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true">
     <path d="M10 4.5c4.44 0 7.74 2.9 8.95 5.5-1.2 2.6-4.5 5.5-8.95 5.5S2.26 12.6 1.05 10C2.26 7.4 5.56 4.5 10 4.5Zm0 1.5c-3.38 0-6.03 2.06-7.29 4 1.26 1.94 3.91 4 7.29 4s6.03-2.06 7.29-4c-1.26-1.94-3.91-4-7.29-4Zm0 1.75A2.25 2.25 0 1 1 7.75 10 2.25 2.25 0 0 1 10 7.75Zm0 1.5A.75.75 0 1 0 10.75 10 .75.75 0 0 0 10 9.25Z" />
@@ -192,6 +235,12 @@ const AttachmentPhotoIcon = () => (
 const AttachmentDocumentIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true">
     <path d="M5 2.75A1.75 1.75 0 0 0 3.25 4.5v11A1.75 1.75 0 0 0 5 17.25h10A1.75 1.75 0 0 0 16.75 15.5V7.19a1.75 1.75 0 0 0-.5-1.23l-2.72-2.71a1.75 1.75 0 0 0-1.23-.5H5Zm0 1.5h6.75v2.5c0 .97.78 1.75 1.75 1.75h1.75v7a.25.25 0 0 1-.25.25H5a.25.25 0 0 1-.25-.25v-11c0-.14.11-.25.25-.25Zm1.5 7.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1-.75-.75Zm0 2.5a.75.75 0 0 1 .75-.75h3.75a.75.75 0 0 1 0 1.5H7.25a.75.75 0 0 1-.75-.75Z" />
+  </svg>
+);
+
+const PanelChevronIcon = () => (
+  <svg viewBox="0 0 20 20" aria-hidden="true">
+    <path d="M11.78 4.22a.75.75 0 0 1 0 1.06L7.06 10l4.72 4.72a.75.75 0 1 1-1.06 1.06L5.47 10.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z" />
   </svg>
 );
 
@@ -244,10 +293,56 @@ type EmailComposerLibraryEntry = {
   updatedAt: string;
 };
 
+type EmailReadMessage = EmailMetadata & {
+  contactEmail: string;
+  contactName: string;
+  contactCompany: string;
+};
+
+type ReadContactSelection = {
+  email: string;
+  name: string;
+  company: string;
+};
+
+type ReadSearchScope = "all" | "from" | "subject" | "attachment" | "message";
+type ReadSearchHistoryEntry = {
+  query: string;
+  scope: ReadSearchScope;
+};
+
 const MAX_EMAIL_ATTACHMENTS = 10;
 const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_EMAIL_ATTACHMENT_SINGLE_BYTES = 10 * 1024 * 1024;
 const MAX_EMAIL_LIBRARY_ENTRIES = 100;
+const MAX_READ_SEARCH_HISTORY = 5;
+const FULL_CONTENT_BODY_MARKER_REGEX = /<!--\s*email-read-mode:full\s*-->/gi;
+const READ_START_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const READ_SEARCH_SCOPE_OPTIONS: Array<{ value: ReadSearchScope; label: string }> = [
+  { value: "all", label: "Todo" },
+  { value: "from", label: "Remitente" },
+  { value: "subject", label: "Asunto" },
+  { value: "attachment", label: "Adjunto" },
+  { value: "message", label: "Mensaje" },
+];
+
+const isReadSearchScope = (value: unknown): value is ReadSearchScope =>
+  value === "all" || value === "from" || value === "subject" || value === "attachment" || value === "message";
+
+const normalizeReadStartDate = (value: unknown): string => {
+  const raw = String(value || "").trim();
+  return READ_START_DATE_PATTERN.test(raw) ? raw : "";
+};
+
+const getReadSearchScopeLabel = (scope: ReadSearchScope): string =>
+  READ_SEARCH_SCOPE_OPTIONS.find((option) => option.value === scope)?.label || READ_SEARCH_SCOPE_OPTIONS[0].label;
+
+const formatReadSearchHistoryEntry = (entry: ReadSearchHistoryEntry): string => {
+  const query = String(entry.query || "").trim();
+  if (!query) return "";
+  if (entry.scope === "all") return query;
+  return `${getReadSearchScopeLabel(entry.scope)}: ${query}`;
+};
 const INLINE_IMAGE_MIN_WIDTH = 120;
 const INLINE_IMAGE_MAX_WIDTH = 960;
 const INLINE_IMAGE_DEFAULT_WIDTH = 360;
@@ -295,6 +390,19 @@ const formatAttachmentBytes = (bytes: number): string => {
   if (kb < 1024) return `${kb.toFixed(kb >= 100 ? 0 : 1)} KB`;
   const mb = kb / 1024;
   return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+};
+
+const formatReadLimitBytes = (bytes: number): string => {
+  if (bytes < 1024 * 1024) return formatAttachmentBytes(bytes);
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(gb >= 10 ? 1 : 2)} GB`;
+};
+
+const formatUsagePercent = (value: number): string => {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  return `${safeValue.toFixed(safeValue >= 10 || Number.isInteger(safeValue) ? 0 : 1)}%`;
 };
 
 const base64ByteLength = (base64: string): number => {
@@ -393,9 +501,7 @@ const resizeImageBase64ToWidth = async (
 };
 
 const formatLibraryTimestamp = (value: string): string => {
-  const time = Date.parse(value || "");
-  if (!Number.isFinite(time)) return "Fecha desconocida";
-  return new Date(time).toLocaleString();
+  return formatDateDisplay(value, { invalidPlaceholder: "Fecha desconocida" });
 };
 
 const htmlToPreviewText = (html: string): string => {
@@ -408,6 +514,78 @@ const htmlToPreviewText = (html: string): string => {
     return text;
   }
   return source.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+};
+
+const looksLikeHtml = (value: string): boolean => /<\/?[a-z][\s\S]*>/i.test(String(value || ""));
+
+const escapeHtml = (value: string): string =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const sanitizeEmailHtml = (value: string): string => {
+  const source = String(value || "");
+  if (!source.trim() || typeof document === "undefined") return source;
+
+  const template = document.createElement("template");
+  template.innerHTML = source;
+  template.content.querySelectorAll("script, iframe, object, embed, form, input, button, textarea, select, link, meta, base").forEach((node) => {
+    node.remove();
+  });
+  template.content.querySelectorAll("*").forEach((node) => {
+    Array.from(node.attributes).forEach((attribute) => {
+      const attrName = attribute.name.toLowerCase();
+      const attrValue = String(attribute.value || "").trim();
+      if (attrName.startsWith("on")) {
+        node.removeAttribute(attribute.name);
+        return;
+      }
+      if ((attrName === "href" || attrName === "src" || attrName === "xlink:href") && /^javascript:/i.test(attrValue)) {
+        node.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return template.innerHTML.trim();
+};
+
+const toEmailBodyHtml = (value: string): string => {
+  const source = String(value || "").replace(FULL_CONTENT_BODY_MARKER_REGEX, "").trim();
+  if (!source) return "<p class=\"email-send-read-body-empty\">Sin contenido.</p>";
+  if (looksLikeHtml(source)) {
+    const sanitized = sanitizeEmailHtml(source);
+    return sanitized || "<p class=\"email-send-read-body-empty\">Sin contenido.</p>";
+  }
+  return `<pre class="email-send-read-body-pre">${escapeHtml(source)}</pre>`;
+};
+
+const formatMessageTimestamp = (value: string): string => {
+  return formatDateDisplay(value, { invalidPlaceholder: "Fecha desconocida" });
+};
+
+const extractAttachmentNamesFromBody = (body: string): string[] => {
+  const source = String(body || "");
+  if (!source.trim()) return [];
+  const names = new Set<string>();
+  if (typeof document !== "undefined") {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = source;
+    wrapper.querySelectorAll<HTMLElement>("[data-filename]").forEach((node) => {
+      const filename = String(node.getAttribute("data-filename") || "").trim();
+      if (filename) names.add(filename);
+    });
+  }
+  const filenameRegex =
+    /\b[A-Za-z0-9][A-Za-z0-9 _().,\-]{0,140}\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|zip|rar|7z|png|jpe?g|gif|webp|bmp|svg|heic|tiff?|odt|rtf)\b/gi;
+  let match: RegExpExecArray | null = filenameRegex.exec(source);
+  while (match) {
+    const value = String(match[0] || "").trim();
+    if (value) names.add(value);
+    match = filenameRegex.exec(source);
+  }
+  return Array.from(names);
 };
 
 const INLINE_ATTACHMENT_DOCUMENT_ICON_PATH =
@@ -643,6 +821,28 @@ const normalizeLibraryEntries = (value: unknown, includeSelection: boolean): Ema
     .filter((item): item is EmailComposerLibraryEntry => Boolean(item));
 };
 
+const normalizeReadSearchHistory = (value: unknown): ReadSearchHistoryEntry[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const next: ReadSearchHistoryEntry[] = [];
+  value.forEach((item) => {
+    const query =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object"
+          ? String((item as { query?: unknown }).query || "")
+          : "";
+    const normalizedQuery = String(query || "").trim();
+    const rawScope = item && typeof item === "object" ? (item as { scope?: unknown }).scope : "all";
+    const scope: ReadSearchScope = isReadSearchScope(rawScope) ? rawScope : "all";
+    const key = `${scope}::${normalizedQuery.toLowerCase()}`;
+    if (!normalizedQuery || seen.has(key)) return;
+    seen.add(key);
+    next.push({ query: normalizedQuery, scope });
+  });
+  return next.slice(0, MAX_READ_SEARCH_HISTORY);
+};
+
 const readFileAsBase64 = async (file: File): Promise<string> => {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -665,16 +865,26 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     title: "Correo",
     description: "Bandeja sincronizada por metadatos y cuerpo bajo demanda.",
     contactId: "",
-    folder: "INBOX",
+    readEnabled: true,
+    sendEnabled: true,
+    folder: READ_MAILBOX_ALL,
     cacheSize: 50,
+    readStartDate: "",
+    readLoadFullContent: false,
+    readAccountFilter: READ_MAILBOX_ALL,
+    readSearchHistory: [],
     sendSubjectTemplate: "Hola {{Nombre}}, seguimiento de candidatura en {{Empresa}}",
     sendBodyTemplate:
       "Hola {{Nombre}},\n\nTe escribo para dar seguimiento al proceso con {{Empresa}}.\n\nGracias por tu tiempo.",
     sendContactLimit: 500
   }),
   component: ({ block, mode, patchBlockProps, updateBlockProps, resolveSlot, menuActions }) => {
+    const { settings, saveSettings, applications } = useAppData();
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
+    const isReadModeEnabled = isWorkflowToggleEnabled(block.props.readEnabled, true);
+    const isSendModeEnabled = isWorkflowToggleEnabled(block.props.sendEnabled, true);
+    const hasAnyWorkflowEnabled = isReadModeEnabled || isSendModeEnabled;
 
     const initialStoredAttachments = (block.props.sendDraftAttachments || [])
       .map(normalizeStoredAttachment)
@@ -683,17 +893,16 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       .map(deserializeStoredAttachment)
       .filter((item): item is EmailComposerAttachment => Boolean(item));
 
-    const [contacts, setContacts] = useState<EmailSendContact[]>([]);
     const [selectedRecipients, setSelectedRecipients] = useState<Record<string, boolean>>(
       () => block.props.sendSelectedRecipients || {}
     );
-    const [customFieldsDraft, setCustomFieldsDraft] = useState<Record<string, string>>({});
-    const [loadingContacts, setLoadingContacts] = useState(false);
     const [sending, setSending] = useState(false);
     const [oauthStarting, setOauthStarting] = useState(false);
+    const [isRecipientPanelCollapsed, setIsRecipientPanelCollapsed] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
     const [sendMessage, setSendMessage] = useState<string | null>(null);
     const [sendStats, setSendStats] = useState<EmailSendStats | null>(null);
+    const [readStats, setReadStats] = useState<EmailReadStats | null>(null);
     const [sendResult, setSendResult] = useState<EmailSendBatchResult | null>(null);
     const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
     const [acctDropdownOpen, setAcctDropdownOpen] = useState(false);
@@ -713,9 +922,35 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     const [libraryEditSubject, setLibraryEditSubject] = useState("");
     const [libraryEditBody, setLibraryEditBody] = useState("");
     const [editorWindowOpen, setEditorWindowOpen] = useState(false);
+    const [readBodyWindowOpen, setReadBodyWindowOpen] = useState(false);
+    const [workflowTab, setWorkflowTab] = useState<"read" | "send">(
+      () => (isWorkflowToggleEnabled(block.props.readEnabled, true) ? "read" : "send")
+    );
+    const [isConfigOpen, setIsConfigOpen] = useState(false);
+    const [configError, setConfigError] = useState<string | null>(null);
+    const [syncingGlobalRead, setSyncingGlobalRead] = useState(false);
+    const [readMessages, setReadMessages] = useState<EmailReadMessage[]>([]);
+    const [readMessagesLoading, setReadMessagesLoading] = useState(false);
+    const [readMessagesRefreshing, setReadMessagesRefreshing] = useState(false);
+    const [readMessagesError, setReadMessagesError] = useState<string | null>(null);
+    const [activeReadMessageId, setActiveReadMessageId] = useState<string | null>(null);
+    const [readBodyById, setReadBodyById] = useState<Record<string, string>>({});
+    const [readBodyLoadingId, setReadBodyLoadingId] = useState<string | null>(null);
+    const [readBodyPrefetching, setReadBodyPrefetching] = useState(false);
+    const [readSearchQuery, setReadSearchQuery] = useState("");
+    const [readSearchHistory, setReadSearchHistory] = useState<ReadSearchHistoryEntry[]>(
+      () => normalizeReadSearchHistory(block.props.readSearchHistory)
+    );
+    const [readSearchHistoryOpen, setReadSearchHistoryOpen] = useState(false);
+    const [readFiltersOpen, setReadFiltersOpen] = useState(false);
+    const [readSearchScope, setReadSearchScope] = useState<ReadSearchScope>("all");
+    const [readAccountFilter, setReadAccountFilter] = useState<string>(
+      () => String(block.props.readAccountFilter || READ_MAILBOX_ALL)
+    );
 
     const subjectInputRef = useRef<HTMLInputElement>(null);
     const acctDropdownRef = useRef<HTMLDivElement>(null);
+    const readSearchRef = useRef<HTMLDivElement>(null);
     const photoInputRef = useRef<HTMLInputElement>(null);
     const documentInputRef = useRef<HTMLInputElement>(null);
     const bodyEditorRef = useRef<any>(null);
@@ -723,7 +958,9 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     const persistAttachmentsRef = useRef("");
     const persistDraftEntriesRef = useRef("");
     const persistSentEntriesRef = useRef("");
+    const persistReadSearchHistoryRef = useRef("");
     const suppressAttachmentBodySyncRef = useRef(0);
+    const readBodyByIdRef = useRef<Record<string, string>>({});
     const [bodyEditorReadyToken, setBodyEditorReadyToken] = useState(0);
     const handleBodyEditorReady = React.useCallback((editor: any | null) => {
       bodyEditorRef.current = editor;
@@ -741,6 +978,25 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       }
       input.click();
     }, []);
+
+    const contacts = useMemo(
+      () =>
+        buildEmailContactsFromApplications(
+          applications,
+          settings?.custom_properties,
+          Math.max(1, Math.min(5000, block.props.sendContactLimit || 500))
+        ),
+      [applications, settings?.custom_properties, block.props.sendContactLimit]
+    );
+
+    const customFieldsDraft = useMemo(
+      () =>
+        contacts.reduce<Record<string, string>>((acc, row) => {
+          if (row.email) acc[row.email] = stringifyCustomFields(row.custom_fields);
+          return acc;
+        }, {}),
+      [contacts]
+    );
 
     /* ── Available merge tags derived from loaded contacts ────────── */
     const mergeTags = useMemo(() => buildMergeTagsFromContacts(contacts), [contacts]);
@@ -760,9 +1016,32 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       }
     }, []);
 
+    const refreshReadStats = React.useCallback(async () => {
+      try {
+        const stats = await getEmailReadStats();
+        setReadStats(stats);
+      } catch {
+        setReadStats(null);
+      }
+    }, []);
+
     useEffect(() => {
       void refreshSendStats();
     }, [refreshSendStats]);
+
+    useEffect(() => {
+      void refreshReadStats();
+    }, [refreshReadStats]);
+
+    useEffect(() => {
+      readBodyByIdRef.current = readBodyById;
+    }, [readBodyById]);
+
+    useEffect(() => {
+      setReadBodyById({});
+      readBodyByIdRef.current = {};
+      setReadBodyLoadingId(null);
+    }, [block.props.readLoadFullContent]);
 
     /* Close account dropdown on outside click */
     useEffect(() => {
@@ -778,6 +1057,29 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     }, [acctDropdownOpen]);
 
     useEffect(() => {
+      if (!readFiltersOpen && !readSearchHistoryOpen) return;
+      const onClickOutside = (event: MouseEvent) => {
+        if (!readSearchRef.current) return;
+        if (event.target instanceof Node && !readSearchRef.current.contains(event.target)) {
+          setReadFiltersOpen(false);
+          setReadSearchHistoryOpen(false);
+        }
+      };
+      const onEscape = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setReadFiltersOpen(false);
+          setReadSearchHistoryOpen(false);
+        }
+      };
+      document.addEventListener("mousedown", onClickOutside);
+      document.addEventListener("keydown", onEscape);
+      return () => {
+        document.removeEventListener("mousedown", onClickOutside);
+        document.removeEventListener("keydown", onEscape);
+      };
+    }, [readFiltersOpen, readSearchHistoryOpen]);
+
+    useEffect(() => {
       const selected = block.props.sendSelectedRecipients || {};
       const nextStoredAttachments = (block.props.sendDraftAttachments || [])
         .map(normalizeStoredAttachment)
@@ -787,6 +1089,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
         .filter((item): item is EmailComposerAttachment => Boolean(item));
       const nextDraftEntries = normalizeLibraryEntries(block.props.sendDraftEntries, true);
       const nextSentEntries = normalizeLibraryEntries(block.props.sendSentEntries, false);
+      const nextReadSearchHistory = normalizeReadSearchHistory(block.props.readSearchHistory);
 
       setSelectedRecipients(selected);
       setAttachments(nextAttachments);
@@ -796,12 +1099,43 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       setLibraryEditingEntryId(null);
       setLibraryEditSubject("");
       setLibraryEditBody("");
+      setReadBodyWindowOpen(false);
+      setWorkflowTab(isWorkflowToggleEnabled(block.props.readEnabled, true) ? "read" : "send");
+      setIsConfigOpen(false);
+      setConfigError(null);
+      setSyncingGlobalRead(false);
+      setReadMessages([]);
+      setReadMessagesLoading(false);
+      setReadMessagesError(null);
+      setActiveReadMessageId(null);
+      setReadBodyById({});
+      readBodyByIdRef.current = {};
+      setReadBodyLoadingId(null);
+      setReadBodyPrefetching(false);
+      setReadStats(null);
+      setReadSearchQuery("");
+      setReadSearchHistory(nextReadSearchHistory);
+      setReadSearchHistoryOpen(false);
+      setReadFiltersOpen(false);
+      setReadSearchScope("all");
+      setReadAccountFilter(String(block.props.readAccountFilter || READ_MAILBOX_ALL));
 
       persistSelectedRef.current = JSON.stringify(selected);
       persistAttachmentsRef.current = JSON.stringify(nextStoredAttachments);
       persistDraftEntriesRef.current = JSON.stringify(nextDraftEntries);
       persistSentEntriesRef.current = JSON.stringify(nextSentEntries);
+      persistReadSearchHistoryRef.current = JSON.stringify(nextReadSearchHistory);
     }, [block.id]);
+
+    useEffect(() => {
+      if (workflowTab === "read" && !isReadModeEnabled && isSendModeEnabled) {
+        setWorkflowTab("send");
+        return;
+      }
+      if (workflowTab === "send" && !isSendModeEnabled && isReadModeEnabled) {
+        setWorkflowTab("read");
+      }
+    }, [isReadModeEnabled, isSendModeEnabled, workflowTab]);
 
     useEffect(() => {
       const serialized = JSON.stringify(selectedRecipients);
@@ -837,6 +1171,15 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     }, [sentEntries]);
 
     useEffect(() => {
+      const payload = normalizeReadSearchHistory(readSearchHistory);
+      const serialized = JSON.stringify(payload);
+      if (serialized === persistReadSearchHistoryRef.current) return;
+      persistReadSearchHistoryRef.current = serialized;
+      patchBlockProps({ readSearchHistory: payload });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [readSearchHistory]);
+
+    useEffect(() => {
       if (!libraryOpen) return;
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") setLibraryOpen(false);
@@ -853,6 +1196,27 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       document.addEventListener("keydown", onKeyDown);
       return () => document.removeEventListener("keydown", onKeyDown);
     }, [editorWindowOpen]);
+
+    useEffect(() => {
+      if (workflowTab === "read" && editorWindowOpen) {
+        setEditorWindowOpen(false);
+      }
+    }, [workflowTab, editorWindowOpen]);
+
+    useEffect(() => {
+      if (!readBodyWindowOpen) return;
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") setReadBodyWindowOpen(false);
+      };
+      document.addEventListener("keydown", onKeyDown);
+      return () => document.removeEventListener("keydown", onKeyDown);
+    }, [readBodyWindowOpen]);
+
+    useEffect(() => {
+      if (workflowTab === "send" && readBodyWindowOpen) {
+        setReadBodyWindowOpen(false);
+      }
+    }, [workflowTab, readBodyWindowOpen]);
 
     useEffect(() => {
       if (!libraryOpen) {
@@ -918,49 +1282,36 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
 
     const isConnected = Boolean(sendStats?.connected && String(sendStats?.sent_by || "").trim());
     const connectedEmail = String(sendStats?.sent_by || "").trim();
-
-    const loadContacts = async () => {
-      setLoadingContacts(true);
-      setSendError(null);
-      setSendMessage(null);
-      try {
-        const rows = await listEmailSendContacts(Math.max(1, Math.min(5000, block.props.sendContactLimit || 500)));
-        setContacts(rows);
-        setSelectedRecipients((prev) =>
-          rows.reduce<Record<string, boolean>>((acc, row) => {
-            if (!row.email) return acc;
-            // Keep previous explicit selection; new contacts default to unchecked.
-            acc[row.email] = Object.prototype.hasOwnProperty.call(prev, row.email)
-              ? Boolean(prev[row.email])
-              : false;
-            return acc;
-          }, {})
-        );
-        setCustomFieldsDraft(
-          rows.reduce<Record<string, string>>((acc, row) => {
-            if (row.email) acc[row.email] = stringifyCustomFields(row.custom_fields);
-            return acc;
-          }, {})
-        );
-        setSendMessage(`Lista cargada: ${rows.length} contactos desde tracker.`);
-      } catch (err) {
-        if (err instanceof ApiError) {
-          setSendError(err.message);
-        } else {
-          setSendError("No se pudo cargar la lista de contactos.");
-        }
-      } finally {
-        setLoadingContacts(false);
-      }
-    };
-
-    /* Auto-load contacts when connected and list is empty */
+    const readMailbox = normalizeMailboxName(block.props.folder || READ_MAILBOX_ALL);
+    const readMailboxParam = resolveEmailMetadataFolderParam(readMailbox);
+    const readStartDate = normalizeReadStartDate(block.props.readStartDate);
+    const readLoadFullContent = Boolean(block.props.readLoadFullContent);
+    const isGlobalReadEnabled = Boolean(settings?.email_sync?.read_enabled);
+    const hasReadUsageLimit = Boolean(readStats?.connected && Number(readStats?.daily_limit_bytes || 0) > 0);
+    const readUsagePeriodLabel =
+      String(readStats?.limit_label || "").toLowerCase().includes("diari") ? "Diario" : "Límite";
+    const readUsageTooltip = hasReadUsageLimit
+      ? `${formatReadLimitBytes(Number(readStats?.downloaded_today_bytes || 0))} usadas del límite de ${formatReadLimitBytes(
+          Number(readStats?.daily_limit_bytes || 0)
+        )}`
+      : "";
     useEffect(() => {
-      if (isConnected && contacts.length === 0 && !loadingContacts) {
-        void loadContacts();
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isConnected]);
+      setSelectedRecipients((prev) => {
+        const next = contacts.reduce<Record<string, boolean>>((acc, row) => {
+          if (!row.email) return acc;
+          acc[row.email] = Object.prototype.hasOwnProperty.call(prev, row.email)
+            ? Boolean(prev[row.email])
+            : false;
+          return acc;
+        }, {});
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(next);
+        if (prevKeys.length === nextKeys.length && prevKeys.every((key) => prev[key] === next[key])) {
+          return prev;
+        }
+        return next;
+      });
+    }, [contacts]);
 
     useEffect(() => {
       if (!contacts.length) {
@@ -1265,6 +1616,17 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       return map;
     }, [selectedContacts]);
 
+    const readContactsForSelection = useMemo(
+      () => buildSelectedEmailReadContacts(contacts, selectedRecipients),
+      [contacts, selectedRecipients]
+    );
+    const selectedContactEmails = useMemo(
+      () => readContactsForSelection.map((contact) => contact.email),
+      [readContactsForSelection]
+    );
+
+    const selectedContactEmailsKey = useMemo(() => selectedContactEmails.join("|"), [selectedContactEmails]);
+
     const activeLibraryEntries = useMemo(() => {
       return libraryTab === "drafts" ? draftEntries : sentEntries;
     }, [libraryTab, draftEntries, sentEntries]);
@@ -1304,6 +1666,522 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       });
     }, [activeRecipientCustomFields]);
 
+    useEffect(() => {
+      if (readAccountFilter === READ_MAILBOX_ALL) return;
+      if (googleAccounts.some((account) => account.email === readAccountFilter)) return;
+      setReadAccountFilter(READ_MAILBOX_ALL);
+      patchBlockProps({ readAccountFilter: READ_MAILBOX_ALL });
+    }, [googleAccounts, patchBlockProps, readAccountFilter]);
+
+    const mergeReadMessages = React.useCallback((messages: EmailReadMessage[]): EmailReadMessage[] => {
+      const sorted = [...messages].sort((a, b) => {
+        const aTs = Date.parse(String(a.date || ""));
+        const bTs = Date.parse(String(b.date || ""));
+        if (!Number.isFinite(aTs) && !Number.isFinite(bTs)) return 0;
+        if (!Number.isFinite(aTs)) return 1;
+        if (!Number.isFinite(bTs)) return -1;
+        return bTs - aTs;
+      });
+      const seen = new Set<string>();
+      return sorted.filter((item) => {
+        if (seen.has(item.message_id)) return false;
+        seen.add(item.message_id);
+        return true;
+      });
+    }, []);
+
+    const formatReadLoadError = React.useCallback((loadErrors: Array<{ contactEmail: string; message: string }>): string | null => {
+      if (loadErrors.length === 0) return null;
+      if (loadErrors.length === 1) {
+        const [error] = loadErrors;
+        return `${error.contactEmail}: ${error.message}`;
+      }
+      const uniqueMessages = Array.from(
+        new Set(
+          loadErrors
+            .map((item) => String(item.message || "").trim())
+            .filter(Boolean)
+        )
+      );
+      if (uniqueMessages.length === 1) return uniqueMessages[0];
+      return `No se pudieron cargar ${loadErrors.length} contactos seleccionados.`;
+    }, []);
+
+    const applyReadMessages = React.useCallback((messages: EmailReadMessage[]) => {
+      setReadMessages(messages);
+      setActiveReadMessageId((prev) => {
+        if (prev && messages.some((item) => item.message_id === prev)) return prev;
+        return messages[0]?.message_id || null;
+      });
+    }, []);
+
+    const loadReadMessagesForContacts = React.useCallback(
+      async (
+        contactsForRead: ReadContactSelection[],
+        refresh: boolean,
+        options?: {
+          onPartialResult?: (messages: EmailReadMessage[], errorMessage: string | null) => void;
+          shouldStop?: () => boolean;
+          signal?: AbortSignal;
+        }
+      ): Promise<{
+        messages: EmailReadMessage[];
+        errorMessage: string | null;
+      }> => {
+        const merged: EmailReadMessage[] = [];
+        const loadErrors: Array<{ contactEmail: string; message: string }> = [];
+        let shouldAbortRemainingContacts = false;
+
+        const emitPartialResult = () => {
+          options?.onPartialResult?.(mergeReadMessages(merged), formatReadLoadError(loadErrors));
+        };
+
+        for (const contact of contactsForRead) {
+          if (options?.shouldStop?.() || shouldAbortRemainingContacts) break;
+          try {
+            const rows = await listEmailMetadata({
+              contact_id: contact.email,
+              folder: readMailboxParam,
+              start_date: readStartDate || undefined,
+              refresh,
+              signal: options?.signal,
+            });
+            merged.push(
+              ...rows.map((row) => ({
+                ...row,
+                contactEmail: contact.email,
+                contactName: contact.name || contact.email,
+                contactCompany: contact.company || "",
+              }))
+            );
+          } catch (err) {
+            if (err instanceof DOMException && err.name === "AbortError") {
+              break;
+            }
+            if (err instanceof ApiError) {
+              loadErrors.push({ contactEmail: contact.email, message: err.message });
+              if (err.status >= 500) {
+                shouldAbortRemainingContacts = true;
+              }
+            } else {
+              loadErrors.push({ contactEmail: contact.email, message: "No se pudieron cargar los correos." });
+              shouldAbortRemainingContacts = true;
+            }
+          }
+          emitPartialResult();
+        }
+
+        return {
+          messages: mergeReadMessages(merged),
+          errorMessage: formatReadLoadError(loadErrors),
+        };
+      },
+      [formatReadLoadError, mergeReadMessages, readMailboxParam, readStartDate]
+    );
+
+    const fetchReadMessageBody = React.useCallback(async (messageId: string): Promise<{ body: string; cached: boolean }> => {
+      const targetId = String(messageId || "").trim();
+      if (!targetId) return { body: "", cached: true };
+      if (Object.prototype.hasOwnProperty.call(readBodyByIdRef.current, targetId)) {
+        return { body: String(readBodyByIdRef.current[targetId] || ""), cached: true };
+      }
+      try {
+        const payload = await getEmailBody(targetId, { full_content: readLoadFullContent });
+        const body = String(payload.body || "");
+        setReadBodyById((prev) => {
+          if (Object.prototype.hasOwnProperty.call(prev, targetId)) return prev;
+          const next = { ...prev, [targetId]: body };
+          readBodyByIdRef.current = next;
+          return next;
+        });
+        return { body, cached: Boolean(payload.cached) };
+      } catch (err) {
+        setReadBodyById((prev) => {
+          if (Object.prototype.hasOwnProperty.call(prev, targetId)) return prev;
+          const next = { ...prev, [targetId]: "" };
+          readBodyByIdRef.current = next;
+          return next;
+        });
+        throw err;
+      }
+    }, [readLoadFullContent]);
+
+    useEffect(() => {
+      if (!isReadModeEnabled || workflowTab !== "read") return;
+      if (!selectedContactEmails.length) {
+        setReadMessages([]);
+        setReadMessagesLoading(false);
+        setReadMessagesRefreshing(false);
+        setReadMessagesError(null);
+        setActiveReadMessageId(null);
+        return;
+      }
+      if (!isGlobalReadEnabled) {
+        setReadMessages([]);
+        setReadMessagesLoading(false);
+        setReadMessagesRefreshing(false);
+        setReadMessagesError("La lectura global del correo está desactivada. Actívala en Ajustes o desde la configuración del bloque.");
+        setActiveReadMessageId(null);
+        return;
+      }
+      let cancelled = false;
+      const controller = new AbortController();
+      const loadReadMessages = async () => {
+        setReadMessagesLoading(true);
+        setReadMessagesRefreshing(false);
+        setReadMessagesError(null);
+        setReadMessages([]);
+        setActiveReadMessageId(null);
+        const cached = await loadReadMessagesForContacts(readContactsForSelection, false, {
+          shouldStop: () => cancelled || controller.signal.aborted,
+          signal: controller.signal,
+          onPartialResult: (messages, errorMessage) => {
+            if (cancelled) return;
+            applyReadMessages(messages);
+            setReadMessagesError(errorMessage);
+          },
+        });
+        if (cancelled) return;
+        applyReadMessages(cached.messages);
+        setReadMessagesError(cached.errorMessage);
+        setReadMessagesLoading(false);
+        void refreshReadStats();
+        if (cached.messages.length > 0) return;
+
+        setReadMessagesRefreshing(true);
+        const refreshed = await loadReadMessagesForContacts(readContactsForSelection, true, {
+          shouldStop: () => cancelled || controller.signal.aborted,
+          signal: controller.signal,
+          onPartialResult: (messages, errorMessage) => {
+            if (cancelled) return;
+            applyReadMessages(messages);
+            setReadMessagesError(errorMessage);
+          },
+        });
+        if (cancelled) return;
+        applyReadMessages(refreshed.messages);
+        setReadMessagesError(refreshed.errorMessage);
+        setReadMessagesRefreshing(false);
+        void refreshReadStats();
+      };
+      void loadReadMessages();
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }, [
+      isReadModeEnabled,
+      isGlobalReadEnabled,
+      workflowTab,
+      selectedContactEmails,
+      selectedContactEmailsKey,
+      readContactsForSelection,
+      applyReadMessages,
+      loadReadMessagesForContacts,
+      refreshReadStats,
+    ]);
+
+    useEffect(() => {
+      if (!isReadModeEnabled || workflowTab !== "read") return;
+      if (!activeReadMessageId) return;
+      if (Object.prototype.hasOwnProperty.call(readBodyById, activeReadMessageId)) return;
+      let cancelled = false;
+      const targetId = activeReadMessageId;
+      setReadBodyLoadingId(targetId);
+      void fetchReadMessageBody(targetId)
+        .then((result) => {
+          if (!cancelled && !result.cached) {
+            void refreshReadStats();
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (err instanceof ApiError) setReadMessagesError(err.message);
+          else setReadMessagesError("No se pudo cargar el contenido del correo.");
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setReadBodyLoadingId((prev) => (prev === targetId ? null : prev));
+          }
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [isReadModeEnabled, workflowTab, activeReadMessageId, readBodyById, fetchReadMessageBody, refreshReadStats]);
+
+    const requiresBodyForSearch = readSearchScope === "all" || readSearchScope === "attachment" || readSearchScope === "message";
+    const shouldPrefetchBodiesForSearch = requiresBodyForSearch && Boolean(readSearchQuery.trim());
+
+    useEffect(() => {
+      if (!isReadModeEnabled || workflowTab !== "read" || !shouldPrefetchBodiesForSearch || !readMessages.length) {
+        setReadBodyPrefetching(false);
+        return;
+      }
+      const missingIds = readMessages
+        .map((item) => item.message_id)
+        .filter((messageId) => !Object.prototype.hasOwnProperty.call(readBodyByIdRef.current, messageId));
+      if (!missingIds.length) {
+        setReadBodyPrefetching(false);
+        return;
+      }
+
+      let cancelled = false;
+      const prefetchBodies = async () => {
+        setReadBodyPrefetching(true);
+        let remoteFetchDetected = false;
+        for (const messageId of missingIds) {
+          if (cancelled) break;
+          try {
+            const result = await fetchReadMessageBody(messageId);
+            remoteFetchDetected = remoteFetchDetected || !result.cached;
+          } catch {
+            // Ignore individual fetch failures while prefetching.
+          }
+        }
+        if (!cancelled) {
+          setReadBodyPrefetching(false);
+          if (remoteFetchDetected) {
+            void refreshReadStats();
+          }
+        }
+      };
+      void prefetchBodies();
+      return () => {
+        cancelled = true;
+      };
+    }, [isReadModeEnabled, workflowTab, shouldPrefetchBodiesForSearch, readMessages, fetchReadMessageBody, refreshReadStats]);
+
+    const readBodyTextById = useMemo(() => {
+      return Object.fromEntries(
+        Object.entries(readBodyById).map(([messageId, body]) => [messageId, htmlToPreviewText(String(body || ""))])
+      ) as Record<string, string>;
+    }, [readBodyById]);
+
+    const readAttachmentNamesById = useMemo(() => {
+      return Object.fromEntries(
+        Object.entries(readBodyById).map(([messageId, body]) => [messageId, extractAttachmentNamesFromBody(body)])
+      ) as Record<string, string[]>;
+    }, [readBodyById]);
+
+    const filteredReadMessages = useMemo(() => {
+      const searchNeedle = readSearchQuery.trim().toLowerCase();
+      const accountNeedle = readAccountFilter === READ_MAILBOX_ALL ? "" : readAccountFilter.trim().toLowerCase();
+
+      return readMessages.filter((message) => {
+        const folder = String(message.folder || "");
+        const fromValue = String(message.from_address || "");
+        const toValue = String(message.to_address || "");
+        const subjectValue = String(message.subject || "");
+        const bodyText = String(readBodyTextById[message.message_id] || "");
+        const attachmentNames = readAttachmentNamesById[message.message_id] || [];
+
+        if (accountNeedle) {
+          const accountFields =
+            isSentMailbox(folder) ? [fromValue] :
+            isInboxMailbox(folder) ? [toValue, fromValue] :
+            [fromValue, toValue];
+          const matchesAccount = accountFields.some((value) => value.toLowerCase().includes(accountNeedle));
+          if (!matchesAccount) return false;
+        }
+
+        if (!searchNeedle) return true;
+
+        const byScope =
+          readSearchScope === "from"
+            ? fromValue
+            : readSearchScope === "subject"
+              ? subjectValue
+              : readSearchScope === "attachment"
+                ? attachmentNames.join(" ")
+                : readSearchScope === "message"
+                  ? bodyText
+                  : [
+                      message.contactName,
+                      message.contactEmail,
+                      message.contactCompany,
+                      fromValue,
+                      toValue,
+                      subjectValue,
+                      formatMailboxLabel(message.folder || ""),
+                      bodyText,
+                      attachmentNames.join(" "),
+                    ].join(" ");
+        if (!byScope.toLowerCase().includes(searchNeedle)) {
+          return false;
+        }
+        return true;
+      });
+    }, [
+      readMessages,
+      readSearchQuery,
+      readSearchScope,
+      readAccountFilter,
+      readBodyTextById,
+      readAttachmentNamesById,
+    ]);
+
+    useEffect(() => {
+      if (!isReadModeEnabled || workflowTab !== "read") return;
+      if (!filteredReadMessages.length) {
+        setActiveReadMessageId(null);
+        return;
+      }
+      if (!activeReadMessageId || !filteredReadMessages.some((message) => message.message_id === activeReadMessageId)) {
+        setActiveReadMessageId(filteredReadMessages[0].message_id);
+      }
+    }, [isReadModeEnabled, workflowTab, filteredReadMessages, activeReadMessageId]);
+
+    const activeReadMessage = useMemo(() => {
+      if (!filteredReadMessages.length) return null;
+      if (!activeReadMessageId) return filteredReadMessages[0];
+      return filteredReadMessages.find((message) => message.message_id === activeReadMessageId) || filteredReadMessages[0];
+    }, [filteredReadMessages, activeReadMessageId]);
+
+    const activeReadBody = activeReadMessage ? String(readBodyById[activeReadMessage.message_id] || "") : "";
+    const activeReadBodyHtml = useMemo(() => toEmailBodyHtml(activeReadBody), [activeReadBody]);
+    const activeReadAttachmentNames = useMemo(() => {
+      if (!activeReadMessage) return [] as string[];
+      return readAttachmentNamesById[activeReadMessage.message_id] || [];
+    }, [activeReadMessage, readAttachmentNamesById]);
+    const buildEmailSyncPatch = React.useCallback(
+      (readEnabled: boolean): NonNullable<Settings["email_sync"]> => {
+        const current = settings?.email_sync;
+        const currentProviders = current?.oauth?.providers || {};
+        return {
+          provider: current?.provider || "none",
+          read_enabled: readEnabled,
+          imap: {
+            host: current?.imap?.host || "",
+            port: Number.isFinite(Number(current?.imap?.port)) ? Number(current?.imap?.port) : 993,
+            username: current?.imap?.username || "",
+            password: current?.imap?.password || "",
+            use_ssl: current?.imap?.use_ssl !== false,
+            folder: current?.imap?.folder || READ_MAILBOX_INBOX,
+          },
+          oauth: {
+            providers: {
+              ...currentProviders
+            }
+          }
+        };
+      },
+      [settings?.email_sync]
+    );
+
+    const updateReadModeEnabled = React.useCallback(
+      async (nextEnabled: boolean) => {
+        setConfigError(null);
+        patchBlockProps({ readEnabled: nextEnabled });
+        if (!nextEnabled || isGlobalReadEnabled) return;
+        setSyncingGlobalRead(true);
+        try {
+          const updated = await saveSettings({ email_sync: buildEmailSyncPatch(true) });
+          if (!updated) {
+            setConfigError("No se pudo activar la lectura global del correo.");
+          }
+        } catch {
+          setConfigError("No se pudo activar la lectura global del correo.");
+        } finally {
+          setSyncingGlobalRead(false);
+        }
+      },
+      [buildEmailSyncPatch, isGlobalReadEnabled, patchBlockProps, saveSettings]
+    );
+
+    const blockMenuActions = useMemo(
+      () =>
+        mode === "edit"
+          ? [
+              {
+                key: `email-config-${block.id}`,
+                label: "Configurar correo",
+                onClick: () => setIsConfigOpen(true)
+              },
+              ...(menuActions || [])
+            ]
+          : menuActions,
+      [block.id, menuActions, mode]
+    );
+
+    const readFolderOptions = useMemo(() => {
+      const folderMap = new Map<string, string>();
+      [READ_MAILBOX_ALL, READ_MAILBOX_INBOX, READ_MAILBOX_SENT].forEach((value) => {
+        folderMap.set(value, value);
+      });
+      const currentFolderKey = normalizeMailboxName(readMailbox).toUpperCase();
+      if (!folderMap.has(currentFolderKey)) {
+        folderMap.set(currentFolderKey, readMailbox);
+      }
+      readMessages.forEach((message) => {
+        const folder = normalizeMailboxName(message.folder || "");
+        if (!folder) return;
+        const key = normalizeMailboxName(folder).toUpperCase();
+        if (!folderMap.has(key)) {
+          folderMap.set(key, folder);
+        }
+      });
+      return Array.from(folderMap.values());
+    }, [readMessages, readMailbox]);
+
+    const readAccountOptions = useMemo(() => {
+      return buildEmailAccountOptions(googleAccounts);
+    }, [googleAccounts]);
+
+    const hasAdvancedReadFilters = readSearchScope !== "all";
+    const activeReadSearchScopeOption = useMemo(
+      () => READ_SEARCH_SCOPE_OPTIONS.find((option) => option.value === readSearchScope) || READ_SEARCH_SCOPE_OPTIONS[0],
+      [readSearchScope]
+    );
+    const activeReadSearchScopeLabel = activeReadSearchScopeOption.value === "all" ? "" : activeReadSearchScopeOption.label;
+    const readSearchNeedle = readSearchQuery.trim();
+
+    const commitReadSearchQuery = React.useCallback(
+      (raw: string, scopeOverride?: ReadSearchScope) => {
+        const value = String(raw || "").trim();
+        if (!value) return;
+        const scope = scopeOverride || readSearchScope;
+        const valueKey = value.toLowerCase();
+        setReadSearchHistory((prev) => {
+          const next = [
+            { query: value, scope },
+            ...prev.filter((item) => !(item.scope === scope && item.query.toLowerCase() === valueKey)),
+          ];
+          return next.slice(0, MAX_READ_SEARCH_HISTORY);
+        });
+      },
+      [readSearchScope]
+    );
+
+    const getReadHighlightQueryForField = React.useCallback(
+      (field: "subject" | "from" | "contact" | "message"): string => {
+        if (!readSearchNeedle) return "";
+        if (readSearchScope === "all") return readSearchNeedle;
+        if (readSearchScope === "subject" && field === "subject") return readSearchNeedle;
+        if (readSearchScope === "from" && field === "from") return readSearchNeedle;
+        if ((readSearchScope === "message" || readSearchScope === "attachment") && field === "message") {
+          return readSearchNeedle;
+        }
+        return "";
+      },
+      [readSearchNeedle, readSearchScope]
+    );
+
+    const getVisibleReadMessageSnippet = React.useCallback(
+      (message: EmailReadMessage): string => {
+        const bodySnippet = String(readBodyTextById[message.message_id] || "");
+        const attachmentSnippet = (readAttachmentNamesById[message.message_id] || []).join(" · ");
+        if (!attachmentSnippet) return bodySnippet;
+        if (readSearchScope === "attachment") return attachmentSnippet;
+        if (readSearchScope === "all" && readSearchNeedle) {
+          const bodyMatches = bodySnippet.toLowerCase().includes(readSearchNeedle.toLowerCase());
+          const attachmentMatches = attachmentSnippet.toLowerCase().includes(readSearchNeedle.toLowerCase());
+          if (attachmentMatches && !bodyMatches) return attachmentSnippet;
+        }
+        return bodySnippet;
+      },
+      [readAttachmentNamesById, readBodyTextById, readSearchNeedle, readSearchScope]
+    );
+
     const preview = useMemo(() => {
       const first = previewSource;
       if (!first) return null;
@@ -1335,6 +2213,21 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       if (!preview?.body) return "";
       return renderPreviewBodyWithInlineAttachments(preview.body, attachmentCatalog);
     }, [preview?.body, attachmentCatalog]);
+
+    const handleSenderAccountChange = async (email: string) => {
+      const nextEmail = String(email || "").trim();
+      if (!nextEmail) return;
+      const isAlreadyActive = googleAccounts.some((account) => account.active && account.email === nextEmail);
+      if (isAlreadyActive) return;
+      setSendError(null);
+      try {
+        await selectGoogleAccount(nextEmail);
+        await refreshSendStats();
+      } catch (err) {
+        if (err instanceof ApiError) setSendError(err.message);
+        else setSendError("No se pudo seleccionar la cuenta de envío.");
+      }
+    };
 
     const renderBodyComposerEditor = (windowed: boolean) => (
       <div className={cx("email-send-editor-wrap", windowed && "is-windowed")}>
@@ -1433,10 +2326,88 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   placeholder="Hola {{Nombre}}, seguimiento en {{Empresa}}"
                 />
               </div>
+              <div className="email-send-editor-subject-row email-send-editor-from-row">
+                <span className="email-send-editor-subject-label">De:</span>
+                <select
+                  id={`${block.id}-send-from`}
+                  className="email-send-editor-subject-input email-send-editor-from-select"
+                  value={googleAccounts.find((account) => account.active)?.email || googleAccounts[0]?.email || ""}
+                  onChange={(event) => {
+                    void handleSenderAccountChange(event.target.value);
+                  }}
+                  disabled={!isConnected || googleAccounts.length === 0}
+                >
+                  {googleAccounts.length === 0 ? (
+                    <option value="">Sin cuentas conectadas</option>
+                  ) : (
+                    googleAccounts.map((account) => (
+                      <option key={account.email} value={account.email}>
+                        {account.email}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
             </div>
           )}
         />
       </div>
+    );
+
+    const renderReadMessageDetail = (windowed: boolean) => (
+      <article className={cx("email-send-read-detail", windowed && "is-windowed")}>
+        {activeReadMessage ? (
+          <>
+            <div className="email-send-read-detail-head">
+              <h4>{activeReadMessage.subject || "Sin asunto"}</h4>
+              <div className="email-send-read-detail-meta">
+                <span><strong>De:</strong> {activeReadMessage.from_address || "—"}</span>
+                <span><strong>Para:</strong> {activeReadMessage.to_address || "—"}</span>
+                <span><strong>Contacto:</strong> {activeReadMessage.contactName || activeReadMessage.contactEmail || "—"}</span>
+                <span><strong>Fecha:</strong> {formatMessageTimestamp(activeReadMessage.date)}</span>
+              </div>
+              {activeReadAttachmentNames.length > 0 ? (
+                <div className="email-send-read-attachments">
+                  {activeReadAttachmentNames.map((filename) => (
+                    <span
+                      key={`${activeReadMessage.message_id}-${filename}`}
+                      className="email-send-read-attachment-pill"
+                    >
+                      {filename}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            {readBodyLoadingId === activeReadMessage.message_id && !activeReadBody ? (
+              <div className="email-send-read-loading">Cargando contenido del correo…</div>
+            ) : activeReadBody ? (
+              <div className={cx("email-send-read-detail-body-wrap", windowed && "is-windowed")}>
+                {!windowed ? (
+                  <button
+                    type="button"
+                    className="email-send-editor-expand-button"
+                    onClick={() => setReadBodyWindowOpen(true)}
+                    title="Ampliar correo"
+                    aria-label="Ampliar correo"
+                  >
+                    <span className="email-send-editor-expand-glyph" aria-hidden="true">⤢</span>
+                  </button>
+                ) : null}
+                <div
+                  className={cx("page-builder-text", "email-send-read-detail-body", windowed && "is-windowed")}
+                  dangerouslySetInnerHTML={{ __html: activeReadBodyHtml }}
+                />
+              </div>
+            ) : (
+              <div className="email-send-read-loading">Este correo no tiene cuerpo disponible.</div>
+            )}
+          </>
+        ) : (
+          <div className="email-send-read-loading">Selecciona un correo para ver el detalle.</div>
+        )}
+      </article>
     );
 
     const saveDraft = () => {
@@ -1644,33 +2615,42 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     };
 
     const activeAccount = googleAccounts.find((account) => account.active);
-    const activeAccountEmail = activeAccount?.email || connectedEmail || "—";
     const hasMessageTemplate =
       Boolean(String(block.props.sendSubjectTemplate || "").trim()) &&
       Boolean(String(block.props.sendBodyTemplate || "").trim());
     const subtleInfoMessage = useMemo(() => {
       if (!sendMessage) return null;
-      if (sendMessage.startsWith("Lista cargada:")) return null;
       if (sendResult && sendMessage.startsWith("Envío completado.")) return null;
       return sendMessage;
     }, [sendMessage, sendResult]);
+    const isReadTab = workflowTab === "read";
+    const hasSelectableAccounts = googleAccounts.length > 0;
+    const activeAccountEmail = isReadTab
+      ? String(readStats?.account_id || activeAccount?.email || connectedEmail || "—")
+      : activeAccount?.email || connectedEmail || "—";
     const accountInlineBlock =
-      isConnected && googleAccounts.length > 0 ? (
+      ((hasSelectableAccounts && (isConnected || hasReadUsageLimit)) || (isReadTab && Boolean(readStats?.account_id))) ? (
         <div className="email-send-card email-send-account-card">
           <div ref={acctDropdownRef} className="email-send-account-selector">
             <button
               type="button"
-              onClick={() => setAcctDropdownOpen((prev) => !prev)}
+              onClick={() => {
+                if (!hasSelectableAccounts) return;
+                setAcctDropdownOpen((prev) => !prev);
+              }}
               className={cx("email-send-account-trigger", acctDropdownOpen && "is-open")}
+              disabled={!hasSelectableAccounts}
             >
               <span className="email-send-account-avatar">
                 {activeAccountEmail.charAt(0).toUpperCase()}
               </span>
               <strong className="email-send-account-active-email">{activeAccountEmail}</strong>
-              <span className="email-send-account-caret" aria-hidden="true">▾</span>
+              {hasSelectableAccounts ? (
+                <span className="email-send-account-caret" aria-hidden="true">▾</span>
+              ) : null}
             </button>
 
-            {acctDropdownOpen ? (
+            {hasSelectableAccounts && acctDropdownOpen ? (
               <div className="email-send-account-menu">
                 {googleAccounts.map((acct) => (
                   <div
@@ -1705,7 +2685,9 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                     <span className="email-send-account-item-email">{acct.email}</span>
                     {acct.active ? (
                       <>
-                        <span className="email-send-account-item-state">● Activa</span>
+                        {!isReadTab ? (
+                          <span className="email-send-account-item-state">● Activa</span>
+                        ) : null}
                         <button
                           className="ghost email-send-disconnect-all email-send-account-hover-disconnect"
                           type="button"
@@ -1715,12 +2697,12 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                               setSendError(null);
                               setSendMessage(null);
                               try {
-                                const out = await disconnectGoogleOAuth();
-                                setSendMessage(out.message || "Google OAuth desconectado.");
+                                const out = await disconnectSingleGoogleAccount(acct.email);
+                                setSendMessage(out.message || "Cuenta desconectada.");
                                 await refreshSendStats();
                               } catch (err) {
                                 if (err instanceof ApiError) setSendError(err.message);
-                                else setSendError("No se pudo desconectar Google OAuth.");
+                                else setSendError("No se pudo desconectar la cuenta.");
                               }
                               setAcctDropdownOpen(false);
                             })();
@@ -1730,11 +2712,9 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                         </button>
                       </>
                     ) : (
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        title={`Desconectar ${acct.email}`}
-                        className="email-send-account-item-remove"
+                      <button
+                        type="button"
+                        className="ghost email-send-disconnect-all email-send-account-hover-disconnect"
                         onClick={(event) => {
                           event.stopPropagation();
                           void (async () => {
@@ -1751,15 +2731,10 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                             setAcctDropdownOpen(false);
                           })();
                         }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            (event.target as HTMLElement).click();
-                          }
-                        }}
+                        aria-label={`Desconectar ${acct.email}`}
                       >
-                        ✕
-                      </span>
+                        Desconectar
+                      </button>
                     )}
                   </div>
                 ))}
@@ -1782,7 +2757,16 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
             ) : null}
           </div>
 
-          {sendStats ? (
+          {isReadTab && hasReadUsageLimit ? (
+            <div className="email-send-metrics">
+              <span className="email-send-metric-pill" title={readUsageTooltip} aria-label={readUsageTooltip}>
+                <span className="email-send-metric-icon"><MetricUsageIcon /></span>
+                {readUsagePeriodLabel}: <strong>{formatUsagePercent(Number(readStats?.used_percent || 0))}</strong> usado
+              </span>
+            </div>
+          ) : null}
+
+          {sendStats && !isReadTab ? (
             <div className="email-send-metrics">
               <span className="email-send-metric-pill">
                 <span className="email-send-metric-icon"><MetricTodayIcon /></span>
@@ -1801,6 +2785,34 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
       ) : null;
     const composeHeaderInlineContent = (
       <div className="email-send-header-inline-left">
+        {hasAnyWorkflowEnabled ? (
+          <div className="email-send-mode-tabs" role="tablist" aria-label="Modo de correo">
+            {isReadModeEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isReadTab}
+                className={cx("email-send-mode-tab", isReadTab && "is-active")}
+                onClick={() => setWorkflowTab("read")}
+              >
+                Leer
+              </button>
+            ) : null}
+            {isSendModeEnabled ? (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!isReadTab}
+                className={cx("email-send-mode-tab", !isReadTab && "is-active")}
+                onClick={() => setWorkflowTab("send")}
+              >
+                Enviar
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="email-block-config-chip">Bloque de correo desactivado</div>
+        )}
         {accountInlineBlock}
       </div>
     );
@@ -1852,7 +2864,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
     );
 
     return (
-      <BlockPanel id={block.id} as="section" menuActions={menuActions}>
+      <BlockPanel id={block.id} as="section" menuActions={blockMenuActions}>
         {renderHeader(
           block.id,
           mode,
@@ -1877,7 +2889,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
               </div>
             ) : null}
 
-            {!isConnected || googleAccounts.length === 0 ? (
+            {isSendModeEnabled && (!isConnected || googleAccounts.length === 0) ? (
               <section className="email-send-card email-send-step-card">
                 <StepHeader label="Cuenta de envío" active done={false} />
                 <Divider />
@@ -1895,18 +2907,36 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
               </section>
             ) : null}
 
-            <section className={cx("email-send-card email-send-step-card", !isConnected && "is-dimmed")}>
+            <section className={cx("email-send-card email-send-step-card", !isConnected && !isReadTab && "is-dimmed")}>
               <StepHeader
                 active={isConnected && contacts.length > 0 && hasMessageTemplate && !sendResult}
                 done={!!sendResult}
                 blocked={!isConnected}
                 inlineContent={composeHeaderInlineContent}
-                rightContent={composeHeaderRightContent}
+                className="email-send-step-header-with-tabs"
+                rightContent={!isReadTab && isSendModeEnabled ? composeHeaderRightContent : undefined}
               />
               <Divider />
 
-              <div className="email-send-compose-shell">
-                <aside className="email-send-recipient-panel">
+              {!hasAnyWorkflowEnabled ? (
+                <div className="email-block-config-empty">
+                  Activa al menos una opción en Configurar correo para usar este bloque.
+                </div>
+              ) : (
+                <div
+                  className={cx(
+                    "email-send-compose-shell",
+                    isRecipientPanelCollapsed && "is-recipient-panel-collapsed"
+                  )}
+                >
+                <aside
+                  id={`${block.id}-recipient-panel`}
+                  className={cx(
+                    "email-send-recipient-panel",
+                    isRecipientPanelCollapsed && "is-collapsed"
+                  )}
+                  aria-hidden={isRecipientPanelCollapsed}
+                >
                   <div className="email-send-recipient-panel-header">
                     <div className="email-send-recipient-title-row">
                       <strong>Destinatarios</strong>
@@ -1985,7 +3015,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                     <div className="email-send-recipient-empty">
                       {contacts.length > 0
                         ? "No hay coincidencias para esa búsqueda."
-                        : "Cargando contactos del tracker…"}
+                        : "No hay contactos en el tracker."}
                     </div>
                   )}
 
@@ -2043,45 +3073,345 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                     </div>
                   ) : null}
                 </aside>
+                <button
+                  type="button"
+                  className={cx(
+                    "email-send-panel-toggle",
+                    isRecipientPanelCollapsed && "is-collapsed"
+                  )}
+                  onClick={() => setIsRecipientPanelCollapsed((prev) => !prev)}
+                  aria-controls={`${block.id}-recipient-panel`}
+                  aria-expanded={!isRecipientPanelCollapsed}
+                  aria-label={
+                    isRecipientPanelCollapsed
+                      ? "Mostrar panel de destinatarios"
+                      : "Ocultar panel de destinatarios"
+                  }
+                  title={
+                    isRecipientPanelCollapsed
+                      ? "Mostrar panel de destinatarios"
+                      : "Ocultar panel de destinatarios"
+                  }
+                >
+                  <span className="email-send-panel-toggle-icon-wrap" aria-hidden="true">
+                    <span className="email-send-panel-toggle-icon">
+                      <PanelChevronIcon />
+                    </span>
+                  </span>
+                </button>
 
                 <div className="email-send-compose-main">
                   <div className="email-send-template-grid">
-                    <div className="email-send-field-stack">
-                      {!editorWindowOpen ? renderBodyComposerEditor(false) : null}
-                    </div>
+                    {isReadTab ? (
+                      <div className="email-send-read-placeholder">
+                          <div className="email-send-read-toolbar-head">
+                            <div className="email-send-recipient-title-row">
+                              <strong>Mensajes</strong>
+                              <span>
+                                {readMessagesLoading
+                                  ? "Cargando…"
+                                  : readMessagesRefreshing
+                                    ? "Actualizando…"
+                                    : `${readMessages.length} cargados`}
+                              </span>
+                            </div>
+                          <div className="email-send-read-toolbar">
+                            <div className="email-send-read-toolbar-row">
+                            <div className="tracker-search email-send-read-search email-send-read-search-inline" ref={readSearchRef}>
+                              <div
+                                className={cx(
+                                  "tracker-search-input-wrap email-send-read-search-wrap",
+                                  activeReadSearchScopeLabel && "has-scope-prefix"
+                                )}
+                              >
+                                <span className="tracker-search-leading" aria-hidden="true">
+                                  <svg viewBox="0 0 20 20">
+                                    <path d="M12.9 14 17 18.1l1.1-1.1-4.1-4.1a6.5 6.5 0 1 0-1.1 1.1ZM4.5 8.5a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z" />
+                                  </svg>
+                                </span>
+                                {activeReadSearchScopeLabel ? (
+                                  <span className="email-send-read-search-prefix">{activeReadSearchScopeLabel}:</span>
+                                ) : null}
+                                <input
+                                  value={readSearchQuery}
+                                  onFocus={() => {
+                                    setReadFiltersOpen(false);
+                                    if (!readSearchQuery.trim() && readSearchHistory.length > 0) {
+                                      setReadSearchHistoryOpen(true);
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    setReadFiltersOpen(false);
+                                    if (!readSearchQuery.trim() && readSearchHistory.length > 0) {
+                                      setReadSearchHistoryOpen(true);
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    commitReadSearchQuery(readSearchQuery);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      commitReadSearchQuery(readSearchQuery);
+                                      setReadSearchHistoryOpen(false);
+                                    }
+                                  }}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    setReadSearchQuery(nextValue);
+                                    if (nextValue.trim()) {
+                                      setReadSearchHistoryOpen(false);
+                                    } else if (readSearchHistory.length > 0) {
+                                      setReadSearchHistoryOpen(true);
+                                    }
+                                  }}
+                                  placeholder="Company, role, location..."
+                                  className="tracker-search-input"
+                                />
+                                <div className="tracker-search-actions">
+                                  {readSearchQuery.trim() ? (
+                                    <button
+                                      type="button"
+                                      className="tracker-search-clear"
+                                      onClick={() => {
+                                        commitReadSearchQuery(readSearchQuery);
+                                        setReadSearchQuery("");
+                                        if (readSearchHistory.length > 0) {
+                                          setReadSearchHistoryOpen(true);
+                                        }
+                                      }}
+                                      aria-label="Limpiar búsqueda de correos"
+                                      title="Limpiar búsqueda de correos"
+                                    >
+                                      <svg viewBox="0 0 20 20" aria-hidden="true">
+                                        <path d="M5.22 5.22a.75.75 0 0 1 1.06 0L10 8.94l3.72-3.72a.75.75 0 0 1 1.06 1.06L11.06 10l3.72 3.72a.75.75 0 0 1-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 0 1-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 0 1 0-1.06Z" />
+                                      </svg>
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className={`tracker-search-filter ${readFiltersOpen ? "open" : ""} ${
+                                      hasAdvancedReadFilters ? "active" : ""
+                                    }`}
+                                    onClick={() => {
+                                      setReadSearchHistoryOpen(false);
+                                      setReadFiltersOpen((prev) => !prev);
+                                    }}
+                                    aria-label="Filter"
+                                    aria-expanded={readFiltersOpen}
+                                  >
+                                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                                      <path d="M3 4.75A.75.75 0 0 1 3.75 4h12.5a.75.75 0 0 1 .56 1.25L12 10.54V15a.75.75 0 0 1-1.2.6l-2-1.5a.75.75 0 0 1-.3-.6v-2.96L3.19 5.25A.75.75 0 0 1 3 4.75Z" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {readSearchHistoryOpen && !readSearchQuery.trim() && readSearchHistory.length > 0 ? (
+                                <div
+                                  className="tracker-search-popover email-send-read-search-popover email-send-read-history-popover"
+                                  role="listbox"
+                                  aria-label="Historial de búsqueda"
+                                >
+                                  <div className="email-send-read-history-title">Historial reciente</div>
+                                  <div className="email-send-read-history-list">
+                                    {readSearchHistory.map((entry, idx) => (
+                                      <button
+                                        type="button"
+                                        key={`${entry.scope}-${entry.query}-${idx}`}
+                                        className="email-send-read-history-item"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => {
+                                          setReadSearchScope(entry.scope);
+                                          setReadSearchQuery(entry.query);
+                                          commitReadSearchQuery(entry.query, entry.scope);
+                                          setReadSearchHistoryOpen(false);
+                                        }}
+                                      >
+                                        {formatReadSearchHistoryEntry(entry)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {readFiltersOpen ? (
+                                <div
+                                  className="tracker-search-popover email-send-read-search-popover email-send-read-filter-popover"
+                                  role="dialog"
+                                  aria-label="Filter"
+                                >
+                                  <div className="email-send-read-history-title">Filtrar por</div>
+                                  <div className="email-send-read-filter-options">
+                                    {READ_SEARCH_SCOPE_OPTIONS.map((option) => (
+                                      <button
+                                        key={option.value}
+                                        type="button"
+                                        className={`email-send-read-filter-option ${
+                                          readSearchScope === option.value ? "is-active" : ""
+                                        }`}
+                                        onClick={() => {
+                                          setReadSearchScope(option.value);
+                                          setReadFiltersOpen(false);
+                                        }}
+                                      >
+                                        {option.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <label className="email-send-read-select-wrap">
+                              <span className="email-send-read-select-label">Enviados por</span>
+                              <select
+                                className="email-send-input email-send-read-select"
+                                value={readAccountFilter}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setReadAccountFilter(nextValue);
+                                  patchBlockProps({ readAccountFilter: nextValue });
+                                }}
+                              >
+                                {readAccountOptions.map((value) => (
+                                  <option key={value} value={value}>
+                                    {value === READ_MAILBOX_ALL ? "Todas las cuentas" : value}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="email-send-read-select-wrap">
+                              <span className="email-send-read-select-label">Bandeja</span>
+                              <select
+                                className="email-send-input email-send-read-select"
+                                value={readMailbox}
+                                onChange={(event) => {
+                                  patchBlockProps({ folder: normalizeMailboxName(event.target.value) });
+                                }}
+                              >
+                                {readFolderOptions.map((folder) => (
+                                  <option key={folder} value={folder}>
+                                    {formatMailboxLabel(folder)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        </div>
+                        </div>
+
+                        {readBodyPrefetching ? (
+                          <div className="email-send-read-prefetch">Cargando cuerpos para filtros avanzados…</div>
+                        ) : null}
+
+                        {!selectedContactEmails.length ? (
+                          <div className="email-send-read-empty">
+                            Selecciona uno o más contactos en la barra lateral para leer sus correos.
+                          </div>
+                        ) : readMessagesLoading && readMessages.length === 0 ? (
+                          <div className="email-send-read-empty">Cargando correos de los contactos seleccionados…</div>
+                        ) : readMessagesRefreshing && readMessages.length === 0 ? (
+                          <div className="email-send-read-empty">Sin caché local. Sincronizando correos con el proveedor…</div>
+                        ) : readMessagesError && readMessages.length === 0 ? (
+                          <div className="email-send-read-empty is-error">{readMessagesError}</div>
+                        ) : readMessages.length === 0 ? (
+                          <div className="email-send-read-empty">No hay correos cargados para los contactos seleccionados.</div>
+                        ) : filteredReadMessages.length === 0 ? (
+                          <div className="email-send-read-empty">No hay correos que coincidan con la búsqueda actual.</div>
+                        ) : (
+                          <div className="email-send-read-layout">
+                            <aside className="email-send-read-list">
+                              <div className="email-send-read-list-head">
+                                <strong>{filteredReadMessages.length} correos</strong>
+                                <span>
+                                  {selectedContactEmails.length} contacto{selectedContactEmails.length !== 1 ? "s" : ""}
+                                </span>
+                              </div>
+                              <div className="email-send-read-list-scroll">
+                                {filteredReadMessages.map((message) => {
+                                  const isActive = activeReadMessage?.message_id === message.message_id;
+                                  const bodySnippet = getVisibleReadMessageSnippet(message);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={message.message_id}
+                                      className={cx("email-send-read-message-item", isActive && "is-active")}
+                                      onClick={() => setActiveReadMessageId(message.message_id)}
+                                    >
+                                      <div className="email-send-read-message-top">
+                                        <strong>{renderHighlightedText(message.subject || "Sin asunto", getReadHighlightQueryForField("subject"))}</strong>
+                                        <span>{formatMessageTimestamp(message.date)}</span>
+                                      </div>
+                                      <div className="email-send-read-message-meta">
+                                        <span>{renderHighlightedText(message.from_address || "Sin remitente", getReadHighlightQueryForField("from"))}</span>
+                                        <span>{formatMailboxLabel(message.folder || "")}</span>
+                                      </div>
+                                      <div className="email-send-read-message-contact">
+                                        {renderHighlightedText(message.contactName || message.contactEmail || "Contacto", getReadHighlightQueryForField("contact"))}
+                                      </div>
+                                      {bodySnippet ? (
+                                        <p className="email-send-read-message-snippet">
+                                          {renderHighlightedText(bodySnippet, getReadHighlightQueryForField("message"))}
+                                        </p>
+                                      ) : (
+                                        <p className="email-send-read-message-snippet is-empty">Sin vista previa</p>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </aside>
+
+                            {renderReadMessageDetail(false)}
+                          </div>
+                        )}
+
+                        {readMessagesError && readMessages.length > 0 ? (
+                          <div className="email-send-read-warning">{readMessagesError}</div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="email-send-field-stack">
+                        {!editorWindowOpen ? renderBodyComposerEditor(false) : null}
+                      </div>
+                    )}
                   </div>
 
-                  {preview ? (
-                    <div className="email-send-preview">
-                      <div className="email-send-preview-head">
-                        <span className="email-send-preview-icon" aria-hidden="true">
-                          <PreviewEyeIcon />
-                        </span>
-                        <div className="email-send-preview-head-copy">
-                          <span className="email-send-preview-kicker">Vista previa</span>
-                          <strong className="email-send-preview-contact">
-                            {previewSource?.name || previewSource?.email || "contacto activo"}
-                          </strong>
+                  {!isReadTab ? (
+                    preview ? (
+                      <div className="email-send-preview">
+                        <div className="email-send-preview-head">
+                          <span className="email-send-preview-icon" aria-hidden="true">
+                            <PreviewEyeIcon />
+                          </span>
+                          <div className="email-send-preview-head-copy">
+                            <span className="email-send-preview-kicker">Vista previa</span>
+                            <strong className="email-send-preview-contact">
+                              {previewSource?.name || previewSource?.email || "contacto activo"}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="email-send-preview-content">
+                          <div className="email-send-preview-subject">
+                            <span className="email-send-preview-label">Asunto</span>
+                            <p>{preview.subject}</p>
+                          </div>
+                          <div
+                            className="page-builder-text email-send-preview-body"
+                            dangerouslySetInnerHTML={{ __html: previewBodyHtml }}
+                          />
                         </div>
                       </div>
-                      <div className="email-send-preview-content">
-                        <div className="email-send-preview-subject">
-                          <span className="email-send-preview-label">Asunto</span>
-                          <p>{preview.subject}</p>
-                        </div>
-                        <div
-                          className="page-builder-text email-send-preview-body"
-                          dangerouslySetInnerHTML={{ __html: previewBodyHtml }}
-                        />
+                    ) : (
+                      <div className="email-send-preview-empty">
+                        Selecciona al menos un destinatario para ver la vista previa personalizada.
                       </div>
-                    </div>
-                  ) : (
-                    <div className="email-send-preview-empty">
-                      Selecciona al menos un destinatario para ver la vista previa personalizada.
-                    </div>
-                  )}
+                    )
+                  ) : null}
                 </div>
               </div>
+              )}
 
               {sendResult ? (
                 <div className="email-send-result">
@@ -2275,6 +3605,154 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
                   <div className="email-send-editor-window-body">
                     {renderBodyComposerEditor(true)}
                   </div>
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
+
+        {readBodyWindowOpen && typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="email-send-editor-window-backdrop"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Correo ampliado"
+                onClick={() => setReadBodyWindowOpen(false)}
+              >
+                <div
+                  className="email-send-editor-window email-send-read-window"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="ghost email-send-editor-window-close"
+                    onClick={() => setReadBodyWindowOpen(false)}
+                    aria-label="Cerrar correo ampliado"
+                  >
+                    Cerrar
+                  </button>
+                  <div className="email-send-read-window-body">
+                    {renderReadMessageDetail(true)}
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
+
+        {isConfigOpen && typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="modal-backdrop"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Configurar correo"
+                onClick={() => setIsConfigOpen(false)}
+              >
+                <div className="modal email-block-config-modal" onClick={(event) => event.stopPropagation()}>
+                  <header className="modal-header">
+                    <div>
+                      <h2>Configurar correo</h2>
+                      <p>Activa o desactiva lectura y envío en este bloque.</p>
+                    </div>
+                    <button className="ghost" type="button" onClick={() => setIsConfigOpen(false)} aria-label="Cerrar">
+                      ×
+                    </button>
+                  </header>
+
+                  <div className="email-block-config-list">
+                    <label className="email-block-config-row">
+                      <div className="email-block-config-copy">
+                        <strong>Enviar correos activado</strong>
+                        <span>Muestra la pestaña de envío y el editor de campañas en este bloque.</span>
+                      </div>
+                      <span className="email-block-config-switch">
+                        <input
+                          type="checkbox"
+                          checked={isSendModeEnabled}
+                          onChange={(event) => {
+                            setConfigError(null);
+                            patchBlockProps({ sendEnabled: event.target.checked });
+                          }}
+                        />
+                        <span className="email-block-config-switch-ui" aria-hidden="true" />
+                      </span>
+                    </label>
+
+                    <div className="email-block-config-row email-block-config-row-stacked">
+                      <div className="email-block-config-row-head">
+                        <div className="email-block-config-copy">
+                          <strong>Leer correos activado</strong>
+                          <span>Muestra la pestaña de lectura. Si la lectura global estaba aparcada, se intenta activarla.</span>
+                        </div>
+                        <span className="email-block-config-switch">
+                          <input
+                            type="checkbox"
+                            checked={isReadModeEnabled}
+                            onChange={(event) => {
+                              void updateReadModeEnabled(event.target.checked);
+                            }}
+                          />
+                          <span className="email-block-config-switch-ui" aria-hidden="true" />
+                        </span>
+                      </div>
+
+                      <div className="email-block-config-extra">
+                        <label className="email-block-config-field">
+                          <span className="email-block-config-field-label">Buscar mensajes desde</span>
+                          <div className="email-block-config-field-row">
+                            <input
+                              type="date"
+                              className="email-send-input email-block-config-input"
+                              value={readStartDate}
+                              onChange={(event) => {
+                                setConfigError(null);
+                                patchBlockProps({ readStartDate: normalizeReadStartDate(event.target.value) });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="ghost email-block-config-field-action"
+                              onClick={() => {
+                                setConfigError(null);
+                                patchBlockProps({ readStartDate: "" });
+                              }}
+                              disabled={!readStartDate}
+                            >
+                              Desde siempre
+                            </button>
+                          </div>
+                          <span className="email-block-config-field-note">Vacío = busca todo el histórico disponible.</span>
+                        </label>
+
+                        <label className="email-block-config-inline-toggle">
+                          <div className="email-block-config-copy">
+                            <strong>Contenido completo del mensaje</strong>
+                            <span>Carga HTML y muestra adjuntos visibles dentro del correo. Consume más lectura IMAP.</span>
+                          </div>
+                          <span className="email-block-config-switch">
+                            <input
+                              type="checkbox"
+                              checked={readLoadFullContent}
+                              onChange={(event) => {
+                                setConfigError(null);
+                                patchBlockProps({ readLoadFullContent: event.target.checked });
+                              }}
+                            />
+                            <span className="email-block-config-switch-ui" aria-hidden="true" />
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {syncingGlobalRead ? (
+                    <div className="email-block-config-note">Activando lectura global…</div>
+                  ) : null}
+                  {configError ? (
+                    <div className="email-block-config-note is-error">{configError}</div>
+                  ) : null}
                 </div>
               </div>,
               document.body

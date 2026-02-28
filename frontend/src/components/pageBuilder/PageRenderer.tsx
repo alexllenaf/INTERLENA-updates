@@ -19,6 +19,7 @@ type Props = {
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   resolveBlockMenuActions?: (block: PageBlockConfig) => BlockPanelMenuAction[] | undefined;
   onUpdateBlockProps?: (blockId: string, nextProps: Record<string, unknown>) => void;
+  onUpdateBlockLayout?: (blockId: string, nextLayout: GridLayout) => void;
   renderBlockControls?: (block: PageBlockConfig) => React.ReactNode;
   blockClassName?: (block: PageBlockConfig) => string;
   hiddenBlockIds?: Set<string>;
@@ -49,6 +50,7 @@ const PageRenderer: React.FC<Props> = ({
   resolveBlockProps,
   resolveBlockMenuActions,
   onUpdateBlockProps,
+  onUpdateBlockLayout,
   renderBlockControls,
   blockClassName,
   hiddenBlockIds,
@@ -78,6 +80,10 @@ const PageRenderer: React.FC<Props> = ({
           if (!onUpdateBlockProps) return;
           onUpdateBlockProps(block.id, { ...(block.props as Record<string, unknown>), ...patch });
         };
+        const nextLayout = (patch: Partial<GridLayout>) => {
+          if (!onUpdateBlockLayout) return;
+          onUpdateBlockLayout(block.id, { ...block.layout, ...patch });
+        };
         const content = (
           <BlockComponent
             block={effectiveBlock as any}
@@ -90,6 +96,8 @@ const PageRenderer: React.FC<Props> = ({
             patchBlockProps={(patch: Partial<Record<string, unknown>>) =>
               nextProps(patch as Record<string, unknown>)
             }
+            updateBlockLayout={(next: GridLayout) => onUpdateBlockLayout?.(block.id, next)}
+            patchBlockLayout={(patch: Partial<GridLayout>) => nextLayout(patch)}
           />
         );
         const extraClass = blockClassName?.(block) || "";

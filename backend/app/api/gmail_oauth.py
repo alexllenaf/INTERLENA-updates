@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..schemas import GmailSendIn, GmailSendOut
 from ..services.emails import (
-    GOOGLE_GMAIL_SEND_SCOPE,
     GOOGLE_OAUTH_AUTH_URL,
+    GOOGLE_SCOPE,
     exchange_google_code_pkce,
     get_google_oauth_backend_config,
     get_valid_google_send_access_token,
@@ -150,7 +150,7 @@ def oauth_google_start() -> RedirectResponse | HTMLResponse:
         "client_id": cfg["client_id"],
         "redirect_uri": cfg["redirect_uri"],
         "response_type": "code",
-        "scope": f"{GOOGLE_GMAIL_SEND_SCOPE} openid email",
+        "scope": f"{GOOGLE_SCOPE} openid email",
         "access_type": "offline",
         "prompt": "consent",
         "state": state,

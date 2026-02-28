@@ -1,3 +1,4 @@
+import { GRID_SPAN } from "../blocks/types";
 import { GridLayout, PageBlockPropsMap, PageBlockType, PAGE_BLOCK_TYPES } from "./types";
 
 export type BlockPresetDefinition<TType extends PageBlockType = PageBlockType> = {
@@ -116,7 +117,7 @@ const BLOCK_PRESET_LIST = [
       title: "Chart",
       size: "medium"
     },
-    layout: { colSpan: 20 }
+    layout: { colSpan: GRID_SPAN.half }
   }),
   preset({
     id: "kpi.default",
@@ -143,6 +144,8 @@ const BLOCK_PRESET_LIST = [
       title: "Correo",
       description: "Bandeja sincronizada por metadatos y cuerpo bajo demanda.",
       contactId: "",
+      readEnabled: true,
+      sendEnabled: true,
       folder: "INBOX",
       cacheSize: 50,
       sendSubjectTemplate: "Hola {{Nombre}}, seguimiento de candidatura en {{Empresa}}",

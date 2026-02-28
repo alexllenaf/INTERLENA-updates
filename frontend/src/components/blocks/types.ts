@@ -8,9 +8,8 @@ export const GRID_SPAN = {
   quarter: 15,
   kpi: 12,
   chartSmall: 15,
-  chartMedium: 20,
-  chartLarge: 30,
-  chartXLarge: 60,
+  chartMedium: 30,
+  chartLarge: 60,
   standardTable: 60,
   standardCalendar: 60,
   standardPipeline: 60
@@ -83,7 +82,7 @@ export type CalendarBlockData = {
   content: React.ReactNode;
 };
 
-export type ChartSize = "small" | "medium" | "large" | "xlarge";
+export type ChartSize = "small" | "medium" | "large";
 
 export type ChartBlockData = {
   title: string;

@@ -13,6 +13,7 @@ import {
   EmailFoldersListResult,
   EmailOAuthStartInput,
   EmailOAuthStartResult,
+  EmailReadStats,
   EmailMetadata,
   EmailMetadataInput,
   EmailMetadataSyncResult,
@@ -964,17 +965,32 @@ export async function listEmailMetadata(params: {
   contact_id: string;
   folder?: string;
   limit?: number;
+  start_date?: string;
+  refresh?: boolean;
+  signal?: AbortSignal;
 }): Promise<EmailMetadata[]> {
   const query = new URLSearchParams();
   query.set("contact_id", params.contact_id);
   if (params.folder) query.set("folder", params.folder);
   if (params.limit) query.set("limit", String(params.limit));
+  if (params.start_date) query.set("start_date", params.start_date);
+  if (typeof params.refresh === "boolean") query.set("refresh", params.refresh ? "true" : "false");
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  return request<EmailMetadata[]>(`/email/messages${suffix}`);
+  return request<EmailMetadata[]>(`/email/messages${suffix}`, {
+    signal: params.signal,
+  });
 }
 
-export async function getEmailBody(messageId: string): Promise<EmailBodyResult> {
-  return request<EmailBodyResult>(`/email/messages/${encodeURIComponent(messageId)}/body`);
+export async function getEmailBody(
+  messageId: string,
+  params?: {
+    full_content?: boolean;
+  }
+): Promise<EmailBodyResult> {
+  const query = new URLSearchParams();
+  if (params?.full_content) query.set("full_content", "true");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<EmailBodyResult>(`/email/messages/${encodeURIComponent(messageId)}/body${suffix}`);
 }
 
 export async function saveEmailBody(messageId: string, body: string): Promise<EmailBodyResult> {
@@ -1013,6 +1029,10 @@ export async function listEmailSendContacts(limit = 500): Promise<EmailSendConta
 
 export async function getEmailSendStats(): Promise<EmailSendStats> {
   return request<EmailSendStats>("/email/send/stats");
+}
+
+export async function getEmailReadStats(): Promise<EmailReadStats> {
+  return request<EmailReadStats>("/email/read/stats");
 }
 
 export async function sendEmailBatch(payload: {

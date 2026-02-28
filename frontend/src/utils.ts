@@ -5,18 +5,164 @@ export type DocumentLink = {
   href?: string;
 };
 
+type ParsedDateValue = {
+  date: string | null;
+  time: string | null;
+};
+
+type DateDisplayOptions = {
+  allowTime?: boolean;
+  emptyPlaceholder?: string;
+  invalidPlaceholder?: string;
+};
+
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/;
+const TIME_ONLY_PATTERN = /^(\d{2}):(\d{2})$/;
+const RANGE_SPLITTERS = ["\n", " -> ", " → ", " | ", "|", " to ", " a ", " / ", " - ", " — ", " – "];
+
+const formatDdMmYyyy = (value: string) => {
+  const match = DATE_ONLY_PATTERN.exec(value);
+  if (!match) return value;
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
+};
+
+const combineDateAndTime = (dateLabel: string, timeLabel: string) => {
+  if (dateLabel && timeLabel) return `${dateLabel}  ${timeLabel}`;
+  return dateLabel || timeLabel;
+};
+
+const parseDateValue = (raw?: string | null): ParsedDateValue | null => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const dateOnlyMatch = DATE_ONLY_PATTERN.exec(trimmed);
+  if (dateOnlyMatch) {
+    return {
+      date: `${dateOnlyMatch[1]}-${dateOnlyMatch[2]}-${dateOnlyMatch[3]}`,
+      time: null
+    };
+  }
+
+  const dateTimeMatch = DATE_TIME_PATTERN.exec(trimmed);
+  if (dateTimeMatch) {
+    return {
+      date: `${dateTimeMatch[1]}-${dateTimeMatch[2]}-${dateTimeMatch[3]}`,
+      time: `${dateTimeMatch[4]}:${dateTimeMatch[5]}`
+    };
+  }
+
+  const timeOnlyMatch = TIME_ONLY_PATTERN.exec(trimmed);
+  if (timeOnlyMatch) {
+    return {
+      date: null,
+      time: `${timeOnlyMatch[1]}:${timeOnlyMatch[2]}`
+    };
+  }
+
+  const normalizedDateTime = toDateTimeLocalValue(trimmed);
+  if (normalizedDateTime) {
+    const [date, time = "00:00"] = normalizedDateTime.split("T");
+    return { date, time };
+  }
+
+  const normalizedDate = toDateInputValue(trimmed);
+  if (normalizedDate) {
+    return { date: normalizedDate, time: null };
+  }
+
+  return null;
+};
+
+const splitRangeValue = (raw: string): [string, string | null] => {
+  const trimmed = raw.trim();
+  for (const splitter of RANGE_SPLITTERS) {
+    if (!trimmed.includes(splitter)) continue;
+    const parts = trimmed
+      .split(splitter)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length >= 2) return [parts[0], parts[1]];
+  }
+  return [trimmed, null];
+};
+
+const normalizeRangePoints = (value?: string | null) => {
+  if (!value) return null;
+  const [startRaw, endRaw] = splitRangeValue(value);
+  const start = parseDateValue(startRaw);
+  const end = parseDateValue(endRaw);
+  if (!start && !end) return null;
+
+  const normalizedStart = start ? { ...start } : { date: end?.date ?? null, time: null };
+  const normalizedEnd = end ? { ...end } : null;
+
+  if (normalizedStart.date === null && normalizedEnd?.date) {
+    normalizedStart.date = normalizedEnd.date;
+  }
+  if (normalizedEnd && normalizedEnd.date === null && normalizedStart.date) {
+    normalizedEnd.date = normalizedStart.date;
+  }
+
+  return { start: normalizedStart, end: normalizedEnd };
+};
+
+const isVisibleTime = (time?: string | null) => Boolean(time) && time !== "00:00";
+
+const formatPointLabel = (point: ParsedDateValue, showTime: boolean) => {
+  const dateLabel = point.date ? formatDdMmYyyy(point.date) : "";
+  const timeLabel = showTime && point.time ? point.time : "";
+  return combineDateAndTime(dateLabel, timeLabel);
+};
+
+export function formatDateDisplay(value?: string | null, options: DateDisplayOptions = {}): string {
+  const emptyPlaceholder = options.emptyPlaceholder ?? "—";
+  const invalidPlaceholder = options.invalidPlaceholder;
+  if (!value) return emptyPlaceholder;
+  const normalized = normalizeRangePoints(value);
+  if (!normalized) return invalidPlaceholder ?? String(value);
+
+  const allowTime = options.allowTime ?? true;
+  const { start, end } = normalized;
+
+  if (!end) {
+    return formatPointLabel(start, allowTime && isVisibleTime(start.time)) || emptyPlaceholder;
+  }
+
+  const sameDate = Boolean(start.date && end.date && start.date === end.date);
+  const hasAnyVisibleTime = allowTime && (isVisibleTime(start.time) || isVisibleTime(end.time));
+  const showStartTime = allowTime && Boolean(start.time) && (isVisibleTime(start.time) || (hasAnyVisibleTime && Boolean(end.time)));
+  const showEndTime = allowTime && Boolean(end.time) && (isVisibleTime(end.time) || (hasAnyVisibleTime && Boolean(start.time)));
+
+  if (sameDate) {
+    const dateLabel = start.date ? formatDdMmYyyy(start.date) : "";
+    if (showStartTime && showEndTime && start.time && end.time) {
+      if (start.time === end.time) return combineDateAndTime(dateLabel, start.time) || emptyPlaceholder;
+      return combineDateAndTime(dateLabel, `${start.time} a ${end.time}`) || emptyPlaceholder;
+    }
+    if (showStartTime && start.time) return combineDateAndTime(dateLabel, start.time) || emptyPlaceholder;
+    if (showEndTime && end.time) return combineDateAndTime(dateLabel, end.time) || emptyPlaceholder;
+    return dateLabel || emptyPlaceholder;
+  }
+
+  const startLabel = formatPointLabel(start, showStartTime);
+  const endLabel = formatPointLabel(end, showEndTime);
+  if (startLabel && endLabel) return `empieza: ${startLabel}\ntermina: ${endLabel}`;
+  return startLabel || endLabel || invalidPlaceholder || String(value);
+}
+
+export function formatDateOnlyDisplay(value?: string | null): string {
+  return formatDateDisplay(value, { allowTime: false });
+}
+
 export function formatDate(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString();
+  return formatDateDisplay(value);
 }
 
 export function formatDateTime(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return formatDateDisplay(value);
 }
 
 export function toDateInputValue(value?: string | null): string {
@@ -130,10 +276,7 @@ export function formatFileSize(bytes?: number | null): string {
 }
 
 export function formatUploadedAt(value?: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return formatDateDisplay(value);
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");

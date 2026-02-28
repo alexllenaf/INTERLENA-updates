@@ -318,7 +318,7 @@ export type EmailMetadataInput = {
 export type EmailMetadataSyncResult = {
   contact_id: string;
   folder: string;
-  cutoff_date: string;
+  cutoff_date?: string | null;
   last_synced_at?: string | null;
   inserted: number;
   skipped_existing: number;
@@ -389,6 +389,19 @@ export type EmailSendStats = {
   remaining_today: number;
   daily_limit: number;
   warning?: string | null;
+};
+
+export type EmailReadStats = {
+  connected?: boolean;
+  provider: string;
+  account_id: string;
+  downloaded_today_bytes: number;
+  remaining_today_bytes: number;
+  daily_limit_bytes: number;
+  used_percent: number;
+  tracked_by_app: boolean;
+  warning?: string | null;
+  limit_label?: string | null;
 };
 
 export type GoogleAccount = {

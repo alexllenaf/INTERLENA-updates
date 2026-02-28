@@ -10,10 +10,11 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+import { DateValueDisplay } from "../components/TableCells";
 import { BlockSlotResolver, PageBuilderPage } from "../components/pageBuilder";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
-import { averageOfferScore, followupStatus, formatDate, successRate } from "../utils";
+import { averageOfferScore, followupStatus, successRate } from "../utils";
 
 const DashboardPage: React.FC = () => {
   const { t } = useI18n();
@@ -226,7 +227,7 @@ const DashboardPage: React.FC = () => {
                   <td>{item.type}</td>
                   <td>{item.company}</td>
                   <td>{item.detail}</td>
-                  <td>{formatDate(item.date)}</td>
+                  <td><DateValueDisplay value={item.date} allowTime /></td>
                   <td>
                     <span className={`tag tag-${item.status}`}>{item.status}</span>
                   </td>
@@ -256,7 +257,7 @@ const DashboardPage: React.FC = () => {
                   <td>{app.company_name}</td>
                   <td>{app.position}</td>
                   <td>{app.stage}</td>
-                  <td>{formatDate(app.application_date)}</td>
+                  <td><DateValueDisplay value={app.application_date} allowTime /></td>
                 </tr>
               ))}
             </tbody>

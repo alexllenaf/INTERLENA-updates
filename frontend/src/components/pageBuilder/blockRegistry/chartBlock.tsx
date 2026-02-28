@@ -48,7 +48,13 @@ import {
   type EditableTableColumnKind,
   type PageBlockPropsMap
 } from "../types";
-import { chartSizeClass, createSlotContext } from "./shared";
+import {
+  chartSizeClass,
+  chartSizeColSpan,
+  chartSizeWidthLabel,
+  createSlotContext,
+  normalizeChartSize
+} from "./shared";
 import { SourceTablePreview } from "./sourceTablePreview";
 import { type BlockDefinition } from "./types";
 
@@ -76,6 +82,12 @@ const CHART_VISUAL_OPTIONS: Array<{ value: ChartVisualType; label: string }> = [
   { value: "area", label: "Area" },
   { value: "pie", label: "Circular" },
   { value: "timeline", label: "Timeline" }
+];
+
+const CHART_SIZE_OPTIONS: Array<{ value: ChartSize; label: string }> = [
+  { value: "small", label: "Pequeño" },
+  { value: "medium", label: "Medio" },
+  { value: "large", label: "Grande" }
 ];
 
 const CHART_METRIC_OPTIONS: ChartMetricOption[] = [
@@ -636,11 +648,13 @@ const buildTimelinePoints = ({
 };
 
 const renderChartPreview = ({
+  renderKey,
   chartType,
   metricOp,
   data,
   seriesColor
 }: {
+  renderKey: string;
   chartType: ChartVisualType;
   metricOp: ChartMetricOp;
   data: ChartPoint[];
@@ -654,7 +668,7 @@ const renderChartPreview = ({
 
   if (chartType === "pie") {
     return (
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer key={renderKey} width="100%" height="100%">
         <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
           <Tooltip formatter={tooltipFormatter} />
           <Legend />
@@ -670,7 +684,7 @@ const renderChartPreview = ({
 
   if (chartType === "line") {
     return (
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer key={renderKey} width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 20, left: 8, bottom: 36 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E0" />
           <XAxis dataKey="category" angle={-18} textAnchor="end" height={56} interval={0} />
@@ -684,7 +698,7 @@ const renderChartPreview = ({
 
   if (chartType === "area") {
     return (
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer key={renderKey} width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 8, right: 20, left: 8, bottom: 36 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E0" />
           <XAxis dataKey="category" angle={-18} textAnchor="end" height={56} interval={0} />
@@ -698,7 +712,7 @@ const renderChartPreview = ({
 
   if (chartType === "timeline") {
     return (
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer key={renderKey} width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 20, left: 8, bottom: 32 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E0" />
           <XAxis dataKey="category" tick={{ fontSize: 11 }} padding={{ left: 8, right: 8 }} />
@@ -711,7 +725,7 @@ const renderChartPreview = ({
   }
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer key={renderKey} width="100%" height="100%">
       <BarChart data={data} margin={{ top: 8, right: 20, left: 8, bottom: 36 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E0" />
         <XAxis dataKey="category" angle={-18} textAnchor="end" height={56} interval={0} />
@@ -731,7 +745,7 @@ const buildMetricOptions = (valueKind: EditableTableColumnKind): ChartMetricOpti
 
 export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
   type: "chart",
-  defaultLayout: { colSpan: 20 },
+  defaultLayout: { colSpan: chartSizeColSpan("medium") },
   createDefaultProps: () => ({
     title: "Chart",
     size: "medium",
@@ -739,7 +753,15 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
     metricOp: "count_rows",
     seriesColor: DEFAULT_CHART_SERIES_COLOR
   }),
-  component: ({ block, mode, patchBlockProps, updateBlockProps, resolveSlot, menuActions }) => {
+  component: ({
+    block,
+    mode,
+    patchBlockProps,
+    updateBlockProps,
+    patchBlockLayout,
+    resolveSlot,
+    menuActions
+  }) => {
     const { settings, applications } = useAppData();
     const [isConfigOpen, setIsConfigOpen] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
@@ -816,14 +838,51 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
     const linkedTableMissing = Boolean(linkedTableId && !linkedTableTarget);
     const chartTypeLabel =
       CHART_VISUAL_OPTIONS.find((option) => option.value === chartType)?.label || "Grafico";
+    const chartTitle = block.props.title || "Chart";
+    const chartSize = normalizeChartSize(block.props.size);
+    const chartSizeLabel =
+      CHART_SIZE_OPTIONS.find((option) => option.value === chartSize)?.label || "Medio";
+    const chartWidthLabel = chartSizeWidthLabel(chartSize);
+    const dataSourceModeLabel = linkedTableTarget ? "Automatico" : "Libre";
+    const tableHelpText = linkedTableTarget
+      ? `Usando ${linkedTableTarget.title} como origen.`
+      : "Sin tabla vinculada, el grafico usara el contenido conectado o quedara sin datos.";
+    const categoryHelpText = sourceCategoryColumn
+      ? `Agrupa los datos por ${sourceCategoryColumn}.`
+      : "Selecciona una tabla para ver las columnas disponibles.";
+    const metricHelpText = !tableSnapshot
+      ? "Vincula una tabla para habilitar el calculo por categorias."
+      : metricDef?.needsValueColumn
+        ? `La metrica utiliza ${sourceValueColumn || "una columna de valor"} para el calculo.`
+        : `Cuenta filas agrupadas por ${sourceCategoryColumn || "categoria"}.`;
+    const valueColumnHelpText = metricDef?.needsValueColumn
+      ? (sourceValueColumn
+        ? `Columna de valor activa: ${sourceValueColumn}.`
+        : "Selecciona una columna con datos numericos o compatibles.")
+      : "Esta metrica no necesita una columna de valor.";
+    const chartPointCountLabel = chartPoints.length === 1 ? "1 grupo" : `${chartPoints.length} grupos`;
+    const previewStatusLabel = chartPoints.length > 0 ? chartPointCountLabel : "Sin datos";
+    const chartRenderKey = [
+      block.id,
+      block.layout.colSpan,
+      block.layout.colStart || 0,
+      chartType,
+      metricOp
+    ].join(":");
     const chartPreview = chartPoints.length > 0
       ? renderChartPreview({
+          renderKey: chartRenderKey,
           chartType,
           metricOp,
           data: chartPoints,
           seriesColor
         })
       : null;
+
+    const setChartSize = (nextSize: ChartSize) => {
+      patchBlockProps({ size: nextSize });
+      patchBlockLayout({ colSpan: chartSizeColSpan(nextSize) });
+    };
 
     const setLinkedTable = (nextBlockId?: string | null) => {
       const nextTarget = nextBlockId
@@ -969,7 +1028,7 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
               aria-modal="true"
               onClick={() => setIsConfigOpen(false)}
             >
-              <div className="modal chart-config-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="modal block-config-modal" onClick={(event) => event.stopPropagation()}>
                 <header className="modal-header">
                   <div>
                     <h2>Configurar grafico</h2>
@@ -980,162 +1039,275 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
                   </button>
                 </header>
 
-                <div className="kpi-config-preview">
-                  <div className="kpi-config-preview-label">{block.props.title || "Chart"}</div>
-                  <div className="kpi-config-preview-value">{chartTypeLabel}</div>
-                  <div className="kpi-config-preview-meta">
-                    <span>{linkedTableTarget ? linkedTableTarget.title : "Sin tabla"}</span>
-                    <span>{metricDef?.label || "Metrica"}</span>
-                    <span>{sourceCategoryColumn || "Sin categoria"}</span>
-                    {metricDef?.needsValueColumn && <span>{sourceValueColumn || "Sin valor"}</span>}
-                  </div>
-                </div>
-
-                <div className="kpi-config-grid">
-                  <label className="field">
-                    Titulo
-                    <input
-                      value={block.props.title || ""}
-                      onChange={(event) => patchBlockProps({ title: event.target.value })}
-                      placeholder="Chart title"
-                    />
-                  </label>
-
-                  <label className="field">
-                    Tabla vinculada
-                    <select
-                      value={linkedTableId || ""}
-                      onChange={(event) => setLinkedTable(event.target.value || null)}
-                    >
-                      <option value="">Sin tabla</option>
-                      {tableTargets.map((target) => (
-                        <option key={target.blockId} value={target.blockId}>
-                          [{target.pageId}] {target.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    Tipo de grafico
-                    <select
-                      value={chartType}
-                      onChange={(event) =>
-                        patchBlockProps({ chartType: event.target.value as ChartVisualType })
-                      }
-                    >
-                      {CHART_VISUAL_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {chartType !== "pie" && (
-                    <label className="field chart-series-color-field">
-                      Color de serie
-                      <div className="chart-series-color-control">
-                        <span
-                          className="chart-series-color-icon"
-                          style={{ backgroundColor: seriesColor }}
-                          aria-hidden="true"
-                        />
-                        <input
-                          className="chart-series-color-input"
-                          type="color"
-                          value={seriesColor}
-                          onChange={(event) => patchBlockProps({ seriesColor: event.target.value })}
-                          aria-label="Elegir color de serie"
-                        />
-                        <span className="chart-series-color-value">{seriesColor.toUpperCase()}</span>
+                <div className="block-config-layout">
+                  <div className="block-config-main">
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Presentacion</h3>
+                          <p>Define el titulo, el tipo de grafico y el espacio que ocupara en la pagina.</p>
+                        </div>
+                        <span className="block-status-badge">{chartTypeLabel}</span>
                       </div>
-                    </label>
-                  )}
 
-                  <label className="field">
-                    Tamano
-                    <select
-                      value={block.props.size || "medium"}
-                      onChange={(event) => patchBlockProps({ size: event.target.value as ChartSize })}
-                    >
-                      <option value="small">Small</option>
-                      <option value="medium">Medium</option>
-                      <option value="large">Large</option>
-                      <option value="xlarge">XLarge</option>
-                    </select>
-                  </label>
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Titulo</span>
+                          <input
+                            value={block.props.title || ""}
+                            onChange={(event) => patchBlockProps({ title: event.target.value })}
+                            placeholder="Chart title"
+                          />
+                          <p className="block-field-hint">Titulo mostrado en la cabecera del bloque.</p>
+                        </label>
 
-                  <label className="field">
-                    Columna categoria
-                    <select
-                      value={sourceCategoryColumn}
-                      onChange={(event) => {
-                        const nextCategory = event.target.value;
-                        const nextCandidates =
-                          tableSnapshot?.columns.filter((column) => column !== nextCategory) || [];
-                        const nextValue = nextCandidates.includes(sourceValueColumn)
-                          ? sourceValueColumn
-                          : nextCandidates[0] || "";
-                        patchBlockProps({
-                          sourceCategoryColumn: nextCategory,
-                          sourceValueColumn: nextValue || undefined
-                        });
-                      }}
-                      disabled={!tableSnapshot}
-                    >
-                      {!tableSnapshot && <option value="">Sin columnas</option>}
-                      {tableSnapshot?.columns.map((column) => (
-                        <option key={column} value={column}>
-                          {column}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                        <label className="field">
+                          <span className="block-field-label">Tipo de grafico</span>
+                          <select
+                            value={chartType}
+                            onChange={(event) =>
+                              patchBlockProps({ chartType: event.target.value as ChartVisualType })
+                            }
+                          >
+                            {CHART_VISUAL_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">Elige la visualizacion que mejor cuenta la historia del dato.</p>
+                        </label>
 
-                  <label className="field">
-                    Metrica
-                    <select
-                      value={metricOp}
-                      onChange={(event) => patchBlockProps({ metricOp: event.target.value as ChartMetricOp })}
-                      disabled={!tableSnapshot}
-                    >
-                      {metricOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                        <label className="field">
+                          <span className="block-field-label">Tamano</span>
+                          <select
+                            value={chartSize}
+                            onChange={(event) => setChartSize(event.target.value as ChartSize)}
+                          >
+                            {CHART_SIZE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">
+                            Pequeno ocupa 1/4, medio 1/2 y grande usa todo el ancho.
+                          </p>
+                        </label>
 
-                  {metricDef?.needsValueColumn && (
-                    <label className="field">
-                      Columna valor
-                      <select
-                        value={sourceValueColumn}
-                        onChange={(event) => patchBlockProps({ sourceValueColumn: event.target.value })}
-                        disabled={!tableSnapshot || valueColumnCandidates.length === 0}
-                      >
-                        {valueColumnCandidates.length === 0 && <option value="">Sin columnas</option>}
-                        {valueColumnCandidates.map((column) => (
-                          <option key={column} value={column}>
-                            {column}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                        {chartType !== "pie" && (
+                          <label className="field chart-series-color-field">
+                            <span className="block-field-label">Color de serie</span>
+                            <div className="chart-series-color-control">
+                              <span
+                                className="chart-series-color-icon"
+                                style={{ backgroundColor: seriesColor }}
+                                aria-hidden="true"
+                              />
+                              <input
+                                className="chart-series-color-input"
+                                type="color"
+                                value={seriesColor}
+                                onChange={(event) => patchBlockProps({ seriesColor: event.target.value })}
+                                aria-label="Elegir color de serie"
+                              />
+                              <span className="chart-series-color-value">{seriesColor.toUpperCase()}</span>
+                            </div>
+                            <p className="block-field-hint">Color principal aplicado a la serie del grafico.</p>
+                          </label>
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Fuente de datos</h3>
+                          <p>Selecciona la tabla y la columna que actuara como categoria principal.</p>
+                        </div>
+                        <span className={`block-status-badge ${linkedTableTarget ? "ready" : "muted"}`}>
+                          {linkedTableTarget ? "Tabla conectada" : "Sin tabla"}
+                        </span>
+                      </div>
+
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Tabla vinculada</span>
+                          <select
+                            value={linkedTableId || ""}
+                            onChange={(event) => setLinkedTable(event.target.value || null)}
+                          >
+                            <option value="">Sin tabla</option>
+                            {tableTargets.map((target) => (
+                              <option key={target.blockId} value={target.blockId}>
+                                [{target.pageId}] {target.title}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">{tableHelpText}</p>
+                        </label>
+
+                        <label className="field">
+                          <span className="block-field-label">Columna categoria</span>
+                          <select
+                            value={sourceCategoryColumn}
+                            onChange={(event) => {
+                              const nextCategory = event.target.value;
+                              const nextCandidates =
+                                tableSnapshot?.columns.filter((column) => column !== nextCategory) || [];
+                              const nextValue = nextCandidates.includes(sourceValueColumn)
+                                ? sourceValueColumn
+                                : nextCandidates[0] || "";
+                              patchBlockProps({
+                                sourceCategoryColumn: nextCategory,
+                                sourceValueColumn: nextValue || undefined
+                              });
+                            }}
+                            disabled={!tableSnapshot}
+                          >
+                            {!tableSnapshot && <option value="">Sin columnas</option>}
+                            {tableSnapshot?.columns.map((column) => (
+                              <option key={column} value={column}>
+                                {column}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">{categoryHelpText}</p>
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Calculo</h3>
+                          <p>Define como se agregan los datos y, si hace falta, la columna de valor.</p>
+                        </div>
+                        <span className="block-status-badge">{metricDef?.label || "Metrica"}</span>
+                      </div>
+
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Metrica</span>
+                          <select
+                            value={metricOp}
+                            onChange={(event) => patchBlockProps({ metricOp: event.target.value as ChartMetricOp })}
+                            disabled={!tableSnapshot}
+                          >
+                            {metricOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">{metricHelpText}</p>
+                        </label>
+
+                        {metricDef?.needsValueColumn && (
+                          <label className="field">
+                            <span className="block-field-label">Columna valor</span>
+                            <select
+                              value={sourceValueColumn}
+                              onChange={(event) => patchBlockProps({ sourceValueColumn: event.target.value })}
+                              disabled={!tableSnapshot || valueColumnCandidates.length === 0}
+                            >
+                              {valueColumnCandidates.length === 0 && <option value="">Sin columnas</option>}
+                              {valueColumnCandidates.map((column) => (
+                                <option key={column} value={column}>
+                                  {column}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="block-field-hint">{valueColumnHelpText}</p>
+                          </label>
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Vista previa</h3>
+                          <p>Comprueba el resultado antes de cerrar la configuracion.</p>
+                        </div>
+                        <span className={`block-status-badge ${chartPoints.length > 0 ? "ready" : "muted"}`}>
+                          {previewStatusLabel}
+                        </span>
+                      </div>
+                      <div className="chart-config-shell">
+                        {chartPreview || <div className="empty">Sin datos suficientes para este grafico.</div>}
+                      </div>
+                    </section>
+                  </div>
+
+                  <aside className="block-config-sidebar">
+                    <div className="block-config-preview">
+                      <div className="block-config-preview-label">{chartTitle}</div>
+                      <div className="block-config-preview-value">{chartTypeLabel}</div>
+                      <div className="block-config-preview-meta">
+                        <span>{linkedTableTarget ? linkedTableTarget.title : "Sin tabla"}</span>
+                        <span>{metricDef?.label || "Metrica"}</span>
+                        <span>{sourceCategoryColumn || "Sin categoria"}</span>
+                        {metricDef?.needsValueColumn && <span>{sourceValueColumn || "Sin valor"}</span>}
+                      </div>
+                    </div>
+
+                    <section className="block-config-sidebar-card">
+                      <div className="block-config-section-head compact">
+                        <div>
+                          <h3>Resumen</h3>
+                          <p>Estado actual de la configuracion del grafico.</p>
+                        </div>
+                        <span className={`block-status-badge ${linkedTableTarget ? "ready" : "muted"}`}>
+                          {dataSourceModeLabel}
+                        </span>
+                      </div>
+
+                      <div className="block-summary-list">
+                        <div className="block-summary-row">
+                          <span>Tipo</span>
+                          <strong>{chartTypeLabel}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Tamano</span>
+                          <strong>{`${chartSizeLabel} / ${chartWidthLabel}`}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Fuente</span>
+                          <strong>{linkedTableTarget?.title || "Sin tabla"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Categoria</span>
+                          <strong>{sourceCategoryColumn || "Sin categoria"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Metrica</span>
+                          <strong>{metricDef?.label || "Sin metrica"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Valor</span>
+                          <strong>{metricDef?.needsValueColumn ? (sourceValueColumn || "Sin valor") : "No aplica"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Grupos</span>
+                          <strong>{chartPointCountLabel}</strong>
+                        </div>
+                      </div>
+
+                      {chartType !== "pie" && (
+                        <div className="chart-summary-color">
+                          <span
+                            className="chart-series-color-icon"
+                            style={{ backgroundColor: seriesColor }}
+                            aria-hidden="true"
+                          />
+                          <strong>{seriesColor.toUpperCase()}</strong>
+                          <span>Color principal</span>
+                        </div>
+                      )}
+                    </section>
+                  </aside>
                 </div>
-
-                <section className="kpi-source-preview">
-                  <div className="kpi-source-preview-head">
-                    <h3>Vista previa de grafico</h3>
-                    <p>{chartPoints.length} grupos</p>
-                  </div>
-                  <div className="chart-config-shell">
-                    {chartPreview || <div className="empty">Sin datos suficientes para este grafico.</div>}
-                  </div>
-                </section>
 
                 {tableSnapshot && <SourceTablePreview table={tableSnapshot} keyPrefix="chart-preview" />}
 

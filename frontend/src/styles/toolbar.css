@@ -110,6 +110,8 @@
 .tracker-search-leading {
   position: absolute;
   left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   color: var(--muted);
@@ -136,6 +138,8 @@
 .tracker-search-actions {
   position: absolute;
   right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -338,9 +342,14 @@
 }
 
 .todo-link-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
   width: 100%;
   max-width: none;
-  z-index: 40;
+  min-width: 100%;
+  z-index: 120;
 }
 
 .todo-link-select-menu .select-options {
@@ -518,4 +527,3 @@ button:disabled {
   border-color: rgba(43, 108, 176, 0.35);
   box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.12);
 }
-

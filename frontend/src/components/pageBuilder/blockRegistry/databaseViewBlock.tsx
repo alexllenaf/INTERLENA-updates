@@ -147,12 +147,22 @@ export const DATABASE_VIEW_BLOCK_DEFINITION: BlockDefinition<"databaseView"> = {
     viewId: "",
     emptyMessage: "No records for this view."
   }),
-  component: ({ block, mode, updateBlockProps, patchBlockProps, menuActions }) => (
+  component: ({
+    block,
+    mode,
+    updateBlockProps,
+    patchBlockProps,
+    updateBlockLayout,
+    patchBlockLayout,
+    menuActions
+  }) => (
     <DatabaseViewBlock
       block={block}
       mode={mode}
       updateBlockProps={updateBlockProps}
       patchBlockProps={patchBlockProps}
+      updateBlockLayout={updateBlockLayout}
+      patchBlockLayout={patchBlockLayout}
       menuActions={menuActions}
     />
   )

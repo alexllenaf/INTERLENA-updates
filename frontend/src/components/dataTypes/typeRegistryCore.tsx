@@ -5,7 +5,7 @@ import ContactsManagerModal from "../ContactsManagerModal";
 import ContactsEditor from "../ContactsEditor";
 import StarRating from "../StarRating";
 import DocumentsDropzone from "../DocumentsDropzone";
-import { DateCell, DateTimeCell, SelectCell, TextAreaCell, type SelectOption, TextCell } from "../TableCells";
+import { DateCell, DateTimeCell, DateValueDisplay, SelectCell, TextAreaCell, type SelectOption, TextCell } from "../TableCells";
 import {
   normalizeTodoStatus,
   TODO_STATUSES,
@@ -614,7 +614,11 @@ const baseDateRenderer = (args: ColumnTypeRenderArgs) =>
         value: args.rawValue,
         onCommit: (next: string) => args.onCommit(next || "")
       })
-    : React.createElement("input", { className: "cell-date", type: "date", value: args.rawValue, readOnly: true });
+    : React.createElement(DateValueDisplay, {
+        className: "cell-date",
+        value: args.rawValue,
+        allowTime: false
+      });
 
 const baseDateTimeRenderer = (args: ColumnTypeRenderArgs) =>
   args.canEdit
@@ -622,11 +626,10 @@ const baseDateTimeRenderer = (args: ColumnTypeRenderArgs) =>
         value: args.rawValue,
         onCommit: (next: string) => args.onCommit(next || "")
       })
-    : React.createElement("input", {
+    : React.createElement(DateValueDisplay, {
         className: "cell-datetime",
-        type: "datetime-local",
         value: args.rawValue,
-        readOnly: true
+        allowTime: true
       });
 
 type NumberTypeCellProps = {
@@ -765,11 +768,33 @@ type TodoItemsTypeCellProps = {
 
 const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, expanded = false, onCommit }) => {
   const [open, setOpen] = React.useState(false);
+  const editorRef = React.useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = React.useState({
     task: "",
     due_date: "",
     status: "Not started"
   });
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (editorRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
 
   const pendingCount = React.useMemo(
     () => items.filter((item) => normalizeTodoStatus(item.status) !== "Done").length,
@@ -815,7 +840,7 @@ const TodoItemsTypeCell: React.FC<TodoItemsTypeCellProps> = ({ items, canEdit, e
   };
 
   return (
-    <div className="todo-items-cell">
+    <div className="todo-items-cell" ref={editorRef}>
       {!expanded ? (
         <>
           <div className="todo-items-summary">

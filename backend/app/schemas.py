@@ -280,11 +280,11 @@ class EmailMetadataSyncIn(BaseModel):
 class EmailMetadataSyncOut(BaseModel):
     contact_id: str
     folder: str
-    cutoff_date: datetime
+    cutoff_date: Optional[datetime] = None
     last_synced_at: Optional[datetime] = None
     inserted: int
     skipped_existing: int
-    skipped_out_of_window: int
+    skipped_out_of_window: int = 0
 
 
 class EmailBodyUpsertIn(BaseModel):
@@ -385,6 +385,19 @@ class EmailSendStatsOut(BaseModel):
     remaining_today: int
     daily_limit: int
     warning: Optional[str] = None
+
+
+class EmailReadStatsOut(BaseModel):
+    connected: bool = False
+    provider: str
+    account_id: str
+    downloaded_today_bytes: int
+    remaining_today_bytes: int
+    daily_limit_bytes: int
+    used_percent: float
+    tracked_by_app: bool = True
+    warning: Optional[str] = None
+    limit_label: Optional[str] = None
 
 
 class EmailSendBatchOut(BaseModel):

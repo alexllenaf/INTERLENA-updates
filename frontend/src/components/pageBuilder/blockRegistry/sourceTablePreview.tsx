@@ -23,16 +23,16 @@ export const SourceTablePreview: React.FC<SourceTablePreviewProps> = ({
   const previewRows = table.rows.slice(0, maxRows);
 
   return (
-    <section className="kpi-source-preview">
-      <div className="kpi-source-preview-head">
+    <section className="block-source-preview">
+      <div className="block-source-preview-head">
         <h3>{title}</h3>
         <p>
           {table.rows.length} filas
           {table.rows.length > previewRows.length ? ` (mostrando ${previewRows.length})` : ""}
         </p>
       </div>
-      <div className="table-scroll kpi-source-preview-scroll">
-        <table className="table kpi-source-preview-table">
+      <div className="table-scroll block-source-preview-scroll">
+        <table className="table block-source-preview-table">
           <thead>
             <tr>
               {table.columns.map((column, columnIndex) => (
@@ -54,7 +54,7 @@ export const SourceTablePreview: React.FC<SourceTablePreviewProps> = ({
                     const cellValue = row[colIndex] || "";
                     return (
                       <td key={`${keyPrefix}-cell-${rowIndex}-${colIndex}`}>
-                        <span className="kpi-preview-cell" title={cellValue}>
+                        <span className="block-preview-cell" title={cellValue}>
                           {cellValue}
                         </span>
                       </td>

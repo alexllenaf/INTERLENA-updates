@@ -314,14 +314,25 @@ export const EditableTableToolbar: React.FC<{ toolbar: EditableTableToolbarConfi
   );
 };
 
-const chartSizeClass = (size: ChartSize): string => {
+const normalizeChartSize = (size: string): ChartSize => {
   switch (size) {
+    case "small":
+    case "medium":
+    case "large":
+      return size;
+    case "xlarge":
+      return "large";
+    default:
+      return "medium";
+  }
+};
+
+const chartSizeClass = (size: string): string => {
+  switch (normalizeChartSize(size)) {
     case "medium":
       return "chart-size-medium";
     case "large":
       return "chart-size-large";
-    case "xlarge":
-      return "chart-size-xlarge";
     default:
       return "chart-size-small";
   }

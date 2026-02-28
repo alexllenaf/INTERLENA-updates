@@ -57,6 +57,19 @@ export const persistPageConfigLocal = (pageId: string, pageConfig: PageConfig) =
   writeLocalPageConfig(pageId, pageConfig);
 };
 
+export const clearLocalPageConfig = (pageId: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    const all = readLocalPageConfigs();
+    if (!Object.prototype.hasOwnProperty.call(all, pageId)) return;
+    const next = { ...all };
+    delete next[pageId];
+    window.localStorage.setItem(PAGE_CONFIGS_LOCAL_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 const normalizeLayout = (raw: unknown, fallback: GridLayout): GridLayout => {
   if (!isRecord(raw)) return fallback;
   const colSpanRaw = Number(raw.colSpan);
@@ -116,7 +129,7 @@ export const normalizePageConfig = (pageId: string, raw: unknown, fallback: Page
         ? Math.max(1, Math.round(raw.version))
         : fallback.version || PAGE_CONFIG_VERSION,
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : fallback.updated_at,
-    blocks: blocks.length > 0 ? blocks : fallback.blocks
+    blocks
   };
 };
 

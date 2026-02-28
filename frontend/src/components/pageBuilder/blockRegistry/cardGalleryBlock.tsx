@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { getPageBlocks, resolvePageByLegacyKey, savePageBlocks } from "../../../api";
 import { useAppData } from "../../../state";
 import { type Application, type Settings } from "../../../types";
 import ExpandedFieldsSection, { type ExpandedFieldRow } from "../../expanded/ExpandedFieldsSection";
@@ -31,15 +32,19 @@ import {
   getBlockLink,
   patchBlockLink
 } from "../blockLinks";
+import { hasStoredPageConfig, normalizePageConfig, persistPageConfigLocal, readPageConfig } from "../pageConfigStore";
 import { resolveEditableTableModel } from "./editableTableBlock";
 import { createSlotContext, renderHeader } from "./shared";
+import { SourceTablePreview } from "./sourceTablePreview";
 import {
+  PAGE_CONFIG_VERSION,
   type CardGalleryItem,
   type CardGalleryCustomField,
   type CardGalleryManualCard,
   type EditableTableColumnKind,
   type EditableTableSelectOption,
-  type PageBlockPropsMap
+  type PageBlockPropsMap,
+  type PageConfig
 } from "../types";
 import { type BlockDefinition } from "./types";
 import {
@@ -705,6 +710,71 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
     const tableSnapshot = useMemo(
       () => resolveSnapshotForTarget(linkedTableTarget),
       [linkedTableTarget, resolveSnapshotForTarget]
+    );
+
+    const persistLinkedTableProps = useCallback(
+      async (
+        target: NonNullable<typeof linkedTableTarget>,
+        applyToProps: (
+          currentProps: PageBlockPropsMap["editableTable"]
+        ) => PageBlockPropsMap["editableTable"]
+      ) => {
+        const emptyPageConfig: PageConfig = {
+          id: target.pageId,
+          version: PAGE_CONFIG_VERSION,
+          blocks: []
+        };
+
+        try {
+          const resolved = await resolvePageByLegacyKey(target.pageId, true);
+          const payload = await getPageBlocks(resolved.id);
+          let foundCanonicalBlock = false;
+          const nextCanonicalBlocks = (payload.blocks || []).map((candidate) => {
+            if (candidate.id !== target.blockId) return candidate;
+            foundCanonicalBlock = true;
+            const currentProps = (isRecord(candidate.props) ? candidate.props : {}) as PageBlockPropsMap["editableTable"];
+            return {
+              ...candidate,
+              props: applyToProps(currentProps)
+            };
+          });
+          if (foundCanonicalBlock) {
+            await savePageBlocks(resolved.id, nextCanonicalBlocks);
+          }
+        } catch {
+          // Keep the shadow snapshot in sync below so edits are not lost.
+        }
+
+        if (!settings || !hasStoredPageConfig(settings, target.pageId)) return;
+        const currentPageConfig = readPageConfig(settings, target.pageId, emptyPageConfig);
+        let foundShadowBlock = false;
+        const nextBlocks = currentPageConfig.blocks.map((candidate) => {
+          if (candidate.id !== target.blockId) return candidate;
+          foundShadowBlock = true;
+          return {
+            ...candidate,
+            props: applyToProps(candidate.props as PageBlockPropsMap["editableTable"])
+          };
+        });
+        if (!foundShadowBlock) return;
+
+        const nextPageConfig = normalizePageConfig(
+          target.pageId,
+          {
+            ...currentPageConfig,
+            updated_at: new Date().toISOString(),
+            blocks: nextBlocks
+          },
+          emptyPageConfig
+        );
+        persistPageConfigLocal(target.pageId, nextPageConfig);
+        void saveSettings({
+          page_configs: {
+            [target.pageId]: nextPageConfig
+          }
+        });
+      },
+      [saveSettings, settings]
     );
 
     const isLinkedMode = Boolean(linkedTableTarget && tableSnapshot);
@@ -1689,65 +1759,31 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
           return;
         }
 
-        if (!settings || !isRecord(settings) || !isRecord(settings.page_configs)) return;
+        if (!linkedTableTarget) return;
 
-        const pages = settings.page_configs as Record<
-          string,
-          { blocks?: Array<{ id: string; props?: Record<string, unknown> }> }
-        >;
-
-        let targetPageId: string | null = null;
-        let targetBlock: { id: string; props?: Record<string, unknown> } | null = null;
-
-        for (const [pageId, pageConfig] of Object.entries(pages)) {
-          const found = (pageConfig.blocks || []).find((candidate) => candidate.id === linkedTableId) || null;
-          if (found) {
-            targetPageId = pageId;
-            targetBlock = found;
-            break;
-          }
-        }
-
-        if (!targetPageId || !targetBlock) return;
-
-        const linkedProps = (targetBlock.props || {}) as PageBlockPropsMap["editableTable"];
-        const model = resolveEditableTableModel(linkedProps, {
-          settings,
-          saveSettings
-        });
-
-        const nextRows = model.rows.map((row, idx) => {
-          if (idx !== rowIndex) return row;
-          const nextRow = [...row];
-          updateEntries.forEach(([fieldLabel, value]) => {
-            const colIndex = model.columns.indexOf(fieldLabel);
-            if (colIndex >= 0) {
-              nextRow[colIndex] = value;
-            }
+        void persistLinkedTableProps(linkedTableTarget, (currentProps) => {
+          const model = resolveEditableTableModel(currentProps, {
+            settings,
+            saveSettings
           });
-          return nextRow;
-        });
-
-        const nextPages = { ...pages };
-        const nextBlocks = (nextPages[targetPageId].blocks || []).map((candidate) => {
-          if (candidate.id !== linkedTableId) return candidate;
+          const nextRows = model.rows.map((row, idx) => {
+            if (idx !== rowIndex) return row;
+            const nextRow = [...row];
+            updateEntries.forEach(([fieldLabel, value]) => {
+              const colIndex = model.columns.indexOf(fieldLabel);
+              if (colIndex >= 0) {
+                nextRow[colIndex] = value;
+              }
+            });
+            return nextRow;
+          });
           return {
-            ...candidate,
-            props: {
-              ...candidate.props,
-              customRows: model.remapRowsForPersistence(nextRows)
-            }
+            ...currentProps,
+            customRows: model.remapRowsForPersistence(nextRows)
           };
         });
-
-        nextPages[targetPageId] = {
-          ...nextPages[targetPageId],
-          blocks: nextBlocks
-        };
-
-        void saveSettings({ ...settings, page_configs: nextPages });
       },
-      [applications, linkedTableId, linkedTableTarget, saveSettings, settings, tableSnapshot, updateApplication]
+      [applications, linkedTableTarget, persistLinkedTableProps, saveSettings, settings, tableSnapshot, updateApplication]
     );
 
     const updateLinkedSelectOptions = useCallback(
@@ -1801,68 +1837,37 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
           } as Partial<Settings>);
           return;
         }
-        if (!settings || !isRecord(settings) || !isRecord(settings.page_configs)) return;
-
-        const pages = settings.page_configs as Record<
-          string,
-          { blocks?: Array<{ id: string; props?: Record<string, unknown> }> }
-        >;
-
-        let targetPageId: string | null = null;
-        let targetBlock: { id: string; props?: Record<string, unknown> } | null = null;
-
-        for (const [pageId, pageConfig] of Object.entries(pages)) {
-          const found = (pageConfig.blocks || []).find((candidate) => candidate.id === linkedTableId) || null;
-          if (found) {
-            targetPageId = pageId;
-            targetBlock = found;
-            break;
-          }
-        }
-
-        if (!targetPageId || !targetBlock) return;
-
-        const linkedProps = (targetBlock.props || {}) as PageBlockPropsMap["editableTable"];
-        if (linkedProps.schemaRef) return;
-
-        const model = resolveEditableTableModel(linkedProps, {
-          settings,
-          saveSettings
-        });
-        if (!model.columns.includes(columnLabel)) return;
-
         const normalized = normalizeSelectOptions(nextOptions || []);
         setLinkedSelectOptionsOverrides((prev) => ({
           ...prev,
           [columnLabel]: normalized
         }));
-        const nextByColumn = { ...(linkedProps.customSelectOptions as Record<string, EditableTableSelectOption[]> || {}) };
-        if (normalized.length > 0) {
-          nextByColumn[columnLabel] = normalized;
-        } else {
-          delete nextByColumn[columnLabel];
-        }
+        if (!linkedTableTarget) return;
 
-        const nextPages = { ...pages };
-        const nextBlocks = (nextPages[targetPageId].blocks || []).map((candidate) => {
-          if (candidate.id !== linkedTableId) return candidate;
+        void persistLinkedTableProps(linkedTableTarget, (currentProps) => {
+          if (currentProps.schemaRef) return currentProps;
+          const model = resolveEditableTableModel(currentProps, {
+            settings,
+            saveSettings
+          });
+          if (!model.columns.includes(columnLabel)) return currentProps;
+
+          const nextByColumn = {
+            ...((currentProps.customSelectOptions as Record<string, EditableTableSelectOption[]>) || {})
+          };
+          if (normalized.length > 0) {
+            nextByColumn[columnLabel] = normalized;
+          } else {
+            delete nextByColumn[columnLabel];
+          }
+
           return {
-            ...candidate,
-            props: {
-              ...candidate.props,
-              customSelectOptions: Object.keys(nextByColumn).length > 0 ? nextByColumn : undefined
-            }
+            ...currentProps,
+            customSelectOptions: Object.keys(nextByColumn).length > 0 ? nextByColumn : undefined
           };
         });
-
-        nextPages[targetPageId] = {
-          ...nextPages[targetPageId],
-          blocks: nextBlocks
-        };
-
-        void saveSettings({ ...settings, page_configs: nextPages });
       },
-      [linkedTableId, linkedTableTarget, saveSettings, settings, tableSnapshot]
+      [linkedTableTarget, persistLinkedTableProps, saveSettings, settings, tableSnapshot]
     );
 
     const expandedEditorRows = useMemo<ExpandedFieldRow[]>(() => {
@@ -2410,7 +2415,7 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
                 <header className="modal-header">
                   <div>
                     <h2>Vincular tabla editable</h2>
-                    <p>Selecciona una tabla para vincular la galería.</p>
+                    <p>Selecciona una tabla para usarla como fuente del pipeline.</p>
                   </div>
                   <button className="ghost" type="button" onClick={closeLinkPicker} aria-label="Close">
                     ×
@@ -2471,6 +2476,11 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
                       )}
                     </div>
                   </div>
+                  {tableSnapshot ? (
+                    <SourceTablePreview table={tableSnapshot} keyPrefix="card-gallery-link-preview" />
+                  ) : (
+                    <p className="todo-link-preview-empty">Selecciona una tabla para ver la vista previa.</p>
+                  )}
                   {linkedTableId && !linkedTableTarget && (
                     <p className="kpi-edit-hint">La tabla vinculada ya no existe. Selecciona otra.</p>
                   )}

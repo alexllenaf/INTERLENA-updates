@@ -6,13 +6,13 @@ from typing import Iterable
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from .config import get_settings
-from .models import Application, Base, EmailMessage, EmailSendLog, EmailSyncCursor, Setting, View
+from .models import Application, Base, EmailMessage, EmailReadLog, EmailSendLog, EmailSyncCursor, Setting, View
 
 settings = get_settings()
 
@@ -23,7 +23,7 @@ def _is_sqlite(url: str) -> bool:
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False} if _is_sqlite(settings.database_url) else {},
+    connect_args={"check_same_thread": False, "timeout": 30} if _is_sqlite(settings.database_url) else {},
 )
 
 if _is_sqlite(settings.database_url):
@@ -32,6 +32,16 @@ if _is_sqlite(settings.database_url):
         Path(url.database).parent.mkdir(parents=True, exist_ok=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+if _is_sqlite(settings.database_url):
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout = 30000")
+        cursor.close()
 
 
 def get_db():
@@ -121,6 +131,7 @@ def init_db() -> None:
             EmailMessage.__table__,
             EmailSyncCursor.__table__,
             EmailSendLog.__table__,
+            EmailReadLog.__table__,
         ],
     )
     _ensure_columns(engine, "applications", Application.__table__.columns)
@@ -129,6 +140,7 @@ def init_db() -> None:
     _ensure_columns(engine, "email_messages", EmailMessage.__table__.columns)
     _ensure_columns(engine, "email_sync_cursors", EmailSyncCursor.__table__.columns)
     _ensure_columns(engine, "email_send_logs", EmailSendLog.__table__.columns)
+    _ensure_columns(engine, "email_read_logs", EmailReadLog.__table__.columns)
     _ensure_indexes(engine)
     _backfill_application_ids(engine)
     _backfill_defaults(engine)

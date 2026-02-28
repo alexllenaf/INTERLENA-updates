@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { buildHighlightChunks } from "../features/tracker/highlight";
-import { toDateInputValue, toDateTimeLocalValue } from "../utils";
+import { formatDateDisplay, formatDateOnlyDisplay, toDateInputValue, toDateTimeLocalValue } from "../utils";
 
 type TextCellProps = {
   value?: string | null;
@@ -166,6 +166,12 @@ type DatePopoverProps = {
   inputClassName: string;
 };
 
+type DateValueDisplayProps = {
+  value?: string | null;
+  allowTime: boolean;
+  className?: string;
+};
+
 const DATE_WEEKDAYS = ["do", "lu", "ma", "mi", "ju", "vi", "sa"];
 
 const parseDateParts = (value?: string | null) => {
@@ -180,6 +186,20 @@ const parseDateParts = (value?: string | null) => {
 const formatDateInput = (value?: string | null) => toDateInputValue(value);
 
 const formatDateTimeInput = (value?: string | null) => toDateTimeLocalValue(value);
+
+const resolveDateDisplayValue = (value: string | null | undefined, allowTime: boolean) =>
+  allowTime ? formatDateDisplay(value) : formatDateOnlyDisplay(value);
+
+export const DateValueDisplay: React.FC<DateValueDisplayProps> = ({ value, allowTime, className }) => {
+  const displayValue = resolveDateDisplayValue(value, allowTime);
+  const isEmpty = displayValue === "—";
+
+  return (
+    <span className={[className, "cell-date-display", isEmpty ? "cell-date-placeholder" : ""].filter(Boolean).join(" ")}>
+      {displayValue}
+    </span>
+  );
+};
 
 const buildMonthGrid = (year: number, monthIndex: number) => {
   const first = new Date(year, monthIndex, 1);
@@ -219,9 +239,11 @@ const DatePopover: React.FC<DatePopoverProps> = ({
   const [draftTime, setDraftTime] = useState("00:00");
   const [draftEndDate, setDraftEndDate] = useState("");
   const [draftEndTime, setDraftEndTime] = useState("00:00");
-  const triggerRef = useRef<HTMLInputElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState({ top: 0, left: 0 });
+  const displayValue = resolveDateDisplayValue(value, allowTime);
+  const isEmpty = displayValue === "—";
 
   useEffect(() => {
     setDraftDate(formatDateInput(value));
@@ -298,17 +320,21 @@ const DatePopover: React.FC<DatePopoverProps> = ({
 
   return (
     <div className="date-popover-anchor">
-      <input
+      <button
         ref={triggerRef}
-        className={inputClassName}
-        value={allowTime ? formatDateTimeInput(value) : formatDateInput(value)}
+        type="button"
+        className={[inputClassName, "cell-date-display", "cell-date-trigger", isEmpty ? "cell-date-placeholder" : ""]
+          .filter(Boolean)
+          .join(" ")}
         onClick={() => {
           if (!canEdit) return;
           setOpen(true);
         }}
-        readOnly
-        placeholder="—"
-      />
+        disabled={!canEdit}
+        aria-haspopup={canEdit ? "dialog" : undefined}
+      >
+        {displayValue}
+      </button>
       {open &&
         typeof document !== "undefined" &&
         createPortal(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import secrets
 import time
+from datetime import date, datetime, time as time_of_day
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,11 +18,13 @@ from ..crud import (
     upsert_email_body_once,
 )
 from ..db import get_db
+from ..models import EmailMessage
 from ..settings_store import get_settings as load_settings, save_settings
 from ..schemas import (
     EmailBodyOut,
     EmailConnectionTestIn,
     EmailConnectionTestOut,
+    EmailReadStatsOut,
     EmailSendBatchIn,
     EmailSendBatchOut,
     EmailSendContactOut,
@@ -37,7 +40,9 @@ from ..schemas import (
 from ..services.emails import (
     build_oauth_authorization_url,
     exchange_oauth_authorization_code,
+    get_email_read_stats,
     get_email_send_stats,
+    list_email_metadata_from_provider,
     list_email_provider_folders,
     list_tracker_contacts_for_email,
     send_gmail_campaign,
@@ -224,6 +229,13 @@ def get_send_stats_api(db: Session = Depends(get_db)) -> EmailSendStatsOut:
     return EmailSendStatsOut(connected=True, **data)
 
 
+@router.get("/read/stats", response_model=EmailReadStatsOut)
+def get_read_stats_api(db: Session = Depends(get_db)) -> EmailReadStatsOut:
+    if not _is_read_enabled(db):
+        raise HTTPException(status_code=501, detail=_READ_PARKED_MESSAGE)
+    return EmailReadStatsOut(**get_email_read_stats(db))
+
+
 @router.post("/send/batch", response_model=EmailSendBatchOut)
 def send_batch_api(payload: EmailSendBatchIn, db: Session = Depends(get_db)) -> EmailSendBatchOut:
     result = send_gmail_campaign(
@@ -272,12 +284,33 @@ def sync_metadata_api(payload: EmailMetadataSyncIn, db: Session = Depends(get_db
 def list_messages_api(
     contact_id: str = Query(...),
     folder: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=500),
+    limit: Optional[int] = Query(None, ge=1, le=5000),
+    start_date: Optional[date] = Query(None),
+    refresh: bool = Query(True),
     db: Session = Depends(get_db),
 ) -> List[EmailMetadataOut]:
     if not _is_read_enabled(db):
         raise HTTPException(status_code=501, detail=_READ_PARKED_MESSAGE)
-    rows = list_email_metadata(db, contact_id=contact_id, folder=folder, limit=limit)
+    start_at = datetime.combine(start_date, time_of_day.min) if start_date else None
+    rows = list_email_metadata(db, contact_id=contact_id, folder=folder, limit=limit, start_date=start_at)
+    if refresh:
+        ok, message, provider_rows = list_email_metadata_from_provider(
+            db,
+            contact_email=contact_id,
+            folder=folder,
+            limit=limit,
+            start_date=start_at,
+        )
+        if ok and provider_rows:
+            sync_email_metadata(
+                db,
+                contact_id=contact_id,
+                folder=folder or "ALL",
+                messages=provider_rows,
+            )
+            rows = list_email_metadata(db, contact_id=contact_id, folder=folder, limit=limit, start_date=start_at)
+        elif not ok and not rows:
+            raise HTTPException(status_code=502, detail=message)
     return [
         EmailMetadataOut(
             message_id=row.message_id,
@@ -295,16 +328,23 @@ def list_messages_api(
 
 
 @router.get("/messages/{message_id}/body", response_model=EmailBodyOut)
-def get_message_body_api(message_id: str, db: Session = Depends(get_db)) -> EmailBodyOut:
+def get_message_body_api(
+    message_id: str,
+    full_content: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> EmailBodyOut:
     if not _is_read_enabled(db):
         raise HTTPException(status_code=501, detail=_READ_PARKED_MESSAGE)
-    body = get_email_body(db, message_id)
+    body = get_email_body(db, message_id, full_content=full_content)
     if body is not None:
         return EmailBodyOut(message_id=message_id, body=body, cached=True)
 
-    fetched = fetch_and_cache_email_body(db, message_id)
+    fetched = fetch_and_cache_email_body(db, message_id, full_content=full_content)
     if not fetched:
-        raise HTTPException(status_code=404, detail="Email body not available")
+        row = db.get(EmailMessage, message_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Email message not found")
+        return EmailBodyOut(message_id=message_id, body="", cached=False)
     return EmailBodyOut(**fetched)
 
 

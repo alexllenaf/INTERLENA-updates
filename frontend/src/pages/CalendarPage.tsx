@@ -36,7 +36,7 @@ import {
   getBlockLink
 } from "../components/pageBuilder/blockLinks";
 import StarRating from "../components/StarRating";
-import { DateCell, DateTimeCell, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
+import { DateCell, DateTimeCell, DateValueDisplay, SelectCell, type SelectOption, TextCell } from "../components/TableCells";
 import TrackerSearchBar from "../components/tracker/TrackerSearchBar";
 import { useI18n } from "../i18n";
 import {
@@ -52,7 +52,6 @@ import { useAppData } from "../state";
 import { Application, DocumentFile, TodoItem } from "../types";
 import {
   escapeIcsText,
-  formatDate,
   formatFileSize,
   formatIcsDate,
   formatIcsDateTime,
@@ -1911,7 +1910,7 @@ const CalendarPage: React.FC = () => {
                     <td>{item.type}</td>
                     <td>{item.company}</td>
                     <td>{item.detail}</td>
-                    <td>{formatDate(item.date)}</td>
+                    <td><DateValueDisplay value={item.date} allowTime /></td>
                     <td>
                       <span className={`tag tag-${item.status}`}>{item.status}</span>
                     </td>

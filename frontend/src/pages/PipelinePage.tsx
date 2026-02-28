@@ -19,7 +19,7 @@ import {
 import { type EditableTableColumnKind } from "../components/pageBuilder/types";
 import { useI18n } from "../i18n";
 import { useAppData } from "../state";
-import { type SelectOption } from "../components/TableCells";
+import { DateValueDisplay, type SelectOption } from "../components/TableCells";
 import ExpandedFieldsSection, { type ExpandedFieldRow } from "../components/expanded/ExpandedFieldsSection";
 import TypologyFieldControl from "../components/expanded/TypologyFieldControl";
 import { deleteDocument, documentDownloadUrl, openExternal, uploadDocuments } from "../api";
@@ -31,7 +31,7 @@ import {
   type PipelineCardConfig,
   type Settings
 } from "../types";
-import { followupStatus, formatDateTime } from "../utils";
+import { followupStatus } from "../utils";
 import {
   TRACKER_BASE_COLUMN_ORDER,
   TRACKER_COLUMN_LABELS,
@@ -484,12 +484,14 @@ const buildPipelineGroupingConfig = (
   const linkedTableTarget = linkedTableId
     ? tableTargets.find((target) => target.blockId === linkedTableId) || null
     : null;
+  let hasLinkedSourceOverride = false;
 
   if (linkedTableTarget && sourceColumn && isTrackerSourceTarget(linkedTableTarget)) {
     const projection = buildTrackerColumnProjection(settings, linkedTableTarget.props);
     const resolvedKey = projection.labelToKey[sourceColumn];
     if (resolvedKey && projection.kindByKey[resolvedKey] === "select") {
       applySourceVisuals(resolvedKey);
+      hasLinkedSourceOverride = true;
     }
   }
 
@@ -500,7 +502,7 @@ const buildPipelineGroupingConfig = (
     }
   });
 
-  if (preferredSourceKey && selectableKeys.has(preferredSourceKey)) {
+  if (!hasLinkedSourceOverride && preferredSourceKey && selectableKeys.has(preferredSourceKey)) {
     applySourceVisuals(preferredSourceKey);
   }
 
@@ -977,7 +979,7 @@ const PipelinePage: React.FC = () => {
       }
       if (field.kind === "date") {
         const value = typeof raw === "string" ? raw : raw ? String(raw) : "";
-        return <span>{formatDateTime(value)}</span>;
+        return <DateValueDisplay value={value} allowTime />;
       }
       if (field.kind === "contacts") {
         if (Array.isArray(raw)) {

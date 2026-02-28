@@ -45,6 +45,8 @@ from .oauth import (
 # --- imap (IMAP connection, folders, body fetch) ---
 from .imap import (
     fetch_email_body_from_provider,
+    get_email_read_stats,
+    list_email_metadata_from_provider,
     list_email_provider_folders,
     test_email_provider_connection,
 )
@@ -98,6 +100,8 @@ __all__ = [
     "store_google_send_tokens_secure",
     # imap
     "fetch_email_body_from_provider",
+    "get_email_read_stats",
+    "list_email_metadata_from_provider",
     "list_email_provider_folders",
     "test_email_provider_connection",
     # sending

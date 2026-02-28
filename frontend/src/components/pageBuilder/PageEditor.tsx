@@ -511,8 +511,10 @@ const PageEditor: React.FC<Props> = ({
   const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const pageConfigRef = useRef(pageConfig);
   const dragRef = useRef<DragState | null>(null);
   const droppedRef = useRef(false);
+  pageConfigRef.current = pageConfig;
   dragRef.current = drag;
 
   const dragPreview = useMemo(() => computeDragPreview(pageConfig, drag), [pageConfig, drag]);
@@ -702,14 +704,29 @@ const PageEditor: React.FC<Props> = ({
   }, [drag?.active]);
 
   const updateBlocks = (nextBlocks: PageBlockConfig[]) => {
-    onChange(withTimestamp(pageConfig, nextBlocks));
+    const currentConfig = pageConfigRef.current;
+    const nextConfig = withTimestamp(currentConfig, nextBlocks);
+    pageConfigRef.current = nextConfig;
+    onChange(nextConfig);
   };
 
   const handlePropsUpdate = (blockId: string, nextProps: Record<string, unknown>) => {
-    const nextBlocks = pageConfig.blocks.map((block) =>
+    const nextBlocks = pageConfigRef.current.blocks.map((block) =>
       block.id === blockId ? ({ ...block, props: nextProps } as PageBlockConfig) : block
     );
     updateBlocks(nextBlocks);
+  };
+
+  const handleLayoutUpdate = (blockId: string, nextLayout: GridLayout) => {
+    const nextBlocks = pageConfigRef.current.blocks.map((block) =>
+      block.id === blockId
+        ? normalizeBlockLayoutToSpanSlots({
+            ...block,
+            layout: nextLayout
+          })
+        : block
+    );
+    updateBlocks(compactBlocks(nextBlocks));
   };
 
   const handleDuplicate = (block: PageBlockConfig) => {
@@ -1004,6 +1021,7 @@ const PageEditor: React.FC<Props> = ({
         resolveBlockProps={resolveBlockProps}
         resolveBlockMenuActions={resolveMenuActions}
         onUpdateBlockProps={handlePropsUpdate}
+        onUpdateBlockLayout={handleLayoutUpdate}
         hiddenBlockIds={hiddenBlockIds}
         layoutOverrides={dragPreview?.layoutOverrides}
         extraItems={extraItems}

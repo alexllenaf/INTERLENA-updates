@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import Application, EmailMessage, EmailSyncCursor, View
@@ -20,6 +21,8 @@ from .utils import (
     properties_to_json,
     validate_row,
 )
+
+FULL_CONTENT_BODY_MARKER = "<!-- email-read-mode:full -->"
 
 
 def list_applications(
@@ -252,64 +255,87 @@ def sync_email_metadata(
     messages: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     now = datetime.utcnow()
-    cutoff_date = (now - timedelta(days=180)).replace(tzinfo=None)
 
     inserted = 0
     skipped_existing = 0
-    skipped_out_of_window = 0
-    max_seen_date: Optional[datetime] = None
+    max_seen_by_folder: Dict[str, datetime] = {}
+    seen_message_ids: set[str] = set()
 
     for item in messages:
+        message_id = str(item.get("message_id") or "").strip()
+        if not message_id:
+            continue
+        if message_id in seen_message_ids:
+            skipped_existing += 1
+            continue
+        seen_message_ids.add(message_id)
+
         message_date = item.get("date")
         if not isinstance(message_date, datetime):
             continue
         if message_date.tzinfo is not None:
             message_date = message_date.replace(tzinfo=None)
-        if message_date < cutoff_date:
-            skipped_out_of_window += 1
-            continue
+        item_folder = str(item.get("folder") or folder).strip() or folder
+        current_folder_max = max_seen_by_folder.get(item_folder)
+        if current_folder_max is None or message_date > current_folder_max:
+            max_seen_by_folder[item_folder] = message_date
 
-        existing = db.get(EmailMessage, item.get("message_id"))
+        existing = db.get(EmailMessage, message_id)
         if existing:
             skipped_existing += 1
             continue
 
-        db.add(
-            EmailMessage(
-                message_id=item.get("message_id"),
-                contact_id=contact_id,
-                from_address=item.get("from_address") or "",
-                to_address=item.get("to_address") or "",
-                subject=item.get("subject") or "",
-                date=message_date,
-                is_read=bool(item.get("is_read")),
-                folder=item.get("folder") or folder,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        inserted += 1
-        if max_seen_date is None or message_date > max_seen_date:
-            max_seen_date = message_date
-
-    cursor = (
-        db.query(EmailSyncCursor)
-        .filter(EmailSyncCursor.contact_id == contact_id, EmailSyncCursor.folder == folder)
-        .first()
-    )
-
-    if max_seen_date is not None:
-        if cursor:
-            if max_seen_date > cursor.last_synced_at:
-                cursor.last_synced_at = max_seen_date
-        else:
-            db.add(
-                EmailSyncCursor(
-                    contact_id=contact_id,
-                    folder=folder,
-                    last_synced_at=max_seen_date,
+        try:
+            with db.begin_nested():
+                db.add(
+                    EmailMessage(
+                        message_id=message_id,
+                        contact_id=contact_id,
+                        from_address=item.get("from_address") or "",
+                        to_address=item.get("to_address") or "",
+                        subject=item.get("subject") or "",
+                        date=message_date,
+                        is_read=bool(item.get("is_read")),
+                        folder=item_folder,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
+                db.flush()
+        except IntegrityError:
+            skipped_existing += 1
+            continue
+
+        inserted += 1
+
+    for cursor_folder, cursor_date in max_seen_by_folder.items():
+        try:
+            with db.begin_nested():
+                cursor = (
+                    db.query(EmailSyncCursor)
+                    .filter(EmailSyncCursor.contact_id == contact_id, EmailSyncCursor.folder == cursor_folder)
+                    .first()
+                )
+                if cursor:
+                    if cursor.last_synced_at is None or cursor_date > cursor.last_synced_at:
+                        cursor.last_synced_at = cursor_date
+                else:
+                    db.add(
+                        EmailSyncCursor(
+                            contact_id=contact_id,
+                            folder=cursor_folder,
+                            last_synced_at=cursor_date,
+                        )
+                    )
+                db.flush()
+        except IntegrityError:
+            cursor = (
+                db.query(EmailSyncCursor)
+                .filter(EmailSyncCursor.contact_id == contact_id, EmailSyncCursor.folder == cursor_folder)
+                .first()
             )
+            if cursor and (cursor.last_synced_at is None or cursor_date > cursor.last_synced_at):
+                cursor.last_synced_at = cursor_date
 
     db.commit()
 
@@ -322,11 +348,11 @@ def sync_email_metadata(
     return {
         "contact_id": contact_id,
         "folder": folder,
-        "cutoff_date": cutoff_date,
+        "cutoff_date": None,
         "last_synced_at": cursor.last_synced_at if cursor else None,
         "inserted": inserted,
         "skipped_existing": skipped_existing,
-        "skipped_out_of_window": skipped_out_of_window,
+        "skipped_out_of_window": 0,
     }
 
 
@@ -334,17 +360,25 @@ def list_email_metadata(
     db: Session,
     contact_id: str,
     folder: Optional[str] = None,
-    limit: int = 200,
+    limit: Optional[int] = 200,
+    start_date: Optional[datetime] = None,
 ) -> List[EmailMessage]:
     query = db.query(EmailMessage).filter(EmailMessage.contact_id == contact_id)
     if folder:
         query = query.filter(EmailMessage.folder == folder)
-    return query.order_by(EmailMessage.date.desc(), EmailMessage.message_id.desc()).limit(max(1, min(limit, 500))).all()
+    if start_date is not None:
+        query = query.filter(EmailMessage.date >= start_date)
+    query = query.order_by(EmailMessage.date.desc(), EmailMessage.message_id.desc())
+    if limit is not None:
+        query = query.limit(max(1, min(limit, 5000)))
+    return query.all()
 
 
-def get_email_body(db: Session, message_id: str) -> Optional[str]:
+def get_email_body(db: Session, message_id: str, full_content: bool = False) -> Optional[str]:
     row = db.get(EmailMessage, message_id)
     if not row or not row.body:
+        return None
+    if full_content and FULL_CONTENT_BODY_MARKER not in str(row.body or ""):
         return None
     return row.body
 
@@ -365,14 +399,14 @@ def upsert_email_body_once(db: Session, message_id: str, body: str) -> Dict[str,
     return {"message_id": row.message_id, "body": row.body or "", "cached": False}
 
 
-def fetch_and_cache_email_body(db: Session, message_id: str) -> Optional[Dict[str, Any]]:
+def fetch_and_cache_email_body(db: Session, message_id: str, full_content: bool = False) -> Optional[Dict[str, Any]]:
     row = db.get(EmailMessage, message_id)
     if not row:
         return None
-    if row.body:
+    if row.body and (not full_content or FULL_CONTENT_BODY_MARKER in str(row.body or "")):
         return {"message_id": row.message_id, "body": row.body, "cached": True}
 
-    fetched = fetch_email_body_from_provider(db, row)
+    fetched = fetch_email_body_from_provider(db, row, full_content=full_content)
     if not fetched:
         return None
 

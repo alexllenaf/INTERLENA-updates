@@ -23,6 +23,7 @@ from .tokens import (
     _save_email_sync_config,
     _save_token_secure,
     resolve_oauth_tokens,
+    store_oauth_tokens_secure,
 )
 
 # ---------------------------------------------------------------------------
@@ -121,11 +122,11 @@ def exchange_google_code_pkce(code: str, code_verifier: str) -> tuple[bool, str,
     if not data.get("access_token"):
         return False, "OAuth token response missing access_token", {}
 
-    # Validate that Google actually granted the gmail.send scope.
+    # Accept either the legacy send-only scope or the broader mail scope.
     granted_scope = str(data.get("scope") or "")
-    if granted_scope and "gmail.send" not in granted_scope:
+    if granted_scope and GOOGLE_GMAIL_SEND_SCOPE not in granted_scope and GOOGLE_SCOPE not in granted_scope:
         return False, (
-            "Google no concedió el permiso gmail.send (scopes recibidos: "
+            "Google no concedió un permiso de Gmail valido para enviar/leer (scopes recibidos: "
             f"{granted_scope}). Asegúrate de que la Gmail API esté habilitada "
             "en Google Cloud Console y vuelve a autorizar."
         ), {}
@@ -192,6 +193,33 @@ def _get_active_google_account(db: Session) -> str:
 def _set_active_google_account(db: Session, email: str) -> None:
     cfg = _get_email_sync_config(db, None)
     cfg["google_active_account"] = email
+    current_provider = str(cfg.get("provider") or "").strip().lower()
+    if email and current_provider in {"", "none", "oauth_google"}:
+        cfg["provider"] = "oauth_google"
+        imap_cfg = cfg.get("imap") if isinstance(cfg.get("imap"), dict) else {}
+        imap_cfg = dict(imap_cfg) if isinstance(imap_cfg, dict) else {}
+        imap_cfg["username"] = email
+        if not str(imap_cfg.get("host") or "").strip():
+            imap_cfg["host"] = "imap.gmail.com"
+        if not imap_cfg.get("port"):
+            imap_cfg["port"] = 993
+        if "use_ssl" not in imap_cfg:
+            imap_cfg["use_ssl"] = True
+        if not str(imap_cfg.get("folder") or "").strip():
+            imap_cfg["folder"] = "INBOX"
+        cfg["imap"] = imap_cfg
+
+        oauth_root = cfg.get("oauth") if isinstance(cfg.get("oauth"), dict) else {}
+        oauth_root = dict(oauth_root) if isinstance(oauth_root, dict) else {}
+        providers = oauth_root.get("providers") if isinstance(oauth_root.get("providers"), dict) else {}
+        providers = dict(providers) if isinstance(providers, dict) else {}
+        provider_cfg = providers.get("oauth_google") if isinstance(providers.get("oauth_google"), dict) else {}
+        provider_cfg = dict(provider_cfg) if isinstance(provider_cfg, dict) else {}
+        if provider_cfg:
+            provider_cfg["token_account"] = email
+            providers["oauth_google"] = provider_cfg
+            oauth_root["providers"] = providers
+            cfg["oauth"] = oauth_root
     _save_email_sync_config(db, cfg)
 
 
@@ -283,6 +311,56 @@ def store_google_send_tokens_secure(token_data: dict[str, Any], db: Optional[Ses
         # Register in multi-account list
         if db is not None:
             register_google_account(db, user_email)
+
+    if db is not None:
+        cfg = _get_email_sync_config(db, None)
+        oauth_root = cfg.get("oauth") if isinstance(cfg.get("oauth"), dict) else {}
+        oauth_root = dict(oauth_root) if isinstance(oauth_root, dict) else {}
+        providers = oauth_root.get("providers") if isinstance(oauth_root.get("providers"), dict) else {}
+        providers = dict(providers) if isinstance(providers, dict) else {}
+        provider_cfg = providers.get("oauth_google") if isinstance(providers.get("oauth_google"), dict) else {}
+        provider_cfg = dict(provider_cfg) if isinstance(provider_cfg, dict) else {}
+
+        backend_ok, _, backend_cfg = get_google_oauth_backend_config()
+        if backend_ok:
+            provider_cfg["client_id"] = str(backend_cfg.get("client_id") or provider_cfg.get("client_id") or "")
+            provider_cfg["client_secret"] = str(backend_cfg.get("client_secret") or provider_cfg.get("client_secret") or "")
+            provider_cfg["redirect_uri"] = str(backend_cfg.get("redirect_uri") or provider_cfg.get("redirect_uri") or "")
+
+        provider_cfg["token_type"] = str(token_data.get("token_type") or provider_cfg.get("token_type") or "Bearer")
+        provider_cfg["scope"] = str(token_data.get("scope") or provider_cfg.get("scope") or GOOGLE_SCOPE)
+        provider_cfg["expires_at"] = str(token_data.get("expires_at") or "")
+
+        store_oauth_tokens_secure(
+            provider="oauth_google",
+            provider_cfg=provider_cfg,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            account_hint=user_email or str(provider_cfg.get("token_account") or ""),
+        )
+
+        providers["oauth_google"] = provider_cfg
+        oauth_root["providers"] = providers
+        cfg["oauth"] = oauth_root
+
+        current_provider = str(cfg.get("provider") or "").strip().lower()
+        if current_provider in {"", "none", "oauth_google"}:
+            cfg["provider"] = "oauth_google"
+            imap_cfg = cfg.get("imap") if isinstance(cfg.get("imap"), dict) else {}
+            imap_cfg = dict(imap_cfg) if isinstance(imap_cfg, dict) else {}
+            if user_email and not str(imap_cfg.get("username") or "").strip():
+                imap_cfg["username"] = user_email
+            if not str(imap_cfg.get("host") or "").strip():
+                imap_cfg["host"] = "imap.gmail.com"
+            if not imap_cfg.get("port"):
+                imap_cfg["port"] = 993
+            if "use_ssl" not in imap_cfg:
+                imap_cfg["use_ssl"] = True
+            if not str(imap_cfg.get("folder") or "").strip():
+                imap_cfg["folder"] = "INBOX"
+            cfg["imap"] = imap_cfg
+
+        _save_email_sync_config(db, cfg)
 
     if refresh_token:
         stored = _save_token_secure("oauth_google", "refresh_token", GOOGLE_SEND_TOKEN_ACCOUNT, refresh_token)

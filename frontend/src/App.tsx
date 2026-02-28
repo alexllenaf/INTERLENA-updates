@@ -15,6 +15,7 @@ import {
 } from "./api";
 import CameraModal from "./components/CameraModal";
 import ConfirmDialogHost from "./components/ConfirmDialogHost";
+import { clearLocalPageConfig } from "./components/pageBuilder/pageConfigStore";
 import { getCrossPageDragState } from "./components/pageBuilder/crossPageDragStore";
 import { PencilIcon, TrashIcon, CameraIcon, GearIcon } from "./components/SidebarIcons";
 import { useI18n } from "./i18n";
@@ -698,6 +699,7 @@ const AppShell: React.FC = () => {
     const id = createSheetId();
     const name = t("New Sheet");
     const next: CustomSheet = { id, name };
+    const pageId = `sheet:${id}`;
 
     void runUndoableCommand({
       description: t("Add new sheet"),
@@ -705,7 +707,7 @@ const AppShell: React.FC = () => {
       do: async () => {
         await createCanonicalPage({
           title: name,
-          legacy_key: `sheet:${id}`
+          legacy_key: pageId
         });
         setCustomSheets((prev) => [...prev, next]);
         navigate(`/sheet/${id}`);
@@ -713,12 +715,18 @@ const AppShell: React.FC = () => {
       undo: async () => {
         setCustomSheets((prev) => prev.filter((sheet) => sheet.id !== id));
         try {
-          const resolved = await resolvePageByLegacyKey(`sheet:${id}`, false);
+          const resolved = await resolvePageByLegacyKey(pageId, false);
           if (resolved?.id) {
             await deletePage(resolved.id);
           }
         } catch {
           // ignore undo persistence failures
+        }
+        clearLocalPageConfig(pageId);
+        if (settings?.page_configs && typeof settings.page_configs === "object") {
+          const nextPageConfigs = { ...(settings.page_configs as Record<string, unknown>) };
+          delete nextPageConfigs[pageId];
+          void saveSettings({ page_configs: nextPageConfigs });
         }
         if (location.pathname === `/sheet/${id}`) {
           navigate(CORE_PAGE_PLUGINS[0]?.path || "/dashboard");
@@ -727,18 +735,35 @@ const AppShell: React.FC = () => {
     });
   };
 
+  const clearCustomSheetShadow = useCallback(
+    (sheetId: string) => {
+      const pageId = `sheet:${sheetId}`;
+      clearLocalPageConfig(pageId);
+      if (!settings?.page_configs || typeof settings.page_configs !== "object") return;
+      const currentPageConfigs = settings.page_configs as Record<string, unknown>;
+      if (!Object.prototype.hasOwnProperty.call(currentPageConfigs, pageId)) return;
+      const nextPageConfigs = { ...currentPageConfigs };
+      delete nextPageConfigs[pageId];
+      void saveSettings({ page_configs: nextPageConfigs });
+    },
+    [saveSettings, settings]
+  );
+
   const deleteCustomSheetConfigData = useCallback(
     async (sheetId: string) => {
+      const pageId = `sheet:${sheetId}`;
       try {
-        const resolved = await resolvePageByLegacyKey(`sheet:${sheetId}`, false);
+        const resolved = await resolvePageByLegacyKey(pageId, false);
         if (resolved?.id) {
           await deletePage(resolved.id);
         }
       } catch {
         // ignore cleanup failures
+      } finally {
+        clearCustomSheetShadow(sheetId);
       }
     },
-    []
+    [clearCustomSheetShadow]
   );
 
   const confirmDeleteCustomSheet = useCallback(async () => {

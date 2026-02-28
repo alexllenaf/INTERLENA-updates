@@ -85,11 +85,33 @@ export type TodoItemsCellProps = {
 export const TodoItemsCell: React.FC<TodoItemsCellProps> = ({ items, onCommit }) => {
   const list = items ?? [];
   const [open, setOpen] = useState(false);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState({
     task: "",
     due_date: "",
     status: "Not started"
   });
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (editorRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
 
   const pendingCount = list.filter((item) => normalizeTodoStatus(item.status) !== "Done").length;
 
@@ -129,7 +151,7 @@ export const TodoItemsCell: React.FC<TodoItemsCellProps> = ({ items, onCommit })
   };
 
   return (
-    <div className="todo-items-cell">
+    <div className="todo-items-cell" ref={editorRef}>
       <div className="todo-items-summary">
         {list.length === 0 ? (
           <span className="todo-items-empty">No to-do items yet.</span>

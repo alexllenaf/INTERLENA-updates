@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { normalizeTodoStatus } from "../../../constants";
+import { normalizeTodoStatus, TODO_STATUSES } from "../../../constants";
 import { useAppData } from "../../../state";
 import { type Application, type CustomProperty } from "../../../types";
 import {
@@ -16,7 +16,6 @@ import {
   customPropertyKind
 } from "../../../shared/normalize";
 import BlockPanel from "../../BlockPanel";
-import { TYPE_REGISTRY } from "../../dataTypes/typeRegistry";
 import { type EditableTableColumnKind, type KpiMetricOp, type PageBlockPropsMap } from "../types";
 import {
   KPI_SOURCE_TABLE_LINK_KEY,
@@ -24,7 +23,7 @@ import {
   getBlockLink,
   patchBlockLink
 } from "../blockLinks";
-import { getTableSchema } from "../tableSchemaRegistry";
+import { resolveEditableTableModel } from "./editableTableBlock";
 import { createSlotContext } from "./shared";
 import { SourceTablePreview } from "./sourceTablePreview";
 import { type BlockDefinition } from "./types";
@@ -34,6 +33,7 @@ type KpiTableSnapshot = {
   rows: string[][];
   columnKinds: Record<string, EditableTableColumnKind>;
   valueOptionsByColumn: Record<string, string[]>;
+  valueCountsByColumn: Record<string, Record<string, number>>;
 };
 
 type KpiMetricOption = {
@@ -61,97 +61,6 @@ const KPI_METRIC_OPTIONS: KpiMetricOption[] = [
   { value: "sum", label: "Sumar", needsColumn: true, numericOnly: true, supportsPercent: false },
   { value: "avg", label: "Media", needsColumn: true, numericOnly: true, supportsPercent: false }
 ];
-
-const DEFAULT_COLUMN_LABELS = ["Column 1", "Column 2", "Column 3"];
-const DEFAULT_ROW = [["", "", ""]];
-const MAX_COLUMNS = 24;
-const MAX_ROWS = 1200;
-const normalizeColumns = (raw: unknown): string[] => {
-  if (!Array.isArray(raw)) return [...DEFAULT_COLUMN_LABELS];
-  const parsed = raw
-    .map((value) => (typeof value === "string" ? value : ""))
-    .slice(0, MAX_COLUMNS);
-  return parsed.length > 0 ? parsed : [...DEFAULT_COLUMN_LABELS];
-};
-
-const normalizeRows = (raw: unknown, columnCount: number): string[][] => {
-  const count = Math.max(1, Math.min(columnCount, MAX_COLUMNS));
-  if (!Array.isArray(raw)) {
-    return DEFAULT_ROW.map((row) =>
-      Array.from({ length: count }, (_, index) => row[index] || "")
-    );
-  }
-  return raw
-    .slice(0, MAX_ROWS)
-    .filter((row): row is unknown[] => Array.isArray(row))
-    .map((row) =>
-      Array.from({ length: count }, (_, index) => {
-        const value = row[index];
-        return typeof value === "string" ? value : "";
-      })
-    );
-};
-
-const normalizeCustomKinds = (
-  raw: unknown,
-  columns: string[]
-): Record<string, EditableTableColumnKind> => {
-  if (!isRecord(raw)) return {};
-  const allowed = new Set(columns);
-  const out: Record<string, EditableTableColumnKind> = {};
-  Object.entries(raw).forEach(([key, value]) => {
-    if (!allowed.has(key)) return;
-    const kind = normalizeString(value);
-    if (
-      kind === "text" ||
-      kind === "number" ||
-      kind === "select" ||
-      kind === "date" ||
-      kind === "checkbox" ||
-      kind === "rating" ||
-      kind === "todo" ||
-      kind === "contacts" ||
-      kind === "links" ||
-      kind === "documents"
-    ) {
-      out[key] = kind;
-    }
-  });
-  return out;
-};
-
-const toUniqueLabel = (label: string, used: Set<string>): string => {
-  const base = label.trim() || "Column";
-  if (!used.has(base)) {
-    used.add(base);
-    return base;
-  }
-  let attempt = 2;
-  while (used.has(`${base} (${attempt})`)) {
-    attempt += 1;
-  }
-  const next = `${base} (${attempt})`;
-  used.add(next);
-  return next;
-};
-
-const inferKindFromTypeRef = (typeRefRaw: unknown): EditableTableColumnKind => {
-  const typeRef = normalizeString(typeRefRaw);
-  const typeDef = typeRef ? TYPE_REGISTRY[typeRef] : undefined;
-  if (typeDef) {
-    return typeDef.baseKind;
-  }
-  if (typeRef.startsWith("number.")) return "number";
-  if (typeRef.startsWith("rating.")) return "rating";
-  if (typeRef.startsWith("select.")) return "select";
-  if (typeRef.startsWith("date.") || typeRef.startsWith("datetime.")) return "date";
-  if (typeRef.startsWith("checkbox.")) return "checkbox";
-  if (typeRef.startsWith("todo.")) return "todo";
-  if (typeRef.startsWith("contacts.")) return "contacts";
-  if (typeRef.startsWith("links.")) return "links";
-  if (typeRef.startsWith("documents.")) return "documents";
-  return "text";
-};
 
 const trackerValueForColumn = (app: Application, key: string): string => {
   if (key.startsWith("prop__")) {
@@ -213,73 +122,55 @@ const isTodoTableSource = (target: {
   );
 };
 
-const resolveSchemaProjection = (
-  props: Record<string, unknown>,
-  settings: unknown
-): {
-  schemaKeys: string[];
-  orderedKeys: string[];
-  columns: string[];
-  columnKinds: Record<string, EditableTableColumnKind>;
-} | null => {
-  const schemaRef = normalizeString(props.schemaRef);
-  if (!schemaRef) return null;
-
-  const schema = getTableSchema(schemaRef, { settings });
-  if (!schema.columns.length) return null;
-
-  const schemaByKey = new Map(schema.columns.map((column) => [column.key, column]));
-  const schemaKeys = schema.columns.map((column) => column.key);
-  const overrides = isRecord(props.overrides) ? props.overrides : {};
-  const columnOrder = normalizeStringArray(overrides.columnOrder);
-  const orderedKeys: string[] = [];
-  columnOrder.forEach((key) => {
-    if (schemaByKey.has(key) && !orderedKeys.includes(key)) {
-      orderedKeys.push(key);
-    }
+const normalizeSelectOptionLabels = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  raw.forEach((entry) => {
+    const label = typeof entry === "string"
+      ? normalizeString(entry)
+      : isRecord(entry)
+        ? normalizeString(entry.label)
+        : "";
+    if (!label || seen.has(label)) return;
+    seen.add(label);
+    labels.push(label);
   });
-  schemaKeys.forEach((key) => {
-    if (!orderedKeys.includes(key)) {
-      orderedKeys.push(key);
-    }
-  });
+  return labels;
+};
 
-  const labelOverrides = isRecord(overrides.labelOverrides)
-    ? (overrides.labelOverrides as Record<string, unknown>)
-    : {};
-  const usedLabels = new Set<string>();
-  const columns: string[] = [];
-  const columnKinds: Record<string, EditableTableColumnKind> = {};
-
-  orderedKeys.forEach((key) => {
-    const schemaColumn = schemaByKey.get(key);
-    if (!schemaColumn) return;
-    const labelOverride = labelOverrides[key];
-    const labelSeed =
-      typeof labelOverride === "string" && labelOverride.trim()
-        ? labelOverride.trim()
-        : schemaColumn.label || key;
-    const label = toUniqueLabel(labelSeed, usedLabels);
-    columns.push(label);
-    columnKinds[label] = inferKindFromTypeRef(schemaColumn.typeRef);
-  });
-
-  return {
-    schemaKeys,
-    orderedKeys,
-    columns,
-    columnKinds
-  };
+const normalizeCustomPropertiesWithOptions = (raw: unknown): CustomProperty[] => {
+  const props = normalizeCustomProperties(raw);
+  const optionLabelsByKey = new Map<string, string[]>();
+  if (Array.isArray(raw)) {
+    raw.forEach((entry) => {
+      if (!isRecord(entry)) return;
+      const key = normalizeString(entry.key);
+      if (!key) return;
+      optionLabelsByKey.set(key, normalizeSelectOptionLabels(entry.options));
+    });
+  }
+  return props.map((prop) => ({
+    ...prop,
+    options: (optionLabelsByKey.get(prop.key) || []).map((label) => ({ label }))
+  }));
 };
 
 const buildValueOptionsByColumn = (
   columns: string[],
-  rows: string[][]
+  rows: string[][],
+  predefinedOptionsByColumn: Record<string, string[]> = {}
 ): Record<string, string[]> => {
   const options: Record<string, string[]> = {};
   columns.forEach((column, colIndex) => {
     const seen = new Set<string>();
     const values: string[] = [];
+    (predefinedOptionsByColumn[column] || []).forEach((rawValue) => {
+      const value = normalizeString(rawValue);
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      values.push(value);
+    });
     rows.forEach((row) => {
       const value = normalizeString(row[colIndex] || "");
       if (!value || seen.has(value)) return;
@@ -289,6 +180,23 @@ const buildValueOptionsByColumn = (
     options[column] = values;
   });
   return options;
+};
+
+const buildValueCountsByColumn = (
+  columns: string[],
+  rows: string[][]
+): Record<string, Record<string, number>> => {
+  const counts: Record<string, Record<string, number>> = {};
+  columns.forEach((column, colIndex) => {
+    const values: Record<string, number> = {};
+    rows.forEach((row) => {
+      const value = normalizeString(row[colIndex] || "");
+      if (!value) return;
+      values[value] = (values[value] || 0) + 1;
+    });
+    counts[column] = values;
+  });
+  return counts;
 };
 
 const buildTodoSnapshot = (applications: Application[]): KpiTableSnapshot => {
@@ -321,11 +229,16 @@ const buildTodoSnapshot = (applications: Application[]): KpiTableSnapshot => {
       normalizeTodoStatus(todo.status)
     ])
   );
+  const predefinedOptionsByColumn = {
+    Status: [...TODO_STATUSES]
+  };
+  const valueCountsByColumn = buildValueCountsByColumn(columns, rows);
   return {
     columns,
     rows,
     columnKinds,
-    valueOptionsByColumn: buildValueOptionsByColumn(columns, rows)
+    valueOptionsByColumn: buildValueOptionsByColumn(columns, rows, predefinedOptionsByColumn),
+    valueCountsByColumn
   };
 };
 
@@ -338,7 +251,7 @@ const buildTrackerSnapshot = (
   const columnLabels = isRecord(settingsRecord.column_labels)
     ? (settingsRecord.column_labels as Record<string, unknown>)
     : {};
-  const customProps = normalizeCustomProperties(settingsRecord.custom_properties);
+  const customProps = normalizeCustomPropertiesWithOptions(settingsRecord.custom_properties);
   const customPropByKey = new Map(customProps.map((prop) => [prop.key, prop]));
   const overrideOrder = isRecord(targetProps.overrides)
     ? normalizeStringArray((targetProps.overrides as Record<string, unknown>).columnOrder)
@@ -357,36 +270,67 @@ const buildTrackerSnapshot = (
 
   const columns: string[] = [];
   const columnKinds: Record<string, EditableTableColumnKind> = {};
+  const predefinedOptionsByColumn: Record<string, string[]> = {};
   const keyByLabel: string[] = [];
   const usedLabels = new Set<string>();
+  const createUniqueLabel = (label: string) => {
+    const base = label.trim() || "Column";
+    if (!usedLabels.has(base)) {
+      usedLabels.add(base);
+      return base;
+    }
+    let attempt = 2;
+    while (usedLabels.has(`${base} (${attempt})`)) {
+      attempt += 1;
+    }
+    const next = `${base} (${attempt})`;
+    usedLabels.add(next);
+    return next;
+  };
   orderedKeys.forEach((key) => {
     const labelOverride = columnLabels[key];
     let labelSeed = typeof labelOverride === "string" ? labelOverride.trim() : "";
     let kind: EditableTableColumnKind = "text";
+    let selectOptions: string[] = [];
 
     if (key.startsWith("prop__")) {
       const propKey = key.slice("prop__".length);
       const prop = customPropByKey.get(propKey) || null;
       if (!labelSeed) labelSeed = prop?.name || key;
       kind = customPropertyKind(prop);
+      if (kind === "select") {
+        selectOptions = normalizeSelectOptionLabels(prop?.options);
+      }
     } else {
       if (!labelSeed) labelSeed = TRACKER_COLUMN_LABELS[key] || key;
       kind = TRACKER_COLUMN_KINDS[key] || "text";
+      if (key === "stage") {
+        selectOptions = normalizeStringArray(settingsRecord.stages);
+      } else if (key === "outcome") {
+        selectOptions = normalizeStringArray(settingsRecord.outcomes);
+      } else if (key === "job_type") {
+        selectOptions = normalizeStringArray(settingsRecord.job_types);
+      }
     }
 
-    const label = toUniqueLabel(labelSeed || key, usedLabels);
+    const label = createUniqueLabel(labelSeed || key);
     columns.push(label);
     keyByLabel.push(key);
     columnKinds[label] = kind;
+    if (selectOptions.length > 0) {
+      predefinedOptionsByColumn[label] = selectOptions;
+    }
   });
 
   const rows = applications.map((app) => keyByLabel.map((columnKey) => trackerValueForColumn(app, columnKey)));
+  const valueCountsByColumn = buildValueCountsByColumn(columns, rows);
 
   return {
     columns,
     rows,
     columnKinds,
-    valueOptionsByColumn: buildValueOptionsByColumn(columns, rows)
+    valueOptionsByColumn: buildValueOptionsByColumn(columns, rows, predefinedOptionsByColumn),
+    valueCountsByColumn
   };
 };
 
@@ -394,35 +338,21 @@ const buildEditableSnapshot = (
   targetProps: Record<string, unknown>,
   settings: unknown
 ): KpiTableSnapshot => {
-  const projection = resolveSchemaProjection(targetProps, settings);
-  if (projection) {
-    const storageRows = normalizeRows(targetProps.customRows, projection.schemaKeys.length);
-    const storageIndexByKey: Record<string, number> = {};
-    projection.schemaKeys.forEach((key, index) => {
-      storageIndexByKey[key] = index;
-    });
-    const rows = storageRows.map((row) =>
-      projection.orderedKeys.map((columnKey) => {
-        const index = storageIndexByKey[columnKey];
-        return index >= 0 ? row[index] || "" : "";
-      })
-    );
-    return {
-      columns: projection.columns,
-      rows,
-      columnKinds: projection.columnKinds,
-      valueOptionsByColumn: buildValueOptionsByColumn(projection.columns, rows)
-    };
-  }
-
-  const columns = normalizeColumns(targetProps.customColumns);
-  const rows = normalizeRows(targetProps.customRows, columns.length);
-  const columnKinds = normalizeCustomKinds(targetProps.customColumnTypes, columns);
+  const model = resolveEditableTableModel(targetProps as PageBlockPropsMap["editableTable"], { settings });
+  const predefinedOptionsByColumn: Record<string, string[]> = {};
+  Object.entries(model.selectOptionsByColumn).forEach(([column, options]) => {
+    const labels = normalizeSelectOptionLabels(options);
+    if (labels.length > 0) {
+      predefinedOptionsByColumn[column] = labels;
+    }
+  });
+  const valueCountsByColumn = buildValueCountsByColumn(model.columns, model.rows);
   return {
-    columns,
-    rows,
-    columnKinds,
-    valueOptionsByColumn: buildValueOptionsByColumn(columns, rows)
+    columns: model.columns,
+    rows: model.rows,
+    columnKinds: model.columnKinds,
+    valueOptionsByColumn: buildValueOptionsByColumn(model.columns, model.rows, predefinedOptionsByColumn),
+    valueCountsByColumn
   };
 };
 
@@ -636,6 +566,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       : "count_rows";
     const metricDef = metricOptions.find((option) => option.value === metricOp) || metricOptions[0];
     const valueOptions = sourceColumn ? tableSnapshot?.valueOptionsByColumn[sourceColumn] || [] : [];
+    const valueCounts = sourceColumn ? tableSnapshot?.valueCountsByColumn[sourceColumn] || {} : {};
     const metricTargetValues = useMemo(() => {
       const fromArray = Array.isArray(block.props.metricTargetValues)
         ? block.props.metricTargetValues
@@ -662,6 +593,11 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       : metricTargetValues.length === 1
         ? metricTargetValues[0]
         : `${metricTargetValues.length} valores seleccionados`;
+    const selectedTargetPreview = metricTargetValues.slice(0, 3);
+    const remainingTargetCount = Math.max(0, metricTargetValues.length - selectedTargetPreview.length);
+    const selectedTargetCountLabel = metricTargetValues.length === 1
+      ? "1 valor seleccionado"
+      : `${metricTargetValues.length} valores seleccionados`;
     const allowPercent = Boolean(metricDef?.supportsPercent);
     const metricAsPercent = allowPercent && Boolean(block.props.metricAsPercent);
     const hasAutoLabelSource = Boolean(linkedTableId && tableSnapshot);
@@ -692,6 +628,18 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
         : (computedValue ?? block.props.value ?? "0");
 
     const linkedTableMissing = Boolean(linkedTableId && !linkedTableTarget);
+    const dataSourceModeLabel = linkedTableTarget ? "Automatico" : "Manual";
+    const metricHelpText = !tableSnapshot
+      ? "Vincula una tabla para habilitar el calculo automatico."
+      : metricDef?.needsColumn
+        ? `Se calculara sobre la columna ${sourceColumn || "seleccionada"}.`
+        : "La metrica se calcula sobre todas las filas de la tabla.";
+    const manualValueHelpText = hasLinkedComputation
+      ? "Se usa como respaldo si la tabla deja de estar disponible."
+      : "Valor mostrado cuando el KPI no esta vinculado a una tabla.";
+    const percentHelpText = allowPercent
+      ? "Muestra el resultado relativo al total disponible."
+      : "Disponible solo en metricas de conteo.";
 
     const setLinkedTable = (nextBlockId?: string | null) => {
       const nextTarget = nextBlockId
@@ -802,7 +750,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
               aria-modal="true"
               onClick={() => setIsConfigOpen(false)}
             >
-              <div className="modal kpi-config-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="modal block-config-modal" onClick={(event) => event.stopPropagation()}>
                 <header className="modal-header">
                   <div>
                     <h2>Configurar KPI</h2>
@@ -813,154 +761,293 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                   </button>
                 </header>
 
-                <div className="kpi-config-preview">
-                  <div className="kpi-config-preview-label">{label}</div>
-                  <div className="kpi-config-preview-value">{value}</div>
-                  <div className="kpi-config-preview-meta">
-                    <span>{linkedTableTarget ? linkedTableTarget.title : "Sin tabla"}</span>
-                    <span>{metricDef?.label || "Metrica"}</span>
-                    <span>{sourceColumn || "Sin columna"}</span>
-                  </div>
-                </div>
-
-                <div className="kpi-config-grid">
-                  <label className="field">
-                    Etiqueta
-                    <input
-                      value={label}
-                      onChange={(event) =>
-                        patchBlockProps({
-                          label: event.target.value,
-                          labelAuto: false
-                        })
-                      }
-                      placeholder="KPI"
-                    />
-                    {hasAutoLabelSource && (
-                      <button
-                        type="button"
-                        className="ghost small"
-                        onClick={() =>
-                          patchBlockProps({
-                            labelAuto: true,
-                            label: autoLabel
-                          })
-                        }
-                        disabled={isAutoLabelEnabled}
-                      >
-                        Usar nombre automatico
-                      </button>
-                    )}
-                  </label>
-
-                  <label className="field">
-                    Tabla vinculada
-                    <select
-                      value={linkedTableId || ""}
-                      onChange={(event) => setLinkedTable(event.target.value || null)}
-                    >
-                      <option value="">Sin tabla</option>
-                      {tableTargets.map((target) => (
-                        <option key={target.blockId} value={target.blockId}>
-                          [{target.pageId}] {target.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    Columna
-                    <select
-                      value={sourceColumn}
-                      onChange={(event) =>
-                        patchBlockProps({
-                          sourceColumn: event.target.value,
-                          metricTargetValue: undefined,
-                          metricTargetValues: undefined
-                        })
-                      }
-                      disabled={!tableSnapshot}
-                    >
-                      {!tableSnapshot && <option value="">Sin columnas</option>}
-                      {tableSnapshot?.columns.map((column) => (
-                        <option key={column} value={column}>
-                          {column}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="field">
-                    Metrica
-                    <select
-                      value={metricOp}
-                      onChange={(event) => {
-                        const nextOp = event.target.value as KpiMetricOp;
-                        const nextDef = KPI_METRIC_OPTIONS.find((option) => option.value === nextOp);
-                        patchBlockProps({
-                          metricOp: nextOp,
-                          metricTargetValue: nextDef?.needsTargetValue ? block.props.metricTargetValue : undefined,
-                          metricTargetValues: nextDef?.needsTargetValue ? block.props.metricTargetValues : undefined,
-                          metricAsPercent: nextDef?.supportsPercent ? block.props.metricAsPercent : false
-                        });
-                      }}
-                      disabled={!tableSnapshot}
-                    >
-                      {metricOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {metricDef?.needsTargetValue && (
-                    <div className="field kpi-target-field">
-                      <span>Valor objetivo</span>
-                      {targetOptionValues.length === 0 ? (
-                        <p className="kpi-target-empty">No hay valores disponibles en esta columna.</p>
-                      ) : (
-                        <>
+                <div className="block-config-layout">
+                  <div className="block-config-main">
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Identidad</h3>
+                          <p>Define el nombre visible y el valor de respaldo del KPI.</p>
+                        </div>
+                        {hasAutoLabelSource && (
                           <button
-                            ref={targetMenuTriggerRef}
                             type="button"
-                            className={`select-trigger ${isTargetMenuOpen ? "open" : ""}`}
-                            disabled={!tableSnapshot || !sourceColumn}
-                            onClick={() => setIsTargetMenuOpen((prev) => !prev)}
-                            aria-haspopup="listbox"
-                            aria-expanded={isTargetMenuOpen}
+                            className={`ghost small block-inline-toggle ${isAutoLabelEnabled ? "active" : ""}`}
+                            onClick={() =>
+                              patchBlockProps({
+                                labelAuto: !isAutoLabelEnabled,
+                                label: isAutoLabelEnabled ? label : autoLabel
+                              })
+                            }
                           >
-                            <span className="select-pill">{targetSummaryLabel}</span>
-                            <span className="select-caret">▾</span>
+                            {isAutoLabelEnabled ? "Nombre automatico activo" : "Usar nombre automatico"}
                           </button>
-                          <p className="kpi-target-summary">
-                            {metricTargetValues.length > 0
-                              ? `${metricTargetValues.length} valor${metricTargetValues.length === 1 ? "" : "es"} seleccionado${metricTargetValues.length === 1 ? "" : "s"}`
-                              : "Selecciona uno o varios valores."}
+                        )}
+                      </div>
+
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Etiqueta</span>
+                          <input
+                            value={label}
+                            onChange={(event) =>
+                              patchBlockProps({
+                                label: event.target.value,
+                                labelAuto: false
+                              })
+                            }
+                            placeholder="KPI"
+                          />
+                          <p className="block-field-hint">
+                            {isAutoLabelEnabled
+                              ? "La etiqueta se actualiza automaticamente segun la metrica elegida."
+                              : "Puedes escribir una etiqueta fija o activar el nombre automatico."}
                           </p>
-                        </>
-                      )}
+                        </label>
+
+                        <label className="field">
+                          <span className="block-field-label">Valor manual</span>
+                          <input
+                            value={block.props.value || ""}
+                            onChange={(event) => patchBlockProps({ value: event.target.value })}
+                            placeholder="0"
+                          />
+                          <p className="block-field-hint">{manualValueHelpText}</p>
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Fuente de datos</h3>
+                          <p>Selecciona la tabla y la columna desde la que se calcula el KPI.</p>
+                        </div>
+                        <span className={`block-status-badge ${linkedTableTarget ? "ready" : "muted"}`}>
+                          {linkedTableTarget ? "Tabla conectada" : "Sin tabla"}
+                        </span>
+                      </div>
+
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Tabla vinculada</span>
+                          <select
+                            value={linkedTableId || ""}
+                            onChange={(event) => setLinkedTable(event.target.value || null)}
+                          >
+                            <option value="">Sin tabla</option>
+                            {tableTargets.map((target) => (
+                              <option key={target.blockId} value={target.blockId}>
+                                [{target.pageId}] {target.title}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">
+                            {linkedTableTarget
+                              ? `Usando ${linkedTableTarget.title} como origen.`
+                              : "Sin tabla vinculada, el KPI mostrara el valor manual."}
+                          </p>
+                        </label>
+
+                        <label className="field">
+                          <span className="block-field-label">Columna</span>
+                          <select
+                            value={sourceColumn}
+                            onChange={(event) =>
+                              patchBlockProps({
+                                sourceColumn: event.target.value,
+                                metricTargetValue: undefined,
+                                metricTargetValues: undefined
+                              })
+                            }
+                            disabled={!tableSnapshot}
+                          >
+                            {!tableSnapshot && <option value="">Sin columnas</option>}
+                            {tableSnapshot?.columns.map((column) => (
+                              <option key={column} value={column}>
+                                {column}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">
+                            {sourceColumn
+                              ? `Columna activa: ${sourceColumn}.`
+                              : "Selecciona una tabla para ver las columnas disponibles."}
+                          </p>
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="block-config-section">
+                      <div className="block-config-section-head">
+                        <div>
+                          <h3>Calculo</h3>
+                          <p>Ajusta la metrica, el filtro objetivo y el formato del resultado.</p>
+                        </div>
+                        <span className="block-status-badge">{metricDef?.label || "Metrica"}</span>
+                      </div>
+
+                      <div className="block-config-grid">
+                        <label className="field">
+                          <span className="block-field-label">Metrica</span>
+                          <select
+                            value={metricOp}
+                            onChange={(event) => {
+                              const nextOp = event.target.value as KpiMetricOp;
+                              const nextDef = KPI_METRIC_OPTIONS.find((option) => option.value === nextOp);
+                              patchBlockProps({
+                                metricOp: nextOp,
+                                metricTargetValue: nextDef?.needsTargetValue ? block.props.metricTargetValue : undefined,
+                                metricTargetValues: nextDef?.needsTargetValue ? block.props.metricTargetValues : undefined,
+                                metricAsPercent: nextDef?.supportsPercent ? block.props.metricAsPercent : false
+                              });
+                            }}
+                            disabled={!tableSnapshot}
+                          >
+                            {metricOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="block-field-hint">{metricHelpText}</p>
+                        </label>
+
+                        <label className={`field block-toggle-field ${allowPercent ? "" : "disabled"}`}>
+                          <div className="block-toggle-head">
+                            <span className="block-field-label">Mostrar en %</span>
+                            <input
+                              type="checkbox"
+                              checked={metricAsPercent}
+                              disabled={!allowPercent}
+                              onChange={(event) => patchBlockProps({ metricAsPercent: event.target.checked })}
+                            />
+                          </div>
+                          <p className="block-field-hint">{percentHelpText}</p>
+                        </label>
+
+                        {metricDef?.needsTargetValue && (
+                          <div className="field full kpi-target-field">
+                            <div className="kpi-target-head">
+                              <div>
+                                <span className="block-field-label">Valor objetivo</span>
+                                <p className="block-field-hint">
+                                  Filtra la metrica por uno o varios valores de la columna seleccionada.
+                                </p>
+                              </div>
+                              <span className={`block-status-badge ${metricTargetValues.length > 0 ? "ready" : "muted"}`}>
+                                {metricTargetValues.length > 0 ? selectedTargetCountLabel : "Sin filtro"}
+                              </span>
+                            </div>
+
+                            {targetOptionValues.length === 0 ? (
+                              <p className="kpi-target-empty">No hay valores disponibles en esta columna.</p>
+                            ) : (
+                              <>
+                                <button
+                                  ref={targetMenuTriggerRef}
+                                  type="button"
+                                  className={`select-trigger kpi-target-trigger ${isTargetMenuOpen ? "open" : ""}`}
+                                  disabled={!tableSnapshot || !sourceColumn}
+                                  onClick={() => setIsTargetMenuOpen((prev) => !prev)}
+                                  aria-haspopup="listbox"
+                                  aria-expanded={isTargetMenuOpen}
+                                >
+                                  <span className={`select-pill ${metricTargetValues.length === 0 ? "kpi-target-placeholder" : ""}`}>
+                                    {targetSummaryLabel}
+                                  </span>
+                                  <span className="select-caret">▾</span>
+                                </button>
+
+                                <div className="kpi-target-tags">
+                                  {metricTargetValues.length === 0 ? (
+                                    <span className="kpi-target-chip muted">Sin filtros aplicados</span>
+                                  ) : (
+                                    <>
+                                      {selectedTargetPreview.map((targetValue) => (
+                                        <span key={`${block.id}-target-chip-${targetValue}`} className="kpi-target-chip">
+                                          {targetValue}
+                                        </span>
+                                      ))}
+                                      {remainingTargetCount > 0 && (
+                                        <span className="kpi-target-chip count">+{remainingTargetCount}</span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+
+                                <p className="kpi-target-summary">
+                                  {metricTargetValues.length > 0
+                                    ? `${selectedTargetCountLabel}. Puedes combinar varios valores.`
+                                    : "Selecciona uno o varios valores para acotar el calculo."}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  <aside className="block-config-sidebar">
+                    <div className="block-config-preview">
+                      <div className="block-config-preview-label">{label}</div>
+                      <div className="block-config-preview-value">{value}</div>
+                      <div className="block-config-preview-meta">
+                        <span>{linkedTableTarget ? linkedTableTarget.title : "Sin tabla"}</span>
+                        <span>{metricDef?.label || "Metrica"}</span>
+                        <span>{sourceColumn || "Sin columna"}</span>
+                      </div>
                     </div>
-                  )}
 
-                  <label className="field">
-                    Valor manual
-                    <input
-                      value={block.props.value || ""}
-                      onChange={(event) => patchBlockProps({ value: event.target.value })}
-                      placeholder="0"
-                    />
-                  </label>
+                    <section className="block-config-sidebar-card">
+                      <div className="block-config-section-head compact">
+                        <div>
+                          <h3>Resumen</h3>
+                          <p>Estado actual de la configuracion.</p>
+                        </div>
+                        <span className={`block-status-badge ${linkedTableTarget ? "ready" : "muted"}`}>
+                          {dataSourceModeLabel}
+                        </span>
+                      </div>
 
-                  <label className="field kpi-percent-field">
-                    <span>Mostrar en %</span>
-                    <input
-                      type="checkbox"
-                      checked={metricAsPercent}
-                      disabled={!allowPercent}
-                      onChange={(event) => patchBlockProps({ metricAsPercent: event.target.checked })}
-                    />
-                  </label>
+                      <div className="block-summary-list">
+                        <div className="block-summary-row">
+                          <span>Etiqueta</span>
+                          <strong>{isAutoLabelEnabled ? "Automatica" : "Manual"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Fuente</span>
+                          <strong>{linkedTableTarget?.title || "Valor manual"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Columna</span>
+                          <strong>{metricDef?.needsColumn ? (sourceColumn || "Sin columna") : "No aplica"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Objetivo</span>
+                          <strong>{metricDef?.needsTargetValue ? (metricTargetValues.length > 0 ? selectedTargetCountLabel : "Sin filtro") : "No aplica"}</strong>
+                        </div>
+                        <div className="block-summary-row">
+                          <span>Formato</span>
+                          <strong>{metricAsPercent ? "Porcentaje" : "Valor directo"}</strong>
+                        </div>
+                      </div>
+
+                      {metricDef?.needsTargetValue && metricTargetValues.length > 0 && (
+                        <div className="kpi-target-tags summary">
+                          {selectedTargetPreview.map((targetValue) => (
+                            <span key={`${block.id}-target-summary-${targetValue}`} className="kpi-target-chip">
+                              {targetValue}
+                            </span>
+                          ))}
+                          {remainingTargetCount > 0 && (
+                            <span className="kpi-target-chip count">+{remainingTargetCount}</span>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  </aside>
                 </div>
 
                 {tableSnapshot && <SourceTablePreview table={tableSnapshot} keyPrefix="kpi-preview" />}
@@ -979,7 +1066,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
           createPortal(
             <div
               ref={targetMenuRef}
-              className="select-menu kpi-target-floating-menu"
+              className="select-menu block-floating-menu kpi-target-floating-menu"
               style={{
                 position: "fixed",
                 top: targetMenuPosition.top,
@@ -990,9 +1077,14 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
               }}
               onClick={(event) => event.stopPropagation()}
             >
+              <div className="kpi-target-menu-head">
+                <strong>Valores objetivo</strong>
+                <span>{targetOptionValues.length} opciones</span>
+              </div>
               <div className="select-options" role="listbox" aria-label="Valores objetivo" aria-multiselectable="true">
                 {targetOptionValues.map((option) => {
                   const checked = metricTargetValues.includes(option);
+                  const optionCount = valueCounts[option] || 0;
                   return (
                     <button
                       type="button"
@@ -1008,6 +1100,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                     >
                       <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
                       <span className="select-label">{option}</span>
+                      <span className="block-option-count">{optionCount}</span>
                       <span className="select-check">{checked ? "✓" : ""}</span>
                     </button>
                   );

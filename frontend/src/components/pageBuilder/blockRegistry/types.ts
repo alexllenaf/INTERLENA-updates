@@ -28,6 +28,8 @@ export type BlockRenderContext<TType extends PageBlockType = PageBlockType> = {
   menuActions?: BlockPanelMenuAction[];
   updateBlockProps: (nextProps: PageBlockPropsMap[TType]) => void;
   patchBlockProps: (patch: Partial<PageBlockPropsMap[TType]>) => void;
+  updateBlockLayout: (nextLayout: GridLayout) => void;
+  patchBlockLayout: (patch: Partial<GridLayout>) => void;
 };
 
 export type BlockDefinition<TType extends PageBlockType = PageBlockType> = {

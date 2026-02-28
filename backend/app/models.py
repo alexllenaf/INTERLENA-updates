@@ -106,6 +106,7 @@ class EmailSyncCursor(Base):
     contact_id = Column(String, primary_key=True)
     folder = Column(String, primary_key=True)
     last_synced_at = Column(DateTime, nullable=False)
+    full_history_synced_at = Column(DateTime)
 
 
 class EmailSendLog(Base):
@@ -126,6 +127,24 @@ class EmailSendLog(Base):
     status = Column(String, nullable=False)
     error_message = Column(Text)
     provider_message_id = Column(String)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class EmailReadLog(Base):
+    __tablename__ = "email_read_logs"
+    __table_args__ = (
+        Index("ix_email_read_logs_account_created_at", "account_id", "created_at"),
+        Index("ix_email_read_logs_provider_created_at", "provider", "created_at"),
+        Index("ix_email_read_logs_operation", "operation"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, nullable=False)
+    account_id = Column(String, nullable=False)
+    operation = Column(String, nullable=False)
+    folder = Column(String)
+    message_count = Column(Integer, nullable=False, default=0)
+    bytes_downloaded = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
 

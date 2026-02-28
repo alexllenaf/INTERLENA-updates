@@ -8,6 +8,43 @@
   overflow-x: auto;
 }
 
+.block-type-editableTable .table-panel {
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.block-type-editableTable .table-scroll {
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
+}
+
+.block-type-editableTable .table-scroll::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.block-type-editableTable .table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.block-type-editableTable .table-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.block-type-editableTable .table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.55);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.block-type-editableTable .table-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 0.75);
+}
+
 .table-scroll .table {
   min-width: 960px;
 }
@@ -45,6 +82,28 @@
 
 .table .cell-input::placeholder {
   color: var(--muted);
+}
+
+.cell-date-display {
+  display: block;
+  min-width: 0;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.cell-date-placeholder {
+  color: var(--muted);
+}
+
+.cell-date-trigger {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+}
+
+.cell-date-trigger:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .table .cell-input-wrap {
@@ -109,6 +168,14 @@
 }
 
 .table .cell-select {
+  cursor: pointer;
+}
+
+.table .cell-date-display {
+  min-height: 34px;
+}
+
+.table .cell-date-trigger {
   cursor: pointer;
 }
 
