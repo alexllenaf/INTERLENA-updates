@@ -1600,6 +1600,8 @@ button.card-gallery-add {
   flex-wrap: wrap;
 }
 
+/* ── Application Alerts config (floating menus reuse select-menu / informational-table-columns-menu classes) ── */
+
 @media (max-width: 820px) {
   .informational-email-notice {
     grid-template-columns: 1fr;

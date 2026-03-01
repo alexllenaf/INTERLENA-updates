@@ -163,6 +163,11 @@ export type TableOverrides = {
   typeOverrides?: Record<string, TableSelectTypeOverride>;
 };
 
+export type AlertItemType = "followup" | "todo" | "interview" | "application";
+export type AlertStatusFilter = "overdue" | "soon" | "ok";
+export type AlertSortOrder = "date-asc" | "date-desc" | "status-first";
+export type AlertVisibleColumn = "type" | "company" | "detail" | "date" | "status";
+
 export type InformationalTableBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
@@ -170,7 +175,7 @@ export type InformationalTableBlockProps = LinkableBlockProps & {
   columns?: string[];
   rows?: string[][];
   columnWidths?: Record<string, number>;
-  sourceMode?: "manual" | "editableTable" | "email";
+  sourceMode?: "manual" | "editableTable" | "email" | "applicationAlerts";
   /** @deprecated Legacy field cleared on re-link; use BlockLinksMap instead */
   sourceCanonicalTableRef?: unknown;
   sourceColumnOrder?: string[];
@@ -186,6 +191,13 @@ export type InformationalTableBlockProps = LinkableBlockProps & {
   emailSummaryAwaitingReplyDays?: number;
   emailSummaryAwaitingResponseDays?: number;
   emailSummaryCardOrder?: Array<"recentVolume" | "receivedTimeline" | "awaitingReply" | "awaitingResponse">;
+  /** Calendar alerts mode config */
+  alertTypes?: AlertItemType[];
+  alertStatuses?: AlertStatusFilter[];
+  alertSortOrder?: AlertSortOrder;
+  alertMaxRows?: number;
+  alertVisibleColumns?: AlertVisibleColumn[];
+  alertColumnOrder?: AlertVisibleColumn[];
 };
 
 export type CalendarBlockProps = LinkableBlockProps & {

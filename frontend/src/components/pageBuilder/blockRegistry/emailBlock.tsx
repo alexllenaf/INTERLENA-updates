@@ -43,6 +43,7 @@ import {
 } from "../../../types";
 import { useAppData } from "../../../state";
 import { formatDateDisplay } from "../../../utils";
+import { useEmailBlockCachePublisher } from "../emailBlockCache";
 import { createSlotContext, renderHeader } from "./shared";
 import { type BlockDefinition } from "./types";
 
@@ -880,6 +881,7 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
   }),
   component: ({ block, mode, patchBlockProps, updateBlockProps, resolveSlot, menuActions }) => {
     const { settings, saveSettings, applications } = useAppData();
+    const emailBlockCache = useEmailBlockCachePublisher();
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
     const isReadModeEnabled = isWorkflowToggleEnabled(block.props.readEnabled, true);
@@ -1805,6 +1807,24 @@ export const EMAIL_BLOCK_DEFINITION: BlockDefinition<"email"> = {
         throw err;
       }
     }, [readLoadFullContent]);
+
+    // Publish readMessages to the shared email block cache so linked blocks
+    // (e.g. informational table) can reuse them without re-fetching from the API.
+    useEffect(() => {
+      if (!emailBlockCache) return;
+      emailBlockCache.publish({
+        blockId: block.id,
+        ready: !readMessagesLoading && !readMessagesRefreshing,
+        loading: readMessagesLoading || readMessagesRefreshing,
+        messages: readMessages,
+      });
+    }, [emailBlockCache, block.id, readMessages, readMessagesLoading, readMessagesRefreshing]);
+
+    // Evict from cache on unmount.
+    useEffect(() => {
+      if (!emailBlockCache) return;
+      return () => { emailBlockCache.evict(block.id); };
+    }, [emailBlockCache, block.id]);
 
     useEffect(() => {
       if (!isReadModeEnabled || workflowTab !== "read") return;

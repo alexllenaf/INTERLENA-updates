@@ -37,10 +37,13 @@ import { TRACKER_BASE_COLUMN_ORDER, TRACKER_COLUMN_LABELS } from "../../../share
 import { isRecord, normalizeCustomProperties, normalizeString, normalizeStringArray } from "../../../shared/normalize";
 import { useAppData } from "../../../state";
 import { type Application, type EmailMetadata, type GoogleAccount } from "../../../types";
+import { followupStatus } from "../../../utils";
 import BlockPanel from "../../BlockPanel";
+import { DateValueDisplay } from "../../TableCells";
 import {
   INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY,
   INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
+  INFORMATIONAL_TABLE_SOURCE_CALENDAR_LINK_KEY,
   collectBlockTargets,
   collectEditableTableTargets,
   buildBlockGraph,
@@ -48,7 +51,14 @@ import {
   getBlockLink,
   patchBlockLink
 } from "../blockLinks";
-import { type PageBlockPropsMap } from "../types";
+import {
+  type PageBlockPropsMap,
+  type AlertItemType,
+  type AlertStatusFilter,
+  type AlertSortOrder,
+  type AlertVisibleColumn
+} from "../types";
+import { useEmailBlockCacheEntry } from "../emailBlockCache";
 import { resolveEditableTableModel } from "./editableTableBlock";
 import { SourceTablePreview } from "./sourceTablePreview";
 import { createSlotContext, renderHeader } from "./shared";
@@ -120,7 +130,7 @@ const normalizeSourceMode = (
   value: unknown,
   fallback: InformationalTableSourceMode
 ): InformationalTableSourceMode => {
-  if (value === "editableTable" || value === "email" || value === "manual") {
+  if (value === "editableTable" || value === "email" || value === "manual" || value === "applicationAlerts") {
     return value;
   }
   return fallback;
@@ -539,6 +549,263 @@ const renderBasicTable = (
 
 const formatDaysWindowLabel = (days: number): string => (days === 7 ? "esta semana" : `ultimos ${days} dias`);
 
+/* ── Calendar Alerts helpers ───────────────────────────────────── */
+
+const ALL_ALERT_TYPES: AlertItemType[] = ["followup", "todo", "interview", "application"];
+const ALL_ALERT_STATUSES: AlertStatusFilter[] = ["overdue", "soon", "ok"];
+const ALL_ALERT_VISIBLE_COLUMNS: AlertVisibleColumn[] = ["type", "company", "detail", "date", "status"];
+const DEFAULT_ALERT_MAX_ROWS = 50;
+const MIN_ALERT_MAX_ROWS = 1;
+const MAX_ALERT_MAX_ROWS = 200;
+const ALERT_TYPE_LABELS: Record<AlertItemType, string> = {
+  followup: "Follow-Up",
+  todo: "To-Do",
+  interview: "Entrevista",
+  application: "Candidatura"
+};
+const ALERT_STATUS_LABELS: Record<AlertStatusFilter, string> = {
+  overdue: "Vencido",
+  soon: "Próximo",
+  ok: "OK"
+};
+const ALERT_STATUS_TAG_CLASS: Record<string, string> = {
+  overdue: "tag-overdue",
+  soon: "tag-soon",
+  ok: "tag-ok",
+  none: "tag-none"
+};
+const ALERT_COLUMN_LABELS: Record<AlertVisibleColumn, string> = {
+  type: "Tipo",
+  company: "Empresa",
+  detail: "Detalle",
+  date: "Fecha",
+  status: "Estado"
+};
+const ALERT_SORT_LABELS: Record<AlertSortOrder, string> = {
+  "date-asc": "Fecha ascendente",
+  "date-desc": "Fecha descendente",
+  "status-first": "Vencidos primero"
+};
+const ALERT_COLUMNS_MENU_WIDTH = 280;
+
+type AlertRow = {
+  id: string;
+  type: string;
+  company: string;
+  detail: string;
+  date: string | null | undefined;
+  status: string;
+};
+
+const normalizeAlertTypes = (raw: unknown): AlertItemType[] => {
+  if (!Array.isArray(raw) || raw.length === 0) return [...ALL_ALERT_TYPES];
+  const valid = raw.filter((v): v is AlertItemType => ALL_ALERT_TYPES.includes(v as AlertItemType));
+  return valid.length > 0 ? valid : [...ALL_ALERT_TYPES];
+};
+
+const normalizeAlertStatuses = (raw: unknown): AlertStatusFilter[] => {
+  if (!Array.isArray(raw) || raw.length === 0) return [...ALL_ALERT_STATUSES];
+  const valid = raw.filter((v): v is AlertStatusFilter => ALL_ALERT_STATUSES.includes(v as AlertStatusFilter));
+  return valid.length > 0 ? valid : [...ALL_ALERT_STATUSES];
+};
+
+const normalizeAlertSortOrder = (raw: unknown): AlertSortOrder => {
+  if (raw === "date-asc" || raw === "date-desc" || raw === "status-first") return raw;
+  return "date-asc";
+};
+
+const normalizeAlertMaxRows = (raw: unknown): number => {
+  const num = Math.round(Number(raw) || DEFAULT_ALERT_MAX_ROWS);
+  return Math.max(MIN_ALERT_MAX_ROWS, Math.min(MAX_ALERT_MAX_ROWS, num));
+};
+
+const normalizeAlertVisibleColumns = (raw: unknown): AlertVisibleColumn[] => {
+  if (!Array.isArray(raw) || raw.length === 0) return [...ALL_ALERT_VISIBLE_COLUMNS];
+  const valid = raw.filter((v): v is AlertVisibleColumn => ALL_ALERT_VISIBLE_COLUMNS.includes(v as AlertVisibleColumn));
+  return valid.length > 0 ? valid : [...ALL_ALERT_VISIBLE_COLUMNS];
+};
+
+const normalizeAlertColumnOrder = (raw: unknown, visibleColumns: AlertVisibleColumn[]): AlertVisibleColumn[] => {
+  if (!Array.isArray(raw) || raw.length === 0) return [...visibleColumns];
+  const valid = raw.filter((v): v is AlertVisibleColumn => ALL_ALERT_VISIBLE_COLUMNS.includes(v as AlertVisibleColumn));
+  const ordered: AlertVisibleColumn[] = [];
+  const used = new Set<AlertVisibleColumn>();
+  valid.forEach((col) => {
+    if (!used.has(col)) { ordered.push(col); used.add(col); }
+  });
+  visibleColumns.forEach((col) => {
+    if (!used.has(col)) { ordered.push(col); used.add(col); }
+  });
+  return ordered;
+};
+
+const buildAlertRows = (
+  applications: Application[],
+  types: AlertItemType[],
+  statuses: AlertStatusFilter[],
+  sortOrder: AlertSortOrder,
+  maxRows: number
+): AlertRow[] => {
+  const items: AlertRow[] = [];
+  const typesSet = new Set(types);
+  const statusesSet = new Set(statuses);
+
+  applications.forEach((app) => {
+    if (typesSet.has("followup") && app.followup_date) {
+      const st = followupStatus(app.followup_date);
+      if (st !== "none" && statusesSet.has(st as AlertStatusFilter)) {
+        items.push({
+          id: `${app.application_id}-followup`,
+          type: ALERT_TYPE_LABELS.followup,
+          company: app.company_name,
+          detail: app.position,
+          date: app.followup_date,
+          status: st
+        });
+      }
+    }
+    if (typesSet.has("todo")) {
+      (app.todo_items || []).forEach((todo) => {
+        const st = followupStatus(todo.due_date);
+        if (st !== "none" && statusesSet.has(st as AlertStatusFilter)) {
+          items.push({
+            id: `${app.application_id}-todo-${todo.id}`,
+            type: ALERT_TYPE_LABELS.todo,
+            company: app.company_name,
+            detail: todo.task,
+            date: todo.due_date,
+            status: st
+          });
+        }
+      });
+    }
+    if (typesSet.has("interview") && app.interview_datetime) {
+      const st = followupStatus(app.interview_datetime);
+      if (st !== "none" && statusesSet.has(st as AlertStatusFilter)) {
+        items.push({
+          id: `${app.application_id}-interview`,
+          type: ALERT_TYPE_LABELS.interview,
+          company: app.company_name,
+          detail: app.position,
+          date: app.interview_datetime,
+          status: st
+        });
+      }
+    }
+    if (typesSet.has("application") && app.application_date) {
+      const st = followupStatus(app.application_date);
+      if (st !== "none" && statusesSet.has(st as AlertStatusFilter)) {
+        items.push({
+          id: `${app.application_id}-application`,
+          type: ALERT_TYPE_LABELS.application,
+          company: app.company_name,
+          detail: app.position,
+          date: app.application_date,
+          status: st
+        });
+      }
+    }
+  });
+
+  const STATUS_PRIORITY: Record<string, number> = { overdue: 0, soon: 1, ok: 2 };
+  items.sort((a, b) => {
+    if (sortOrder === "status-first") {
+      const diff = (STATUS_PRIORITY[a.status] ?? 3) - (STATUS_PRIORITY[b.status] ?? 3);
+      if (diff !== 0) return diff;
+    }
+    const aTime = a.date ? new Date(a.date).getTime() : 0;
+    const bTime = b.date ? new Date(b.date).getTime() : 0;
+    if (!Number.isFinite(aTime) && !Number.isFinite(bTime)) return 0;
+    if (!Number.isFinite(aTime)) return 1;
+    if (!Number.isFinite(bTime)) return -1;
+    return sortOrder === "date-desc" ? bTime - aTime : aTime - bTime;
+  });
+
+  return items.slice(0, maxRows);
+};
+
+const renderAlertsTable = (
+  keyPrefix: string,
+  alerts: AlertRow[],
+  visibleColumns: AlertVisibleColumn[],
+  columnOrder: AlertVisibleColumn[],
+  emptyMessage: string
+) => {
+  // Apply column ordering: show columns in columnOrder sequence, filtered by visibility
+  const visibleSet = new Set(visibleColumns);
+  const orderedColumns = columnOrder.filter((col) => visibleSet.has(col));
+  if (orderedColumns.length === 0) {
+    visibleColumns.forEach((col) => { if (!orderedColumns.includes(col)) orderedColumns.push(col); });
+  }
+  return (
+    <div className="table-scroll">
+      <table className="table informational-table-grid">
+        <thead>
+          <tr>
+            {orderedColumns.map((col) => (
+              <th key={`${keyPrefix}-head-${col}`} className="informational-table-column-header">
+                <div className="th-content">
+                  <span className="column-label">{ALERT_COLUMN_LABELS[col]}</span>
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {alerts.length === 0 ? (
+            <tr>
+              <td colSpan={Math.max(1, orderedColumns.length)}>{emptyMessage}</td>
+            </tr>
+          ) : (
+            alerts.map((row) => (
+              <tr key={`${keyPrefix}-row-${row.id}`}>
+                {orderedColumns.map((col) => {
+                  if (col === "type") {
+                    return (
+                      <td key={`${keyPrefix}-cell-${row.id}-type`} className="informational-table-cell">
+                        {row.type}
+                      </td>
+                    );
+                  }
+                  if (col === "company") {
+                    return (
+                      <td key={`${keyPrefix}-cell-${row.id}-company`} className="informational-table-cell">
+                        {row.company}
+                      </td>
+                    );
+                  }
+                  if (col === "detail") {
+                    return (
+                      <td key={`${keyPrefix}-cell-${row.id}-detail`} className="informational-table-cell">
+                        {row.detail}
+                      </td>
+                    );
+                  }
+                  if (col === "date") {
+                    return (
+                      <td key={`${keyPrefix}-cell-${row.id}-date`} className="informational-table-cell">
+                        <DateValueDisplay value={row.date} allowTime />
+                      </td>
+                    );
+                  }
+                  if (col === "status") {
+                    return (
+                      <td key={`${keyPrefix}-cell-${row.id}-status`} className="informational-table-cell">
+                        <span className={`tag ${ALERT_STATUS_TAG_CLASS[row.status] || "tag-none"}`}>{row.status}</span>
+                      </td>
+                    );
+                  }
+                  return null;
+                })}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 const normalizeInformationalEmailContactFilter = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return Array.from(new Set(normalizeStringArray(value)));
@@ -798,8 +1065,26 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
     const contactFilterMenuRef = useRef<HTMLDivElement | null>(null);
     const visibleColumnsTriggerRef = useRef<HTMLButtonElement | null>(null);
     const visibleColumnsMenuRef = useRef<HTMLDivElement | null>(null);
+    // Alert type filter floating menu
+    const [alertTypeFilterOpen, setAlertTypeFilterOpen] = useState(false);
+    const [alertTypeFilterPos, setAlertTypeFilterPos] = useState<{ top: number; left: number } | null>(null);
+    const alertTypeFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const alertTypeFilterMenuRef = useRef<HTMLDivElement | null>(null);
+    // Alert status filter floating menu
+    const [alertStatusFilterOpen, setAlertStatusFilterOpen] = useState(false);
+    const [alertStatusFilterPos, setAlertStatusFilterPos] = useState<{ top: number; left: number } | null>(null);
+    const alertStatusFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const alertStatusFilterMenuRef = useRef<HTMLDivElement | null>(null);
+    // Alert columns draggable menu
+    const [alertColumnsMenuOpen, setAlertColumnsMenuOpen] = useState(false);
+    const [alertColumnsMenuPos, setAlertColumnsMenuPos] = useState<{ top: number; left: number } | null>(null);
+    const alertColumnsTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const alertColumnsMenuRef = useRef<HTMLDivElement | null>(null);
+    const [draggedAlertColumn, setDraggedAlertColumn] = useState<string | null>(null);
+    const [dragOverAlertColumn, setDragOverAlertColumn] = useState<string | null>(null);
     const columnWidthsRef = useRef<Record<string, number>>(normalizeColumnWidths(block.props.columnWidths));
     const emailLoadInFlightKeyRef = useRef<string | null>(null);
+    const emailCacheGraceDoneRef = useRef(false);
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
     const enableColumnResize = mode === "edit";
@@ -812,10 +1097,16 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       () => collectBlockTargets(settings).filter((target) => target.type === "email"),
       [settings]
     );
+    const calendarTargets = useMemo(
+      () => collectBlockTargets(settings).filter((target) => target.type === "calendar"),
+      [settings]
+    );
     const graph = useMemo(() => buildBlockGraph(settings), [settings]);
     const linkedTableTarget = resolveLinkedBlock(graph, block.props, INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY);
     const linkedEmailId = getBlockLink(block.props, INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY);
     const linkedEmailTarget = resolveLinkedBlock(graph, block.props, INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY);
+    const linkedCalendarTarget = resolveLinkedBlock(graph, block.props, INFORMATIONAL_TABLE_SOURCE_CALENDAR_LINK_KEY);
+    const emailBlockCache = useEmailBlockCacheEntry(linkedEmailId);
     const sourceMode = normalizeSourceMode(
       block.props.sourceMode,
       linkedTableTarget ? "editableTable" : linkedEmailTarget ? "email" : "manual"
@@ -855,6 +1146,24 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
     const manualColumns = useMemo(() => normalizeColumns(block.props.columns), [block.props.columns]);
     const manualRows = useMemo(() => normalizeRows(block.props.rows, manualColumns.length), [block.props.rows, manualColumns]);
     const persistedColumnWidths = useMemo(() => normalizeColumnWidths(block.props.columnWidths), [block.props.columnWidths]);
+
+    // ── Application Alerts data ──
+    const alertTypes = useMemo(() => normalizeAlertTypes(block.props.alertTypes), [block.props.alertTypes]);
+    const alertStatuses = useMemo(() => normalizeAlertStatuses(block.props.alertStatuses), [block.props.alertStatuses]);
+    const alertSortOrder = normalizeAlertSortOrder(block.props.alertSortOrder);
+    const alertMaxRows = normalizeAlertMaxRows(block.props.alertMaxRows);
+    const alertVisibleColumns = useMemo(() => normalizeAlertVisibleColumns(block.props.alertVisibleColumns), [block.props.alertVisibleColumns]);
+    const alertColumnOrder = useMemo(
+      () => normalizeAlertColumnOrder(block.props.alertColumnOrder, alertVisibleColumns),
+      [block.props.alertColumnOrder, alertVisibleColumns]
+    );
+    const alertRows = useMemo(
+      () =>
+        sourceMode === "applicationAlerts"
+          ? buildAlertRows(applications, alertTypes, alertStatuses, alertSortOrder, alertMaxRows)
+          : [],
+      [applications, alertTypes, alertStatuses, alertSortOrder, alertMaxRows, sourceMode]
+    );
 
     const linkedTableModel = useMemo<InformationalLinkedTableModel | null>(() => {
       if (!linkedTableTarget) return null;
@@ -1145,6 +1454,128 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       };
     }, [contactFilterOpen]);
 
+    // ── Alert floating menus: cleanup on config/mode change ──
+    useEffect(() => {
+      if (!isConfigOpen || sourceMode !== "applicationAlerts") {
+        setAlertTypeFilterOpen(false);
+        setAlertTypeFilterPos(null);
+        setAlertStatusFilterOpen(false);
+        setAlertStatusFilterPos(null);
+        setAlertColumnsMenuOpen(false);
+        setAlertColumnsMenuPos(null);
+        setDraggedAlertColumn(null);
+        setDragOverAlertColumn(null);
+      }
+    }, [isConfigOpen, sourceMode]);
+
+    useEffect(() => {
+      if (!alertColumnsMenuOpen) {
+        setDraggedAlertColumn(null);
+        setDragOverAlertColumn(null);
+      }
+    }, [alertColumnsMenuOpen]);
+
+    // ── Alert type filter floating menu positioning ──
+    useEffect(() => {
+      if (!alertTypeFilterOpen || !alertTypeFilterTriggerRef.current) return;
+      const MENU_WIDTH = 260;
+      const updatePosition = () => {
+        if (!alertTypeFilterTriggerRef.current) return;
+        const rect = alertTypeFilterTriggerRef.current.getBoundingClientRect();
+        const menuHeight = alertTypeFilterMenuRef.current?.offsetHeight || 200;
+        const menuWidth = Math.min(MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2);
+        const maxLeft = Math.max(FLOATING_MENU_GUTTER, window.innerWidth - menuWidth - FLOATING_MENU_GUTTER);
+        const left = Math.min(Math.max(rect.left, FLOATING_MENU_GUTTER), maxLeft);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const shouldFlip = spaceBelow < menuHeight + FLOATING_MENU_OFFSET && rect.top > spaceBelow;
+        const rawTop = shouldFlip ? rect.top - menuHeight - FLOATING_MENU_OFFSET : rect.bottom + FLOATING_MENU_OFFSET;
+        const maxTop = Math.max(FLOATING_MENU_GUTTER, window.innerHeight - menuHeight - FLOATING_MENU_GUTTER);
+        const top = Math.min(Math.max(rawTop, FLOATING_MENU_GUTTER), maxTop);
+        setAlertTypeFilterPos({ top, left });
+      };
+      const handleOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (alertTypeFilterMenuRef.current?.contains(target) || alertTypeFilterTriggerRef.current?.contains(target)) return;
+        setAlertTypeFilterOpen(false);
+      };
+      updatePosition();
+      document.addEventListener("mousedown", handleOutside);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      return () => {
+        document.removeEventListener("mousedown", handleOutside);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }, [alertTypeFilterOpen]);
+
+    // ── Alert status filter floating menu positioning ──
+    useEffect(() => {
+      if (!alertStatusFilterOpen || !alertStatusFilterTriggerRef.current) return;
+      const MENU_WIDTH = 220;
+      const updatePosition = () => {
+        if (!alertStatusFilterTriggerRef.current) return;
+        const rect = alertStatusFilterTriggerRef.current.getBoundingClientRect();
+        const menuHeight = alertStatusFilterMenuRef.current?.offsetHeight || 180;
+        const menuWidth = Math.min(MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2);
+        const maxLeft = Math.max(FLOATING_MENU_GUTTER, window.innerWidth - menuWidth - FLOATING_MENU_GUTTER);
+        const left = Math.min(Math.max(rect.left, FLOATING_MENU_GUTTER), maxLeft);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const shouldFlip = spaceBelow < menuHeight + FLOATING_MENU_OFFSET && rect.top > spaceBelow;
+        const rawTop = shouldFlip ? rect.top - menuHeight - FLOATING_MENU_OFFSET : rect.bottom + FLOATING_MENU_OFFSET;
+        const maxTop = Math.max(FLOATING_MENU_GUTTER, window.innerHeight - menuHeight - FLOATING_MENU_GUTTER);
+        const top = Math.min(Math.max(rawTop, FLOATING_MENU_GUTTER), maxTop);
+        setAlertStatusFilterPos({ top, left });
+      };
+      const handleOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (alertStatusFilterMenuRef.current?.contains(target) || alertStatusFilterTriggerRef.current?.contains(target)) return;
+        setAlertStatusFilterOpen(false);
+      };
+      updatePosition();
+      document.addEventListener("mousedown", handleOutside);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      return () => {
+        document.removeEventListener("mousedown", handleOutside);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }, [alertStatusFilterOpen]);
+
+    // ── Alert columns draggable menu positioning ──
+    useEffect(() => {
+      if (!alertColumnsMenuOpen || !alertColumnsTriggerRef.current) return;
+      const updatePosition = () => {
+        if (!alertColumnsTriggerRef.current) return;
+        const rect = alertColumnsTriggerRef.current.getBoundingClientRect();
+        const menuHeight = alertColumnsMenuRef.current?.offsetHeight || 320;
+        const menuWidth = Math.min(ALERT_COLUMNS_MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2);
+        const maxLeft = Math.max(FLOATING_MENU_GUTTER, window.innerWidth - menuWidth - FLOATING_MENU_GUTTER);
+        const left = Math.min(Math.max(rect.left, FLOATING_MENU_GUTTER), maxLeft);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const shouldFlip = spaceBelow < menuHeight + FLOATING_MENU_OFFSET && rect.top > spaceBelow;
+        const rawTop = shouldFlip ? rect.top - menuHeight - FLOATING_MENU_OFFSET : rect.bottom + FLOATING_MENU_OFFSET;
+        const maxTop = Math.max(FLOATING_MENU_GUTTER, window.innerHeight - menuHeight - FLOATING_MENU_GUTTER);
+        const top = Math.min(Math.max(rawTop, FLOATING_MENU_GUTTER), maxTop);
+        setAlertColumnsMenuPos({ top, left });
+      };
+      const handleOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (alertColumnsMenuRef.current?.contains(target) || alertColumnsTriggerRef.current?.contains(target)) return;
+        setAlertColumnsMenuOpen(false);
+      };
+      updatePosition();
+      document.addEventListener("mousedown", handleOutside);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      return () => {
+        document.removeEventListener("mousedown", handleOutside);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }, [alertColumnsMenuOpen]);
+
     useEffect(() => {
       if (!resizing) return;
       const handleMove = (event: MouseEvent) => {
@@ -1216,6 +1647,62 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
         return;
       }
 
+      // ── Fast path: reuse messages already loaded by the linked email block ──
+      if (emailBlockCache && emailBlockCache.ready && emailBlockCache.messages.length > 0) {
+        const contactSet = new Set(filteredReadContacts.map((c) => c.email));
+        const matched = emailBlockCache.messages
+          .filter((msg) => contactSet.has(msg.contactEmail))
+          .map((msg) => ({
+            ...msg,
+            direction: buildEmailDirection(msg, msg.contactEmail) as "Recibido" | "Enviado"
+          }));
+        emailLoadInFlightKeyRef.current = emailLoadRequestKey;
+        setEmailState({
+          loading: false,
+          error: null,
+          messages: mergeEmailMessages(matched),
+          contactsReviewed: filteredReadContacts.length,
+          totalContacts: filteredReadContacts.length
+        });
+        return;
+      }
+
+      // ── If the email block is still loading, wait for it ──
+      if (emailBlockCache && emailBlockCache.loading) {
+        setEmailState({
+          loading: true,
+          error: null,
+          messages: [],
+          contactsReviewed: filteredReadContacts.length,
+          totalContacts: filteredReadContacts.length
+        });
+        return;
+      }
+
+      // ── Grace period: the linked email block may not have published yet ──
+      // On first mount both blocks render in the same cycle; the email block's
+      // publish useEffect hasn't fired yet so emailBlockCache is null.  Wait a
+      // short moment so the cache has a chance to appear before we launch our
+      // own (potentially heavy) HTTP requests.
+      if (linkedEmailId && !emailBlockCache && !emailCacheGraceDoneRef.current) {
+        emailCacheGraceDoneRef.current = true;
+        const graceTimer = setTimeout(() => {
+          // After the grace period, bump the in-flight key so the effect re-runs
+          // and re-evaluates the cache.
+          emailLoadInFlightKeyRef.current = null;
+          setEmailState((prev) => ({ ...prev })); // trigger re-render
+        }, 250);
+        setEmailState({
+          loading: true,
+          error: null,
+          messages: [],
+          contactsReviewed: filteredReadContacts.length,
+          totalContacts: filteredReadContacts.length
+        });
+        return () => { clearTimeout(graceTimer); };
+      }
+
+      // ── Fallback: fetch from API (no cache available) ──
       if (emailLoadInFlightKeyRef.current === emailLoadRequestKey) {
         return;
       }
@@ -1237,6 +1724,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
             contacts: contactsToLoad,
             folder: linkedEmailFolderParam,
             startDate: effectiveEmailStartDate,
+            refresh: false,
             signal: controller.signal
           });
           if (controller.signal.aborted) return;
@@ -1291,7 +1779,8 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       linkedEmailFolderParam,
       effectiveEmailStartDate,
       linkedEmailId,
-      sourceMode
+      sourceMode,
+      emailBlockCache
     ]);
 
     const filteredEmailMessages = useMemo(
@@ -1421,6 +1910,67 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       });
     };
 
+    const setLinkedCalendar = (nextBlockId: string) => {
+      patchBlockProps({
+        ...(patchBlockLink(
+          block.props,
+          INFORMATIONAL_TABLE_SOURCE_CALENDAR_LINK_KEY,
+          nextBlockId || null
+        ) as Partial<PageBlockPropsMap["informationalTable"]>),
+        sourceMode: "applicationAlerts"
+      });
+    };
+
+    const toggleAlertType = (at: AlertItemType) => {
+      const checked = alertTypes.includes(at);
+      const next = checked ? alertTypes.filter((t) => t !== at) : [...alertTypes, at];
+      patchBlockProps({
+        alertTypes: next.length >= ALL_ALERT_TYPES.length ? undefined : next.length > 0 ? next : undefined
+      });
+    };
+
+    const toggleAlertStatus = (st: AlertStatusFilter) => {
+      const checked = alertStatuses.includes(st);
+      const next = checked ? alertStatuses.filter((s) => s !== st) : [...alertStatuses, st];
+      patchBlockProps({
+        alertStatuses: next.length >= ALL_ALERT_STATUSES.length ? undefined : next.length > 0 ? next : undefined
+      });
+    };
+
+    const toggleAlertVisibleColumn = (col: AlertVisibleColumn) => {
+      const checked = alertVisibleColumns.includes(col);
+      const next = checked ? alertVisibleColumns.filter((c) => c !== col) : [...alertVisibleColumns, col];
+      if (next.length === 0) return;
+      patchBlockProps({
+        alertVisibleColumns: next.length >= ALL_ALERT_VISIBLE_COLUMNS.length ? undefined : next
+      });
+    };
+
+    const moveAlertColumn = (fromCol: AlertVisibleColumn, toCol: AlertVisibleColumn) => {
+      if (fromCol === toCol) return;
+      const fromIndex = alertColumnOrder.indexOf(fromCol);
+      const toIndex = alertColumnOrder.indexOf(toCol);
+      if (fromIndex < 0 || toIndex < 0) return;
+      const reordered = reorderByIndex(alertColumnOrder, fromIndex, toIndex);
+      const isDefault = reordered.every((c, i) => c === ALL_ALERT_VISIBLE_COLUMNS[i]);
+      patchBlockProps({ alertColumnOrder: isDefault ? undefined : reordered });
+    };
+
+    const alertTypesSummary =
+      alertTypes.length >= ALL_ALERT_TYPES.length
+        ? `Todos (${ALL_ALERT_TYPES.length})`
+        : alertTypes.map((t) => ALERT_TYPE_LABELS[t]).join(" · ");
+
+    const alertStatusesSummary =
+      alertStatuses.length >= ALL_ALERT_STATUSES.length
+        ? `Todos (${ALL_ALERT_STATUSES.length})`
+        : alertStatuses.map((s) => ALERT_STATUS_LABELS[s]).join(" · ");
+
+    const alertColumnsSummary =
+      alertVisibleColumns.length >= ALL_ALERT_VISIBLE_COLUMNS.length
+        ? `Todas (${ALL_ALERT_VISIBLE_COLUMNS.length})`
+        : `${alertVisibleColumns.length}/${ALL_ALERT_VISIBLE_COLUMNS.length} visibles`;
+
     const startColumnResize = (column: string, event: React.MouseEvent<HTMLDivElement>) => {
       if (!enableColumnResize) return;
       event.preventDefault();
@@ -1504,6 +2054,16 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
         );
       }
 
+      if (sourceMode === "applicationAlerts") {
+        return renderAlertsTable(
+          `${block.id}-alerts-table`,
+          alertRows,
+          alertVisibleColumns,
+          alertColumnOrder,
+          "No hay alertas pendientes."
+        );
+      }
+
       if (slot) return slot;
 
       return renderBasicTable(`${block.id}-manual-table`, manualColumns, manualRows, "Sin filas en esta tabla.", {
@@ -1546,6 +2106,15 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
               emptyMessage="No hay correos recientes disponibles."
             />
           </div>
+        );
+      }
+      if (sourceMode === "applicationAlerts") {
+        return renderAlertsTable(
+          `${block.id}-alerts-preview`,
+          alertRows.slice(0, 8),
+          alertVisibleColumns,
+          alertColumnOrder,
+          "No hay alertas pendientes."
         );
       }
       return (
@@ -1607,6 +2176,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                             <option value="manual">Manual</option>
                             <option value="editableTable">Tabla editable</option>
                             <option value="email">Correo</option>
+                            <option value="applicationAlerts">Calendario</option>
                           </select>
                         </div>
 
@@ -1951,6 +2521,124 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                             </div>
                           </>
                         ) : null}
+
+                        {sourceMode === "applicationAlerts" ? (
+                          <>
+                            <div className="field">
+                              <label htmlFor={`${block.id}-informational-source-calendar`}>Calendario vinculado</label>
+                              <select
+                                id={`${block.id}-informational-source-calendar`}
+                                value={linkedCalendarTarget?.blockId || ""}
+                                onChange={(event) => setLinkedCalendar(event.target.value)}
+                              >
+                                <option value="">Sin vincular (todas las aplicaciones)</option>
+                                {calendarTargets.map((target) => (
+                                  <option key={target.blockId} value={target.blockId}>
+                                    {formatTargetLabel(target)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="field">
+                              <span className="block-field-label">Tipos de alerta</span>
+                              <p className="block-field-hint">Filtra qué tipos de evento mostrar.</p>
+                              <div className="informational-table-columns-control">
+                                <button
+                                  ref={alertTypeFilterTriggerRef}
+                                  type="button"
+                                  className={`select-trigger informational-table-columns-trigger ${alertTypeFilterOpen ? "open" : ""}`}
+                                  onClick={() => setAlertTypeFilterOpen((c) => !c)}
+                                  aria-haspopup="listbox"
+                                  aria-expanded={alertTypeFilterOpen}
+                                >
+                                  <span className="select-pill">{alertTypesSummary}</span>
+                                  <span className="select-caret">▾</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="field">
+                              <span className="block-field-label">Estados visibles</span>
+                              <p className="block-field-hint">Filtra por estado de la alerta.</p>
+                              <div className="informational-table-columns-control">
+                                <button
+                                  ref={alertStatusFilterTriggerRef}
+                                  type="button"
+                                  className={`select-trigger informational-table-columns-trigger ${alertStatusFilterOpen ? "open" : ""}`}
+                                  onClick={() => setAlertStatusFilterOpen((c) => !c)}
+                                  aria-haspopup="listbox"
+                                  aria-expanded={alertStatusFilterOpen}
+                                >
+                                  <span className="select-pill">{alertStatusesSummary}</span>
+                                  <span className="select-caret">▾</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="field">
+                              <label htmlFor={`${block.id}-informational-alert-sort`}>Ordenar por</label>
+                              <select
+                                id={`${block.id}-informational-alert-sort`}
+                                value={alertSortOrder}
+                                onChange={(event) =>
+                                  patchBlockProps({
+                                    alertSortOrder: (event.target.value as AlertSortOrder) || undefined
+                                  })
+                                }
+                              >
+                                {(Object.keys(ALERT_SORT_LABELS) as AlertSortOrder[]).map((key) => (
+                                  <option key={key} value={key}>
+                                    {ALERT_SORT_LABELS[key]}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="field">
+                              <label htmlFor={`${block.id}-informational-alert-max`}>Máximo de filas</label>
+                              <input
+                                id={`${block.id}-informational-alert-max`}
+                                type="number"
+                                min={MIN_ALERT_MAX_ROWS}
+                                max={MAX_ALERT_MAX_ROWS}
+                                value={alertMaxRows}
+                                onChange={(event) =>
+                                  patchBlockProps({
+                                    alertMaxRows: normalizeAlertMaxRows(event.target.value)
+                                  })
+                                }
+                              />
+                              <p className="block-field-hint">Límite de filas a mostrar en la tabla de alertas.</p>
+                            </div>
+
+                            <div className="field full">
+                              <span className="block-field-label">Columnas visibles</span>
+                              <p className="block-field-hint">Selecciona y arrastra para reordenar las columnas.</p>
+                              <div className="informational-table-columns-control">
+                                <button
+                                  ref={alertColumnsTriggerRef}
+                                  type="button"
+                                  className={`select-trigger informational-table-columns-trigger ${alertColumnsMenuOpen ? "open" : ""}`}
+                                  onClick={() => setAlertColumnsMenuOpen((c) => !c)}
+                                  aria-haspopup="menu"
+                                  aria-expanded={alertColumnsMenuOpen}
+                                >
+                                  <span className="select-pill">{alertColumnsSummary}</span>
+                                  <span className="select-caret">▾</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ghost"
+                                  onClick={() => patchBlockProps({ alertVisibleColumns: undefined, alertColumnOrder: undefined })}
+                                  disabled={alertVisibleColumns.length === ALL_ALERT_VISIBLE_COLUMNS.length && alertColumnOrder.every((c, i) => c === ALL_ALERT_VISIBLE_COLUMNS[i])}
+                                >
+                                  Mostrar todas
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                     </section>
                   </div>
@@ -1966,7 +2654,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                       <div className="informational-table-status-list">
                         <div className="informational-table-status-item">
                           <span>Modo</span>
-                          <strong>{sourceMode === "editableTable" ? "Tabla editable" : sourceMode === "email" ? "Correo" : "Manual"}</strong>
+                          <strong>{sourceMode === "editableTable" ? "Tabla editable" : sourceMode === "email" ? "Correo" : sourceMode === "applicationAlerts" ? "Calendario" : "Manual"}</strong>
                         </div>
                         <div className="informational-table-status-item">
                           <span>Origen</span>
@@ -1979,7 +2667,11 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                                 ? linkedEmailTarget
                                   ? formatTargetLabel(linkedEmailTarget)
                                   : "Sin vincular"
-                                : "Tabla local"}
+                                : sourceMode === "applicationAlerts"
+                                  ? linkedCalendarTarget
+                                    ? formatTargetLabel(linkedCalendarTarget)
+                                    : "Todas las aplicaciones"
+                                  : "Tabla local"}
                           </strong>
                         </div>
                         <div className="informational-table-status-item">
@@ -1989,7 +2681,9 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                               ? effectiveLinkedTableModel?.rows.length || linkedTableModel?.rows.length || 0
                               : sourceMode === "email"
                                 ? emailTableData.rows.length
-                                : manualRows.length}
+                                : sourceMode === "applicationAlerts"
+                                  ? alertRows.length
+                                  : manualRows.length}
                           </strong>
                         </div>
                         {sourceMode === "editableTable" && linkedTableModel ? (
@@ -2035,6 +2729,30 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                             <div className="informational-table-status-item">
                               <span>Orden resumen</span>
                               <strong>{emailSummaryCardOrder.map((cardId) => EMAIL_SUMMARY_CARD_LABELS[cardId]).join(" · ")}</strong>
+                            </div>
+                          </>
+                        ) : null}
+                        {sourceMode === "applicationAlerts" ? (
+                          <>
+                            <div className="informational-table-status-item">
+                              <span>Tipos</span>
+                              <strong>{alertTypes.map((t) => ALERT_TYPE_LABELS[t]).join(" · ")}</strong>
+                            </div>
+                            <div className="informational-table-status-item">
+                              <span>Estados</span>
+                              <strong>{alertStatuses.map((s) => ALERT_STATUS_LABELS[s]).join(" · ")}</strong>
+                            </div>
+                            <div className="informational-table-status-item">
+                              <span>Orden</span>
+                              <strong>{ALERT_SORT_LABELS[alertSortOrder]}</strong>
+                            </div>
+                            <div className="informational-table-status-item">
+                              <span>Columnas</span>
+                              <strong>{alertVisibleColumns.map((c) => ALERT_COLUMN_LABELS[c]).join(" · ")}</strong>
+                            </div>
+                            <div className="informational-table-status-item">
+                              <span>Máximo filas</span>
+                              <strong>{alertMaxRows}</strong>
                             </div>
                           </>
                         ) : null}
@@ -2246,6 +2964,195 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                   disabled={effectiveEmailContactFilter.length === 0}
                 >
                   <span className="select-label">Mostrar todos</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        {/* Alert type filter floating menu */}
+        {alertTypeFilterOpen &&
+          alertTypeFilterPos &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={alertTypeFilterMenuRef}
+              className="select-menu informational-email-filter-menu"
+              style={{
+                position: "fixed",
+                top: alertTypeFilterPos.top,
+                left: alertTypeFilterPos.left,
+                width:
+                  typeof window !== "undefined"
+                    ? Math.min(280, window.innerWidth - FLOATING_MENU_GUTTER * 2)
+                    : 280,
+                zIndex: 80
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div
+                className="select-options informational-email-filter-list"
+                role="listbox"
+                aria-label="Tipos de alerta"
+                aria-multiselectable="true"
+              >
+                {ALL_ALERT_TYPES.map((at) => {
+                  const checked = alertTypes.includes(at);
+                  return (
+                    <button
+                      type="button"
+                      key={`${block.id}-alert-type-option-${at}`}
+                      className={`select-option${checked ? " selected" : ""}`}
+                      onClick={() => toggleAlertType(at)}
+                    >
+                      <span className="select-label">{ALERT_TYPE_LABELS[at]}</span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+                <div className="column-menu-separator" />
+                <button
+                  type="button"
+                  className="select-option"
+                  onClick={() => {
+                    patchBlockProps({ alertTypes: undefined });
+                    setAlertTypeFilterOpen(false);
+                  }}
+                  disabled={alertTypes.length >= ALL_ALERT_TYPES.length}
+                >
+                  <span className="select-label">Seleccionar todos</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        {/* Alert status filter floating menu */}
+        {alertStatusFilterOpen &&
+          alertStatusFilterPos &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={alertStatusFilterMenuRef}
+              className="select-menu informational-email-filter-menu"
+              style={{
+                position: "fixed",
+                top: alertStatusFilterPos.top,
+                left: alertStatusFilterPos.left,
+                width:
+                  typeof window !== "undefined"
+                    ? Math.min(240, window.innerWidth - FLOATING_MENU_GUTTER * 2)
+                    : 240,
+                zIndex: 80
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div
+                className="select-options informational-email-filter-list"
+                role="listbox"
+                aria-label="Estados de alerta"
+                aria-multiselectable="true"
+              >
+                {ALL_ALERT_STATUSES.map((st) => {
+                  const checked = alertStatuses.includes(st);
+                  return (
+                    <button
+                      type="button"
+                      key={`${block.id}-alert-status-option-${st}`}
+                      className={`select-option${checked ? " selected" : ""}`}
+                      onClick={() => toggleAlertStatus(st)}
+                    >
+                      <span className="select-label"><span className={`tag tag-${st}`}>{ALERT_STATUS_LABELS[st]}</span></span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+                <div className="column-menu-separator" />
+                <button
+                  type="button"
+                  className="select-option"
+                  onClick={() => {
+                    patchBlockProps({ alertStatuses: undefined });
+                    setAlertStatusFilterOpen(false);
+                  }}
+                  disabled={alertStatuses.length >= ALL_ALERT_STATUSES.length}
+                >
+                  <span className="select-label">Seleccionar todos</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        {/* Alert columns draggable floating menu */}
+        {alertColumnsMenuOpen &&
+          alertColumnsMenuPos &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={alertColumnsMenuRef}
+              className="select-menu informational-table-columns-menu"
+              style={{
+                position: "fixed",
+                top: alertColumnsMenuPos.top,
+                left: alertColumnsMenuPos.left,
+                width:
+                  typeof window !== "undefined"
+                    ? Math.min(VISIBLE_COLUMNS_MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2)
+                    : VISIBLE_COLUMNS_MENU_WIDTH,
+                zIndex: 80
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="select-options" role="menu" aria-label="Columnas de alertas">
+                {alertColumnOrder.map((col) => {
+                  const checked = alertVisibleColumns.includes(col);
+                  return (
+                    <button
+                      key={`${block.id}-alert-col-option-${col}`}
+                      type="button"
+                      className={`select-option draggable ${checked ? "selected" : ""} ${dragOverAlertColumn === col ? "drag-over" : ""}`}
+                      draggable
+                      onDragStart={() => {
+                        setDraggedAlertColumn(col);
+                        setDragOverAlertColumn(null);
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        if (!draggedAlertColumn || draggedAlertColumn === col) return;
+                        setDragOverAlertColumn(col);
+                      }}
+                      onDragLeave={() => {
+                        setDragOverAlertColumn((current) => (current === col ? null : current));
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        if (!draggedAlertColumn || draggedAlertColumn === col) return;
+                        moveAlertColumn(draggedAlertColumn as AlertVisibleColumn, col);
+                        setDraggedAlertColumn(null);
+                        setDragOverAlertColumn(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedAlertColumn(null);
+                        setDragOverAlertColumn(null);
+                      }}
+                      onClick={() => toggleAlertVisibleColumn(col)}
+                    >
+                      <span className="select-drag" aria-hidden="true">⋮⋮</span>
+                      <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
+                      <span className="select-label">{ALERT_COLUMN_LABELS[col]}</span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+                <div className="column-menu-separator" />
+                <button
+                  type="button"
+                  className="select-option"
+                  onClick={() => {
+                    patchBlockProps({ alertVisibleColumns: undefined, alertColumnOrder: undefined });
+                    setAlertColumnsMenuOpen(false);
+                  }}
+                >
+                  <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
+                  <span className="select-label">Mostrar todas</span>
                 </button>
               </div>
             </div>,

@@ -21,6 +21,23 @@ type Props = {
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
 };
 
+// ---------------------------------------------------------------------------
+// Vite HMR — module-level flush registry
+// When Vite replaces this module, dispose() fires *before* the old component
+// unmounts.  We keep a Set of flush callbacks so every mounted instance can
+// push its pending changes with keepalive before the old module is discarded.
+// ---------------------------------------------------------------------------
+const _hmrFlushCallbacks = new Set<() => void>();
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    for (const cb of _hmrFlushCallbacks) {
+      try { cb(); } catch { /* best-effort */ }
+    }
+    _hmrFlushCallbacks.clear();
+  });
+}
+
 const withTimestamp = (config: PageConfig): PageConfig => ({
   ...config,
   updated_at: new Date().toISOString()
@@ -162,7 +179,23 @@ const PageBuilderPage: React.FC<Props> = ({
       canonicalConfig: PageConfig;
     }): Promise<PageConfig> => {
       const currentSettings = settingsRef.current;
-      if (!currentSettings || !hasStoredPageConfig(currentSettings, pageId)) {
+
+      // ---------------------------------------------------------------
+      // CRITICAL: When settings haven't loaded yet, do NOT touch
+      // localStorage.  The second reconciliation useEffect will fire
+      // once settings arrive and perform the proper localStorage vs
+      // canonical comparison.  Calling syncShadowSnapshot here would
+      // overwrite localStorage with the canonical version, destroying
+      // any user data (blocks, links) that only exists in localStorage.
+      // ---------------------------------------------------------------
+      if (!currentSettings) {
+        trace("rehydrate:skip-sync:no-settings", {
+          config: summarizePageConfig(opts.canonicalConfig)
+        });
+        return opts.canonicalConfig;
+      }
+
+      if (!hasStoredPageConfig(currentSettings, pageId)) {
         syncShadowSnapshot(pageId, opts.canonicalConfig);
         return opts.canonicalConfig;
       }
@@ -206,7 +239,7 @@ const PageBuilderPage: React.FC<Props> = ({
   );
 
   const flushPageConfig = useCallback(
-    (forceConfig?: PageConfig) => {
+    (forceConfig?: PageConfig, keepalive?: boolean) => {
       const persist = async () => {
         const nextConfig = forceConfig || pageConfigRef.current;
         const nextJson = JSON.stringify(nextConfig);
@@ -237,7 +270,7 @@ const PageBuilderPage: React.FC<Props> = ({
         }
 
         try {
-          const persisted = await savePageBlocks(canonicalPageId, toCanonicalBlocks(nextConfig));
+          const persisted = await savePageBlocks(canonicalPageId, toCanonicalBlocks(nextConfig), keepalive);
           const canonicalConfig = withTimestamp(
             fromCanonicalBlocks(pageId, persisted.blocks || [], nextConfig)
           );
@@ -432,21 +465,40 @@ const PageBuilderPage: React.FC<Props> = ({
       }
       const pending = pendingFlushRef.current;
       pendingFlushRef.current = null;
-      flushPageConfig(pending || undefined);
+      flushPageConfig(pending || undefined, true);
     };
   }, [flushPageConfig]);
 
+  // Register a module-level HMR flush callback so Vite dispose can persist
+  // pending changes even before React has a chance to unmount the component.
   useEffect(() => {
-    const handlePageHide = () => flushPageConfig();
+    const hmrCb = () => {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const pending = pendingFlushRef.current;
+      pendingFlushRef.current = null;
+      flushPageConfig(pending || undefined, true);
+    };
+    _hmrFlushCallbacks.add(hmrCb);
+    return () => { _hmrFlushCallbacks.delete(hmrCb); };
+  }, [flushPageConfig]);
+
+  useEffect(() => {
+    const handlePageHide = () => flushPageConfig(undefined, true);
+    const handleBeforeUnload = () => flushPageConfig(undefined, true);
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") {
-        flushPageConfig();
+        flushPageConfig(undefined, true);
       }
     };
     window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handleBeforeUnload);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [flushPageConfig]);

@@ -27,6 +27,7 @@ export const PIPELINE_SOURCE_TABLE_LINK_KEY = "pipeline.sourceTable";
 export const CARD_GALLERY_SOURCE_TABLE_LINK_KEY = "cardGallery.sourceTable";
 export const INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY = "informationalTable.sourceTable";
 export const INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY = "informationalTable.sourceEmail";
+export const INFORMATIONAL_TABLE_SOURCE_CALENDAR_LINK_KEY = "informationalTable.sourceCalendar";
 
 // ---------------------------------------------------------------------------
 // Link normalization — links are always plain blockId strings (Notion model)
@@ -182,6 +183,15 @@ const pickNewestPageConfig = (base: unknown, incoming: unknown): unknown => {
   return incoming;
 };
 
+/** Well-known template page IDs that always exist even if not yet in backend page_configs */
+const KNOWN_TEMPLATE_PAGE_IDS = new Set([
+  "tracker",
+  "dashboard",
+  "analytics",
+  "pipeline",
+  "calendar"
+]);
+
 const mergePageConfigs = (settings: unknown): Record<string, unknown> => {
   const fromSettings =
     isRecord(settings) && isRecord(settings.page_configs)
@@ -189,9 +199,47 @@ const mergePageConfigs = (settings: unknown): Record<string, unknown> => {
       : {};
   const fromLocal = readLocalPageConfigs();
   const merged: Record<string, unknown> = { ...fromSettings };
+
+  // Collect stale localStorage page IDs to prune after merge
+  const staleLocalPageIds: string[] = [];
+
   Object.entries(fromLocal).forEach(([pageId, pageConfig]) => {
-    merged[pageId] = pickNewestPageConfig(merged[pageId], pageConfig);
+    // Only merge localStorage entries for pages the backend knows about or
+    // well-known template pages.  Pages that exist ONLY in localStorage are
+    // likely stale remnants of deleted pages and would create phantom entries
+    // in block-target dropdowns (e.g. chart → source table selector).
+    if (pageId in fromSettings || KNOWN_TEMPLATE_PAGE_IDS.has(pageId)) {
+      merged[pageId] = pickNewestPageConfig(merged[pageId], pageConfig);
+    } else {
+      staleLocalPageIds.push(pageId);
+    }
   });
+
+  // Prune stale localStorage entries asynchronously so they don't come back
+  if (staleLocalPageIds.length > 0) {
+    try {
+      const raw = window.localStorage.getItem(PAGE_CONFIGS_LOCAL_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (isRecord(parsed)) {
+          const cleaned = { ...parsed };
+          let changed = false;
+          for (const id of staleLocalPageIds) {
+            if (id in cleaned) {
+              delete cleaned[id];
+              changed = true;
+            }
+          }
+          if (changed) {
+            window.localStorage.setItem(PAGE_CONFIGS_LOCAL_KEY, JSON.stringify(cleaned));
+          }
+        }
+      }
+    } catch {
+      // Ignore localStorage write errors
+    }
+  }
+
   return merged;
 };
 

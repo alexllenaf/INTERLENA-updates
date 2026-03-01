@@ -403,10 +403,15 @@ export async function getPageBlocksByLegacyKey(legacyKey: string): Promise<PageB
   return request<PageBlocksResult>(`/pages/by-legacy/${encodeURIComponent(legacyKey)}/blocks`);
 }
 
-export async function savePageBlocks(pageId: string, blocks: CanonicalBlock[]): Promise<PageBlocksResult> {
+export async function savePageBlocks(
+  pageId: string,
+  blocks: CanonicalBlock[],
+  keepalive?: boolean
+): Promise<PageBlocksResult> {
   return request<PageBlocksResult>(`/pages/${encodeURIComponent(pageId)}/blocks`, {
     method: "PUT",
-    body: JSON.stringify({ blocks })
+    body: JSON.stringify({ blocks }),
+    ...(keepalive ? { keepalive: true } : {})
   });
 }
 
@@ -961,6 +966,32 @@ export async function syncEmailMetadata(payload: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// listEmailMetadata — with in-flight deduplication & short-lived response cache
+// Prevents duplicate IMAP round-trips when multiple blocks request the same
+// contact/folder combination at roughly the same time.
+// ---------------------------------------------------------------------------
+
+const EMAIL_METADATA_CACHE_TTL_MS = 30_000; // 30 s
+
+type EmailMetadataCacheEntry = {
+  data: EmailMetadata[];
+  expiresAt: number;
+};
+
+/** In-flight promises keyed by request signature (dedup concurrent calls). */
+const _emailMetaInFlight = new Map<string, Promise<EmailMetadata[]>>();
+/** Short-lived response cache keyed by request signature. */
+const _emailMetaCache = new Map<string, EmailMetadataCacheEntry>();
+
+const _buildEmailMetaKey = (params: {
+  contact_id: string;
+  folder?: string;
+  start_date?: string;
+  refresh?: boolean;
+}): string =>
+  `${params.contact_id}|${params.folder ?? ""}|${params.start_date ?? ""}|${params.refresh ? "1" : "0"}`;
+
 export async function listEmailMetadata(params: {
   contact_id: string;
   folder?: string;
@@ -969,6 +1000,21 @@ export async function listEmailMetadata(params: {
   refresh?: boolean;
   signal?: AbortSignal;
 }): Promise<EmailMetadata[]> {
+  const cacheKey = _buildEmailMetaKey(params);
+
+  // 1. Return from short-lived cache if still valid
+  const cached = _emailMetaCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  // 2. Piggy-back on an identical in-flight request
+  const inFlight = _emailMetaInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  // 3. Build & execute the real request
   const query = new URLSearchParams();
   query.set("contact_id", params.contact_id);
   if (params.folder) query.set("folder", params.folder);
@@ -976,9 +1022,19 @@ export async function listEmailMetadata(params: {
   if (params.start_date) query.set("start_date", params.start_date);
   if (typeof params.refresh === "boolean") query.set("refresh", params.refresh ? "true" : "false");
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  return request<EmailMetadata[]>(`/email/messages${suffix}`, {
+
+  const promise = request<EmailMetadata[]>(`/email/messages${suffix}`, {
     signal: params.signal,
+  }).then((data) => {
+    // Store in short-lived cache on success
+    _emailMetaCache.set(cacheKey, { data, expiresAt: Date.now() + EMAIL_METADATA_CACHE_TTL_MS });
+    return data;
+  }).finally(() => {
+    _emailMetaInFlight.delete(cacheKey);
   });
+
+  _emailMetaInFlight.set(cacheKey, promise);
+  return promise;
 }
 
 export async function getEmailBody(

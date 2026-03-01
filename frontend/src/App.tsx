@@ -24,6 +24,7 @@ import { confirmDialog } from "./shared/confirmDialog";
 import { Command, UndoManager } from "./shared/undoManager";
 import { AppProvider, useAppData } from "./state";
 import { UndoProvider } from "./undoContext";
+import { EmailBlockCacheProvider } from "./components/pageBuilder/emailBlockCache";
 import BlockPanel from "./components/BlockPanel";
 import CustomSheetPage from "./pages/CustomSheetPage";
 import { BrandProfile, OnboardingTemplate, UpdateInfo } from "./types";
@@ -1280,8 +1281,10 @@ const AppShell: React.FC = () => {
 const App: React.FC = () => {
   return (
     <AppProvider>
-      <AppShell />
-      <ConfirmDialogHost />
+      <EmailBlockCacheProvider>
+        <AppShell />
+        <ConfirmDialogHost />
+      </EmailBlockCacheProvider>
     </AppProvider>
   );
 };
