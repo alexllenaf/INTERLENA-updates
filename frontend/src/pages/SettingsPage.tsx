@@ -230,7 +230,11 @@ const SettingsPage: React.FC = () => {
       const googleCfg = emailSync.oauth?.providers?.oauth_google || {};
       const clientId = String(googleCfg.client_id || "").trim();
       const clientSecret = String(googleCfg.client_secret || "").trim();
-      if (clientId && clientSecret) {
+      if (clientId) {
+        if (!clientSecret) {
+          setEmailSyncError("Falta client_secret de Google OAuth. Añádelo en Ajustes antes de iniciar sesión.");
+          return;
+        }
         const payload = await startEmailOAuth({
           provider: "oauth_google",
           client_id: clientId,

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getBlockHtmlOverride, setBlockHtmlOverride } from "../BlockPanel";
+import { sanitizeHtmlOverride } from "../../utils/htmlOverride";
 import {
   BlockRegistry,
   BlockSlotResolver,
@@ -59,6 +60,7 @@ type Props = {
   resolveBlockProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   resolveDuplicateProps?: (block: PageBlockConfig) => Record<string, unknown> | null;
   createBlockForType?: (type: PageBlockType, id: string) => PageBlockConfig | null;
+  blockGraph?: import("./blockLinks").BlockGraph;
 };
 
 type HtmlEditorState = {
@@ -420,8 +422,13 @@ const validateHtml = (html: string): string | null => {
   try {
     const parsed = new DOMParser().parseFromString(html, "text/html");
     const parserError = parsed.querySelector("parsererror");
-    if (!parserError) return null;
-    return parserError.textContent?.trim() || "Error de sintaxis en el HTML.";
+    if (parserError) {
+      return parserError.textContent?.trim() || "Error de sintaxis en el HTML.";
+    }
+    if (!sanitizeHtmlOverride(html)) {
+      return "El HTML solo contiene contenido no permitido o que podría romper la app.";
+    }
+    return null;
   } catch {
     return "No se pudo parsear el HTML.";
   }
@@ -502,7 +509,8 @@ const PageEditor: React.FC<Props> = ({
   resolveSlot,
   resolveBlockProps,
   resolveDuplicateProps,
-  createBlockForType
+  createBlockForType,
+  blockGraph
 }) => {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [htmlEditor, setHtmlEditor] = useState<HtmlEditorState | null>(null);
@@ -1026,6 +1034,7 @@ const PageEditor: React.FC<Props> = ({
         layoutOverrides={dragPreview?.layoutOverrides}
         extraItems={extraItems}
         containerRef={containerRef}
+        blockGraph={blockGraph}
         blockClassName={(block) => {
           if (drag?.active && drag.sourcePageId === pageId && block.id === drag.blockId) return "drag-source-hidden";
           return "";

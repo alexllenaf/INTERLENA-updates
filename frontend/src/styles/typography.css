@@ -1,0 +1,104 @@
+:root {
+  --font-ui-letter-spacing: -0.01em;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-body);
+  font-weight: var(--font-weight-regular);
+}
+
+.sidebar,
+.content,
+.page,
+.panel,
+.block-panel,
+.block-html-override,
+.modal,
+.table,
+.table-toolbar,
+.select-menu,
+.column-menu,
+.page-editor-shell,
+.tracker-search-popover,
+.export-dropdown-menu,
+.date-popover-panel {
+  font-family: var(--font-body);
+}
+
+.nav-link {
+  font-weight: var(--font-weight-regular);
+  letter-spacing: var(--font-ui-letter-spacing);
+}
+
+.nav-link.active,
+.nav-link:hover,
+.brand-title-value,
+.brand-input-title,
+.avatar-action-button,
+.undo-redo-button,
+.app-version,
+.status-pill,
+.update-banner strong,
+.tag,
+.table th,
+.column-menu-item,
+.column-menu-back,
+.column-menu-check,
+.group-title,
+.bulk-count,
+.date-popover-month,
+.date-popover-day.selected,
+.tracker-search-popover-row label,
+.field label,
+.calendar-cell,
+.calendar-day-number,
+.calendar-day-count,
+.calendar-event-chip,
+.todo-summary,
+.todo-table .cell-input,
+.todo-status,
+.doc-label,
+.select-trigger,
+.select-pill,
+.page-editor-add-menu button span,
+.columns-dropdown-summary,
+.block-field-label,
+.block-status-badge,
+.block-config-preview-label,
+.card-gallery-meta-field strong,
+.kpi-edit-field span,
+.block-style-action,
+.pipeline-source-column-badge {
+  font-weight: var(--font-weight-ui);
+}
+
+.panel h3,
+.panel h4,
+.block-panel h3,
+.block-panel h4,
+.modal h3,
+.modal h4,
+.confirm-modal-body h3,
+.confirm-dialog-body h3,
+.calendar-day-panel h4,
+.card-gallery-body h4,
+.block-config-section-head h3,
+.page-editor-html-modal-header h3 {
+  font-weight: var(--font-weight-ui);
+  letter-spacing: var(--font-ui-letter-spacing);
+}
+
+.block-panel strong,
+.modal strong,
+.page strong {
+  font-weight: var(--font-weight-strong);
+}
+
+.block-edit-title {
+  font-weight: var(--font-weight-display);
+  letter-spacing: -0.02em;
+}

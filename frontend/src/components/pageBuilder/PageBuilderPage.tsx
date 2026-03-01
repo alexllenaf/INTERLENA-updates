@@ -9,6 +9,7 @@ import { BlockSlotResolver } from "./blockRegistry";
 import { createPageConfigFromTemplate } from "./defaultPages";
 import { hasStoredPageConfig, normalizePageConfig, persistPageConfigLocal, readPageConfig } from "./pageConfigStore";
 import { PAGE_CONFIG_VERSION, PageBlockConfig, PageBlockType, PageConfig } from "./types";
+import { buildBlockGraph } from "./blockLinks";
 
 type Props = {
   pageId: string;
@@ -547,6 +548,8 @@ const PageBuilderPage: React.FC<Props> = ({
     [handlePageConfigChange, pageId, scheduleFlushPageConfig, syncShadowSnapshot, trace]
   );
 
+  const blockGraph = useMemo(() => buildBlockGraph(settings), [settings]);
+
   return (
     <PageEditor
       pageId={pageId}
@@ -558,6 +561,7 @@ const PageBuilderPage: React.FC<Props> = ({
       resolveBlockProps={resolveBlockProps}
       resolveDuplicateProps={resolveDuplicateProps}
       createBlockForType={createBlockForType}
+      blockGraph={blockGraph}
     />
   );
 };

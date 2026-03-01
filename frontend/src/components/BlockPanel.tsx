@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n";
+import { HTML_OVERRIDE_SCOPE_CLASS, sanitizeHtmlOverride } from "../utils/htmlOverride";
 
 type BlockTexture = "flat" | "glass";
 
@@ -141,10 +142,11 @@ export const getBlockHtmlOverride = (id: string): string | null => {
 
 export const setBlockHtmlOverride = (id: string, html: string | null) => {
   const next = readAllHtmlOverrides();
-  if (!html || !html.trim()) {
+  const sanitizedHtml = html ? sanitizeHtmlOverride(html) : "";
+  if (!sanitizedHtml) {
     delete next[id];
   } else {
-    next[id] = html;
+    next[id] = sanitizedHtml;
   }
   writeAllHtmlOverrides(next);
   if (typeof window !== "undefined") {
@@ -191,6 +193,16 @@ type Props = {
   children: React.ReactNode;
   style?: React.CSSProperties;
   menuActions?: BlockPanelMenuAction[];
+};
+
+const BlockHtmlOverride: React.FC<{ html: string }> = ({ html }) => {
+  const scopedHtml = useMemo(() => sanitizeHtmlOverride(html), [html]);
+  return (
+    <div
+      className={`block-html-override ${HTML_OVERRIDE_SCOPE_CLASS}`}
+      dangerouslySetInnerHTML={{ __html: scopedHtml }}
+    />
+  );
 };
 
 const BlockPanel: React.FC<Props> = ({
@@ -543,7 +555,7 @@ const BlockPanel: React.FC<Props> = ({
           </div>
         )}
         {htmlOverride ? (
-          <div className="block-html-override" dangerouslySetInnerHTML={{ __html: htmlOverride }} />
+          <BlockHtmlOverride html={htmlOverride} />
         ) : (
           children
         )}

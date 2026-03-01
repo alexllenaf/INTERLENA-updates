@@ -1,4 +1,5 @@
 import { getTableSchema } from "./tableSchemaRegistry";
+import type { BlockLinksMap } from "./types";
 
 const PAGE_CONFIGS_LOCAL_KEY = "page_configs_local_v1";
 
@@ -17,7 +18,7 @@ const parseTimestamp = (value: unknown): number | null => {
   return Number.isNaN(parsed) ? null : parsed;
 };
 
-export type BlockLinksMap = Record<string, string>;
+export type { BlockLinksMap };
 
 export const TODO_SOURCE_TABLE_LINK_KEY = "todo.sourceTable";
 export const KPI_SOURCE_TABLE_LINK_KEY = "kpi.sourceTable";
@@ -27,18 +28,30 @@ export const CARD_GALLERY_SOURCE_TABLE_LINK_KEY = "cardGallery.sourceTable";
 export const INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY = "informationalTable.sourceTable";
 export const INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY = "informationalTable.sourceEmail";
 
+// ---------------------------------------------------------------------------
+// Link normalization — links are always plain blockId strings (Notion model)
+// ---------------------------------------------------------------------------
+
 export const normalizeBlockLinks = (raw: unknown): BlockLinksMap => {
   if (!isRecord(raw)) return {};
   const next: BlockLinksMap = {};
   Object.entries(raw).forEach(([key, value]) => {
     const linkKey = normalizeString(key);
+    if (!linkKey) return;
+    // Support legacy BlockRef objects by extracting blockId
+    if (isRecord(value) && typeof value.blockId === "string") {
+      const blockId = normalizeString(value.blockId);
+      if (blockId) next[linkKey] = blockId;
+      return;
+    }
     const linkValue = normalizeString(value);
-    if (!linkKey || !linkValue) return;
+    if (!linkValue) return;
     next[linkKey] = linkValue;
   });
   return next;
 };
 
+/** Get the blockId for a link key. */
 export const getBlockLink = (props: unknown, linkKey: string): string | null => {
   if (!isRecord(props)) return null;
   const key = normalizeString(linkKey);
@@ -47,6 +60,7 @@ export const getBlockLink = (props: unknown, linkKey: string): string | null => 
   return links[key] || null;
 };
 
+/** Patch a link — always stores a plain blockId string. */
 export const patchBlockLink = (
   currentProps: unknown,
   linkKey: string,
@@ -66,6 +80,13 @@ export const patchBlockLink = (
   return Object.keys(links).length > 0 ? { links } : { links: undefined };
 };
 
+// ---------------------------------------------------------------------------
+// BlockGraph — global index that maps blockId → location (Notion model)
+//
+// Links store ONLY the blockId. The graph knows which page each block lives on.
+// This is the single source of truth for resolving any block reference.
+// ---------------------------------------------------------------------------
+
 export type BlockTargetSnapshot = {
   pageId: string;
   blockId: string;
@@ -74,6 +95,67 @@ export type BlockTargetSnapshot = {
   variant?: string;
   props: Record<string, unknown>;
 };
+
+export type BlockGraph = {
+  /** blockId → snapshot. Since blockIds are globally unique, this is the primary index. */
+  byBlockId: Map<string, BlockTargetSnapshot>;
+  /** All block snapshots for iteration / dropdowns */
+  all: BlockTargetSnapshot[];
+};
+
+/** Build the global block graph from settings. Memoize with useMemo in components. */
+export const buildBlockGraph = (settings: unknown): BlockGraph => {
+  const all = collectBlockTargets(settings);
+  const byBlockId = new Map<string, BlockTargetSnapshot>();
+
+  for (const target of all) {
+    // First-seen wins if there's ever a collision (shouldn't happen with unique IDs)
+    if (!byBlockId.has(target.blockId)) {
+      byBlockId.set(target.blockId, target);
+    }
+  }
+
+  return { byBlockId, all };
+};
+
+/** Resolve a blockId to its full snapshot (including which page it lives on). */
+export const resolveBlock = (
+  graph: BlockGraph,
+  blockId: string | null | undefined
+): BlockTargetSnapshot | null => {
+  if (!blockId) return null;
+  return graph.byBlockId.get(blockId) || null;
+};
+
+/** Resolve a link key from block props using the global graph. */
+export const resolveLinkedBlock = (
+  graph: BlockGraph,
+  props: unknown,
+  linkKey: string
+): BlockTargetSnapshot | null => {
+  const blockId = getBlockLink(props, linkKey);
+  return resolveBlock(graph, blockId);
+};
+
+/** Validate all links in a block's props. Returns link keys whose targets don't exist. */
+export const validateBlockLinks = (
+  graph: BlockGraph,
+  props: unknown
+): string[] => {
+  if (!isRecord(props)) return [];
+  const links = normalizeBlockLinks(props.links);
+  const broken: string[] = [];
+  for (const [key, blockId] of Object.entries(links)) {
+    if (!graph.byBlockId.has(blockId)) {
+      broken.push(key);
+    }
+  }
+  return broken;
+};
+
+// ---------------------------------------------------------------------------
+// Page config merging & block collection (unchanged)
+// ---------------------------------------------------------------------------
 
 const readLocalPageConfigs = (): Record<string, unknown> => {
   if (typeof window === "undefined") return {};

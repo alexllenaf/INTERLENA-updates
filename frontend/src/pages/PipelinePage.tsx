@@ -13,8 +13,10 @@ import { CUSTOM_PROPERTY_TYPE_MENU_ITEMS } from "../components/columnMenuTypeIte
 import {
   PIPELINE_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
+  buildBlockGraph,
+  resolveBlock,
   getBlockLink,
-  type EditableTableTarget
+  type BlockTargetSnapshot
 } from "../components/pageBuilder/blockLinks";
 import { type EditableTableColumnKind } from "../components/pageBuilder/types";
 import { useI18n } from "../i18n";
@@ -307,7 +309,7 @@ const buildApplicationFieldPayload = (
   return { [key]: textValue || null } as Partial<ApplicationInput>;
 };
 
-const isTrackerSourceTarget = (target: EditableTableTarget): boolean => {
+const isTrackerSourceTarget = (target: BlockTargetSnapshot): boolean => {
   const schemaRef = normalizeString(target.props.schemaRef);
   const contentSlotId = normalizeString(target.props.contentSlotId);
   return (
@@ -431,7 +433,7 @@ const buildPipelineGroupingConfig = (
   blockProps: Record<string, unknown>,
   settings: Settings,
   applications: Application[],
-  tableTargets: EditableTableTarget[],
+  tableTargets: BlockTargetSnapshot[],
   preferredSourceKey?: string | null
 ): PipelineGroupingConfig => {
   let sourceKey = "stage";
@@ -481,9 +483,8 @@ const buildPipelineGroupingConfig = (
 
   const linkedTableId = getBlockLink(blockProps, PIPELINE_SOURCE_TABLE_LINK_KEY);
   const sourceColumn = normalizeString(blockProps.sourceColumn);
-  const linkedTableTarget = linkedTableId
-    ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-    : null;
+  const pipelineGraph = buildBlockGraph(settings);
+  const linkedTableTarget = resolveBlock(pipelineGraph, linkedTableId);
   let hasLinkedSourceOverride = false;
 
   if (linkedTableTarget && sourceColumn && isTrackerSourceTarget(linkedTableTarget)) {

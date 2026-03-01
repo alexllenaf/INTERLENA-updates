@@ -18,8 +18,11 @@ import BlockPanel from "../../BlockPanel";
 import {
   PIPELINE_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
-  getBlockLink,
-  patchBlockLink
+  buildBlockGraph,
+  resolveBlock,
+  resolveLinkedBlock,
+  patchBlockLink,
+  type BlockTargetSnapshot
 } from "../blockLinks";
 import { type EditableTableColumnKind, type PageBlockPropsMap } from "../types";
 import { resolveEditableTableModel } from "./editableTableBlock";
@@ -33,7 +36,7 @@ type PipelineLinkedTableModel = {
   columnKinds: Record<string, EditableTableColumnKind>;
 };
 
-type PipelineTableTarget = ReturnType<typeof collectEditableTableTargets>[number];
+type PipelineTableTarget = BlockTargetSnapshot;
 
 const createUniqueLabel = (label: string, used: Set<string>): string => {
   const base = label.trim() || "Column";
@@ -208,10 +211,9 @@ export const PIPELINE_BLOCK_DEFINITION: BlockDefinition<"pipeline"> = {
       () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
       [settings]
     );
-    const linkedTableId = getBlockLink(block.props, PIPELINE_SOURCE_TABLE_LINK_KEY);
-    const linkedTableTarget = linkedTableId
-      ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-      : null;
+    const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+    const linkedTableTarget = resolveLinkedBlock(graph, block.props, PIPELINE_SOURCE_TABLE_LINK_KEY);
+    const linkedTableId = linkedTableTarget?.blockId || null;
     const resolveLinkedTableModel = useCallback(
       (target: PipelineTableTarget | null): PipelineLinkedTableModel | null => {
         if (!target) return null;
@@ -255,9 +257,7 @@ export const PIPELINE_BLOCK_DEFINITION: BlockDefinition<"pipeline"> = {
     }, []);
 
     const setLinkedTable = (nextBlockId?: string | null) => {
-      const nextTarget = nextBlockId
-        ? tableTargets.find((target) => target.blockId === nextBlockId) || null
-        : null;
+      const nextTarget = nextBlockId ? resolveBlock(graph, nextBlockId) : null;
       const nextModel = resolveLinkedTableModel(nextTarget);
       const nextSelectableColumns =
         nextModel?.columns.filter((column) => nextModel.columnKinds[column] === "select") || [];

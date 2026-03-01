@@ -29,6 +29,8 @@ import {
   CARD_GALLERY_SOURCE_TABLE_LINK_KEY,
   TODO_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
+  buildBlockGraph,
+  resolveLinkedBlock,
   getBlockLink,
   patchBlockLink
 } from "../blockLinks";
@@ -653,10 +655,9 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
 
     const tableTargets = useMemo(() => collectEditableTableTargets(settings), [settings]);
-    const linkedTableId = getBlockLink(block.props, CARD_GALLERY_SOURCE_TABLE_LINK_KEY);
-    const selectedLinkedTableTarget = linkedTableId
-      ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-      : null;
+    const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+    const selectedLinkedTableTarget = resolveLinkedBlock(graph, block.props, CARD_GALLERY_SOURCE_TABLE_LINK_KEY);
+    const linkedTableId = selectedLinkedTableTarget?.blockId || null;
 
     const linkedTableTarget = useMemo(() => {
       if (!selectedLinkedTableTarget) return null;
@@ -666,14 +667,14 @@ export const CARD_GALLERY_BLOCK_DEFINITION: BlockDefinition<"cardGallery"> = {
       while (current.type === "todoTable") {
         const nextId = getBlockLink(current.props, TODO_SOURCE_TABLE_LINK_KEY);
         if (!nextId || visited.has(nextId)) break;
-        const nextTarget = tableTargets.find((target) => target.blockId === nextId) || null;
+        const nextTarget = graph.byBlockId.get(nextId) || null;
         if (!nextTarget) break;
         visited.add(nextId);
         current = nextTarget;
       }
 
       return current;
-    }, [selectedLinkedTableTarget, tableTargets]);
+    }, [selectedLinkedTableTarget, graph]);
 
     const linkedEditableModel = useMemo(() => {
       if (!linkedTableTarget) return null;

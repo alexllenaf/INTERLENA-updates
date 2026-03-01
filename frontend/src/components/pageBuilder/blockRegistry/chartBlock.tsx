@@ -37,7 +37,9 @@ import { TYPE_REGISTRY } from "../../dataTypes/typeRegistry";
 import {
   CHART_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
-  getBlockLink,
+  buildBlockGraph,
+  resolveBlock,
+  resolveLinkedBlock,
   patchBlockLink
 } from "../blockLinks";
 import { getTableSchema } from "../tableSchemaRegistry";
@@ -769,10 +771,8 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
     const action = block.props.actionSlotId ? resolveSlot?.(block.props.actionSlotId, block, slotContext) : null;
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
     const tableTargets = useMemo(() => collectEditableTableTargets(settings), [settings]);
-    const linkedTableId = getBlockLink(block.props, CHART_SOURCE_TABLE_LINK_KEY);
-    const linkedTableTarget = linkedTableId
-      ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-      : null;
+    const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+    const linkedTableTarget = resolveLinkedBlock(graph, block.props, CHART_SOURCE_TABLE_LINK_KEY);
 
     const resolveSnapshotForTarget = (target: (typeof linkedTableTarget) | null): ChartTableSnapshot | null => {
       if (!target) return null;
@@ -834,6 +834,7 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
       [chartType, metricOp, sourceCategoryColumn, sourceValueColumn, tableSnapshot]
     );
 
+    const linkedTableId = linkedTableTarget?.blockId || null;
     const hasLinkedChart = Boolean(linkedTableId && tableSnapshot);
     const linkedTableMissing = Boolean(linkedTableId && !linkedTableTarget);
     const chartTypeLabel =
@@ -885,9 +886,7 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
     };
 
     const setLinkedTable = (nextBlockId?: string | null) => {
-      const nextTarget = nextBlockId
-        ? tableTargets.find((target) => target.blockId === nextBlockId) || null
-        : null;
+      const nextTarget = nextBlockId ? resolveBlock(graph, nextBlockId) : null;
       const nextSnapshot = resolveSnapshotForTarget(nextTarget);
       const nextCategory = nextSnapshot?.columns[0];
       const nextValueCandidates =
@@ -1134,7 +1133,7 @@ export const CHART_BLOCK_DEFINITION: BlockDefinition<"chart"> = {
                         <label className="field">
                           <span className="block-field-label">Tabla vinculada</span>
                           <select
-                            value={linkedTableId || ""}
+                            value={linkedTableTarget?.blockId || ""}
                             onChange={(event) => setLinkedTable(event.target.value || null)}
                           >
                             <option value="">Sin tabla</option>

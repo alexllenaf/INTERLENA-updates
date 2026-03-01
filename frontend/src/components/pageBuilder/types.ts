@@ -33,18 +33,15 @@ export type GridLayout = {
   rowStart?: number;
 };
 
+/**
+ * Links map: each key is a link slot name, each value is a globally unique blockId.
+ * The pageId is resolved at runtime via the global BlockGraph index — never stored in the link.
+ * This is the Notion model: blockId is the only pointer, the index knows where it lives.
+ */
 export type BlockLinksMap = Record<string, string>;
 
 type LinkableBlockProps = {
   links?: BlockLinksMap;
-};
-
-export type CanonicalBlockLinkRef = {
-  canonicalPageId: string;
-  legacyPageId: string;
-  blockId: string;
-  title?: string;
-  type?: string;
 };
 
 export type TextBlockProps = LinkableBlockProps & {
@@ -174,13 +171,14 @@ export type InformationalTableBlockProps = LinkableBlockProps & {
   rows?: string[][];
   columnWidths?: Record<string, number>;
   sourceMode?: "manual" | "editableTable" | "email";
-  sourceCanonicalTableRef?: CanonicalBlockLinkRef;
+  /** @deprecated Legacy field cleared on re-link; use BlockLinksMap instead */
+  sourceCanonicalTableRef?: unknown;
   sourceColumnOrder?: string[];
   sourceVisibleColumns?: string[];
   emailRecentLimit?: number;
   emailLookbackDays?: number;
   emailAccountFilter?: string;
-  emailCompanyFilter?: string;
+  emailCompanyFilter?: string | string[];
   emailContactFilter?: string | string[];
   emailFolderFilter?: string;
   emailSummaryVolumeDays?: number;

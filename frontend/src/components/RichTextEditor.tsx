@@ -466,7 +466,7 @@ const ToolbarSeparator = () => (
 
 const FONT_FAMILIES = [
   { label: "Por defecto", value: "" },
-  { label: "Arial", value: "Arial, sans-serif" },
+  { label: "McKinsey Sans (App)", value: "var(--font-body)" },
   { label: "Helvetica", value: "Helvetica, sans-serif" },
   { label: "Georgia", value: "Georgia, serif" },
   { label: "Times New Roman", value: "'Times New Roman', serif" },

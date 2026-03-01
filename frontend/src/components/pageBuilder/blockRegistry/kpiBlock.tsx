@@ -20,7 +20,10 @@ import { type EditableTableColumnKind, type KpiMetricOp, type PageBlockPropsMap 
 import {
   KPI_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
+  buildBlockGraph,
   getBlockLink,
+  resolveBlock,
+  resolveLinkedBlock,
   patchBlockLink
 } from "../blockLinks";
 import { resolveEditableTableModel } from "./editableTableBlock";
@@ -533,10 +536,8 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       ? resolveSlot?.(block.props.valueSlotId, block, slotContext)
       : null;
     const tableTargets = useMemo(() => collectEditableTableTargets(settings), [settings]);
-    const linkedTableId = getBlockLink(block.props, KPI_SOURCE_TABLE_LINK_KEY);
-    const linkedTableTarget = linkedTableId
-      ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-      : null;
+    const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+    const linkedTableTarget = resolveLinkedBlock(graph, block.props, KPI_SOURCE_TABLE_LINK_KEY);
 
     const resolveSnapshotForTarget = (target: (typeof linkedTableTarget) | null): KpiTableSnapshot | null => {
       if (!target) return null;
@@ -600,7 +601,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       : `${metricTargetValues.length} valores seleccionados`;
     const allowPercent = Boolean(metricDef?.supportsPercent);
     const metricAsPercent = allowPercent && Boolean(block.props.metricAsPercent);
-    const hasAutoLabelSource = Boolean(linkedTableId && tableSnapshot);
+    const hasAutoLabelSource = Boolean(linkedTableTarget && tableSnapshot);
     const autoLabel = buildAutoLabel({
       metricOp,
       column: sourceColumn,
@@ -620,14 +621,15 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
         })
       : null;
 
-    const hasLinkedComputation = Boolean(linkedTableId && tableSnapshot);
+    const hasLinkedComputation = Boolean(linkedTableTarget && tableSnapshot);
     const value = hasLinkedComputation
       ? (computedValue ?? block.props.value ?? "0")
       : block.props.valueSlotId
         ? (valueFromSlot ?? block.props.value ?? "0")
         : (computedValue ?? block.props.value ?? "0");
 
-    const linkedTableMissing = Boolean(linkedTableId && !linkedTableTarget);
+    const linkedBlockId = getBlockLink(block.props, KPI_SOURCE_TABLE_LINK_KEY);
+    const linkedTableMissing = Boolean(linkedBlockId && !linkedTableTarget);
     const dataSourceModeLabel = linkedTableTarget ? "Automatico" : "Manual";
     const metricHelpText = !tableSnapshot
       ? "Vincula una tabla para habilitar el calculo automatico."
@@ -642,9 +644,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
       : "Disponible solo en metricas de conteo.";
 
     const setLinkedTable = (nextBlockId?: string | null) => {
-      const nextTarget = nextBlockId
-        ? tableTargets.find((target) => target.blockId === nextBlockId) || null
-        : null;
+      const nextTarget = nextBlockId ? resolveBlock(graph, nextBlockId) : null;
       const nextSnapshot = resolveSnapshotForTarget(nextTarget);
       const nextColumn = nextSnapshot?.columns[0];
       patchBlockProps({
@@ -832,7 +832,7 @@ export const KPI_BLOCK_DEFINITION: BlockDefinition<"kpi"> = {
                         <label className="field">
                           <span className="block-field-label">Tabla vinculada</span>
                           <select
-                            value={linkedTableId || ""}
+                            value={linkedTableTarget?.blockId || ""}
                             onChange={(event) => setLinkedTable(event.target.value || null)}
                           >
                             <option value="">Sin tabla</option>

@@ -16,7 +16,8 @@ import BlockPanel from "../../BlockPanel";
 import {
   TODO_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
-  getBlockLink,
+  buildBlockGraph,
+  resolveLinkedBlock,
   patchBlockLink
 } from "../blockLinks";
 import { type PageBlockConfig, type PageBlockPropsMap } from "../types";
@@ -188,10 +189,9 @@ const useTodoTableBlockConfig = ({
     () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
     [settings]
   );
-  const linkedTableId = getBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY);
-  const linkedTableTarget = linkedTableId
-    ? linkTargets.find((target) => target.blockId === linkedTableId) || null
-    : null;
+  const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+  const linkedTableTarget = resolveLinkedBlock(graph, block.props, TODO_SOURCE_TABLE_LINK_KEY);
+  const linkedTableId = linkedTableTarget?.blockId || null;
   const linkedTableModel = useMemo(() => {
     if (!linkedTableTarget) return null;
     return resolveLinkedTableModel(linkedTableTarget.props as PageBlockPropsMap["editableTable"]);

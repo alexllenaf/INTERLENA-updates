@@ -7,6 +7,51 @@
   margin-bottom: 12px;
 }
 
+/* Block error boundary fallback */
+.block-error-placeholder,
+.block-orphan-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  min-height: 80px;
+  text-align: center;
+  color: var(--muted, #718096);
+  opacity: 0.7;
+}
+
+.block-error-icon,
+.block-orphan-icon {
+  font-size: 22px;
+  opacity: 0.5;
+}
+
+.block-error-label,
+.block-orphan-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #1a202c);
+}
+
+.block-error-label em,
+.block-orphan-label em {
+  font-style: normal;
+  font-family: monospace;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.block-error-hint,
+.block-orphan-hint {
+  font-size: 11px;
+  color: var(--muted, #718096);
+  max-width: 260px;
+  line-height: 1.45;
+}
+
 .alert.full {
   grid-column: 1 / -1;
 }
@@ -402,6 +447,28 @@
   background: rgba(47, 133, 90, 0.12);
   border-color: rgba(47, 133, 90, 0.18);
   color: #22604a;
+}
+
+.broken-link-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(220, 80, 60, 0.10);
+  color: #b94a3d;
+  cursor: default;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+
+.broken-link-badge:hover {
+  opacity: 1;
 }
 
 .block-config-preview {
@@ -1268,7 +1335,7 @@ button.card-gallery-add {
 
 .informational-email-notice {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 1.4fr);
   gap: 18px;
   padding: 18px;
   border-radius: 18px;
@@ -1307,7 +1374,9 @@ button.card-gallery-add {
 .informational-email-notice-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  align-items: flex-start;
+  align-self: start;
 }
 
 .informational-email-notice-meta span {
@@ -1323,21 +1392,21 @@ button.card-gallery-add {
 
 .informational-email-notice-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(88px, 100%), 1fr));
+  gap: 10px;
   align-self: stretch;
   min-width: 0;
 }
 
 .informational-email-metric {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
-  padding: 14px 14px 12px;
-  border-radius: 14px;
+  padding: 12px 12px 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(15, 23, 42, 0.08);
-  min-height: 170px;
+  min-height: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -1390,6 +1459,42 @@ button.card-gallery-add {
   line-height: 1.5;
 }
 
+.informational-email-metric--split {
+  min-height: 0;
+  gap: 8px;
+}
+
+.informational-email-metric--split strong {
+  font-size: 22px;
+}
+
+.informational-email-metric-row {
+  display: grid;
+  gap: 3px;
+}
+
+.informational-email-metric-row-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.informational-email-metric-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.informational-email-metric-divider {
+  height: 1px;
+  background: rgba(15, 23, 42, 0.07);
+  margin: 3px 0;
+}
+
 .informational-email-timeline {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(6px, 1fr));
@@ -1425,19 +1530,26 @@ button.card-gallery-add {
   min-width: 0;
 }
 
-.informational-email-multi-select {
-  min-height: 136px;
+.informational-email-filter-trigger {
+  width: 100%;
 }
 
-.informational-email-filter-actions {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.informational-email-filter-trigger .select-pill {
+  max-width: 220px;
 }
 
-.informational-email-filter-actions .block-field-hint {
-  margin: 0;
+.informational-email-filter-menu .informational-email-filter-list {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  margin-top: 0;
+  max-height: 240px;
+}
+
+.select-label-muted {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .informational-email-summary-settings {

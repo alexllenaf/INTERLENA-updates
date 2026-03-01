@@ -88,6 +88,8 @@ const normalizeLayout = (raw: unknown, fallback: GridLayout): GridLayout => {
 const isKnownType = (value: unknown): value is PageBlockType =>
   typeof value === "string" && Object.prototype.hasOwnProperty.call(PAGE_BLOCK_REGISTRY, value);
 
+const ORPHAN_TYPE_PREFIX = "__orphan__";
+
 const normalizeBlock = (raw: unknown, index: number): PageBlockConfig | null => {
   if (!isRecord(raw) || typeof raw.type !== "string") return null;
   const rawProps = isRecord(raw.props) ? raw.props : null;
@@ -97,7 +99,26 @@ const normalizeBlock = (raw: unknown, index: number): PageBlockConfig | null => 
     typeof rawProps.variant === "string" &&
     rawProps.variant.trim().toLowerCase() === "todo";
   const normalizedType: PageBlockType = maybeLegacyTodoVariant ? "todoTable" : (raw.type as PageBlockType);
-  if (!isKnownType(normalizedType)) return null;
+
+  if (!isKnownType(normalizedType)) {
+    // Preserve orphaned blocks as a text placeholder so they survive migrations
+    // and can be recovered if the type becomes available again.
+    const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : `orphan:${index}`;
+    const fallbackLayout = normalizeLayout(raw.layout, { colSpan: 20 });
+    const orphanMarker = `${ORPHAN_TYPE_PREFIX}${raw.type}`;
+    console.warn(`[pageConfigStore] Unknown block type "${raw.type}" (id: ${id}) — preserved as orphan placeholder.`);
+    return {
+      id,
+      type: "text",
+      layout: fallbackLayout,
+      props: {
+        text: orphanMarker,
+        _orphanOriginalType: raw.type,
+        _orphanOriginalProps: rawProps ?? {}
+      } as any
+    };
+  }
+
   const template = createDefaultPageBlock(normalizedType, `${normalizedType}:${index}`);
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : template.id;
   const layout = normalizeLayout(raw.layout, template.layout);

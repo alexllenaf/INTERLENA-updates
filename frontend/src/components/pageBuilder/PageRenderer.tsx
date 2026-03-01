@@ -2,6 +2,9 @@ import React, { useMemo } from "react";
 import { BlockRegistry, BlockRenderMode, BlockSlotResolver, PAGE_BLOCK_REGISTRY } from "./blockRegistry";
 import { GridLayout, PageBlockConfig, PageConfig } from "./types";
 import { BlockPanelMenuAction } from "../BlockPanel";
+import { BlockErrorBoundary } from "./BlockErrorBoundary";
+import { type BlockGraph, validateBlockLinks } from "./blockLinks";
+import { BrokenLinkBadge } from "./blockRegistry/shared";
 
 type GridExtraItem = {
   key: string;
@@ -26,6 +29,7 @@ type Props = {
   layoutOverrides?: Record<string, GridLayout>;
   extraItems?: GridExtraItem[];
   containerRef?: React.Ref<HTMLDivElement>;
+  blockGraph?: BlockGraph;
 };
 
 const toGridVars = (layout: GridLayout): React.CSSProperties & Record<string, string> => {
@@ -56,7 +60,8 @@ const PageRenderer: React.FC<Props> = ({
   hiddenBlockIds,
   layoutOverrides,
   extraItems,
-  containerRef
+  containerRef,
+  blockGraph
 }) => {
   const blocks = useMemo(() => pageConfig.blocks || [], [pageConfig.blocks]);
 
@@ -85,20 +90,22 @@ const PageRenderer: React.FC<Props> = ({
           onUpdateBlockLayout(block.id, { ...block.layout, ...patch });
         };
         const content = (
-          <BlockComponent
-            block={effectiveBlock as any}
-            mode={mode}
-            resolveSlot={resolveSlot}
-            menuActions={resolveBlockMenuActions?.(block)}
-            updateBlockProps={(next: Record<string, unknown>) =>
-              onUpdateBlockProps?.(block.id, next as Record<string, unknown>)
-            }
-            patchBlockProps={(patch: Partial<Record<string, unknown>>) =>
-              nextProps(patch as Record<string, unknown>)
-            }
-            updateBlockLayout={(next: GridLayout) => onUpdateBlockLayout?.(block.id, next)}
-            patchBlockLayout={(patch: Partial<GridLayout>) => nextLayout(patch)}
-          />
+          <BlockErrorBoundary blockId={block.id} blockType={block.type}>
+            <BlockComponent
+              block={effectiveBlock as any}
+              mode={mode}
+              resolveSlot={resolveSlot}
+              menuActions={resolveBlockMenuActions?.(block)}
+              updateBlockProps={(next: Record<string, unknown>) =>
+                onUpdateBlockProps?.(block.id, next as Record<string, unknown>)
+              }
+              patchBlockProps={(patch: Partial<Record<string, unknown>>) =>
+                nextProps(patch as Record<string, unknown>)
+              }
+              updateBlockLayout={(next: GridLayout) => onUpdateBlockLayout?.(block.id, next)}
+              patchBlockLayout={(patch: Partial<GridLayout>) => nextLayout(patch)}
+            />
+          </BlockErrorBoundary>
         );
         const extraClass = blockClassName?.(block) || "";
         return (
@@ -111,6 +118,7 @@ const PageRenderer: React.FC<Props> = ({
             data-block-id={block.id}
             data-block-type={block.type}
           >
+            {blockGraph && <BrokenLinkBadge keys={validateBlockLinks(blockGraph, effectiveBlock.props)} />}
             {renderBlockControls?.(block)}
             {content}
           </div>

@@ -33,6 +33,8 @@ import { BlockSlotResolver, PageBlockConfig, PageBuilderPage } from "../componen
 import {
   TODO_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
+  buildBlockGraph,
+  resolveBlock,
   getBlockLink
 } from "../components/pageBuilder/blockLinks";
 import StarRating from "../components/StarRating";
@@ -187,6 +189,7 @@ const CalendarPage: React.FC = () => {
     () => collectEditableTableTargets(settings, { excludeVariants: ["todo"], excludeTypes: ["todoTable"] }),
     [settings]
   );
+  const calendarGraph = useMemo(() => buildBlockGraph(settings), [settings]);
 
   const defaultTodoSourceTarget = useMemo(
     () => editableTableTargets.find((target) => target.hasTodoColumn) || editableTableTargets[0] || null,
@@ -243,11 +246,12 @@ const CalendarPage: React.FC = () => {
     (block?: PageBlockConfig | null): TodoSourceAccess => {
       const explicitLinkId = block ? getBlockLink(block.props, TODO_SOURCE_TABLE_LINK_KEY) : null;
       const explicitTarget = explicitLinkId
-        ? editableTableTargets.find((target) => target.blockId === explicitLinkId) || null
+        ? editableTableTargets.find((t) => t.blockId === explicitLinkId) || null
         : null;
+      const explicitExistsInGraph = explicitLinkId ? resolveBlock(calendarGraph, explicitLinkId) !== null : false;
       const sourceTarget = explicitTarget || defaultTodoSourceTarget;
 
-      if (explicitLinkId && !explicitTarget) {
+      if (explicitLinkId && !explicitExistsInGraph) {
         return {
           hasSource: false,
           reason: t("The linked editable table no longer exists.")

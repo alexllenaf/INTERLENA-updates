@@ -47,6 +47,22 @@
 }
 
 @font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-Medium.woff2") format("woff2");
+  font-weight: 600 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "McKinsey Sans";
+  src: url("/fonts/McKinseySans-MediumItalic.woff2") format("woff2");
+  font-weight: 600 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "WSJ";
   src: url("/fonts/WSJ_Font.woff2") format("woff2");
   font-weight: 700;
@@ -68,8 +84,13 @@
   --border: #e2e8f0;
   --shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
   --radius: 18px;
-  --font-body: "McKinsey Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-display: "WSJ", "McKinsey Sans", "Times New Roman", serif;
+  --font-sans: "McKinsey Sans";
+  --font-body: var(--font-sans), "Helvetica Neue", sans-serif;
+  --font-display: "WSJ", var(--font-sans), "Times New Roman", serif;
+  --font-weight-regular: 400;
+  --font-weight-ui: 500;
+  --font-weight-strong: 500;
+  --font-weight-display: 700;
   --content-block-gap: 12px;
   --page-grid-columns: 60;
   --page-grid-gap: 16px;
@@ -82,6 +103,12 @@
 body {
   margin: 0;
   font-family: var(--font-body);
+  font-weight: var(--font-weight-regular);
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   color: var(--text);
   background: radial-gradient(circle at top left, var(--bg-accent), var(--bg));
   min-height: 100vh;
@@ -96,4 +123,3 @@ h2 {
 #root {
   min-height: 100vh;
 }
-

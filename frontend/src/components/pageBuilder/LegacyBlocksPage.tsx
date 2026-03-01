@@ -11,6 +11,7 @@ import {
   writePageConfig
 } from "./pageConfigStore";
 import { PageBlockConfig, PageConfig } from "./types";
+import { buildBlockGraph } from "./blockLinks";
 
 type LegacyPageModel = {
   fallbackConfig: PageConfig;
@@ -325,6 +326,8 @@ const LegacyBlocksPage: React.FC<Props> = ({ pageId, blocks, className = "" }) =
     [pageId]
   );
 
+  const blockGraph = useMemo(() => buildBlockGraph(settings), [settings]);
+
   return (
     <PageEditor
       pageId={pageId}
@@ -332,6 +335,7 @@ const LegacyBlocksPage: React.FC<Props> = ({ pageId, blocks, className = "" }) =
       onChange={handlePageConfigChange}
       className={className}
       resolveSlot={resolveSlot}
+      blockGraph={blockGraph}
     />
   );
 };

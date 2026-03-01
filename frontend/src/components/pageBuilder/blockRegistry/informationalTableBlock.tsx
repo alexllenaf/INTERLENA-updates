@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ApiError, getPageBlocks, listEmailMetadata, listGoogleAccounts, resolvePageByLegacyKey } from "../../../api";
+import { ApiError, listEmailMetadata, listGoogleAccounts } from "../../../api";
 import {
   READ_MAILBOX_ALL,
   READ_MAILBOX_INBOX,
@@ -43,10 +43,12 @@ import {
   INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
   collectBlockTargets,
   collectEditableTableTargets,
+  buildBlockGraph,
+  resolveLinkedBlock,
   getBlockLink,
   patchBlockLink
 } from "../blockLinks";
-import { type CanonicalBlockLinkRef, type PageBlockPropsMap } from "../types";
+import { type PageBlockPropsMap } from "../types";
 import { resolveEditableTableModel } from "./editableTableBlock";
 import { SourceTablePreview } from "./sourceTablePreview";
 import { createSlotContext, renderHeader } from "./shared";
@@ -57,15 +59,6 @@ type InformationalTableSourceMode = NonNullable<PageBlockPropsMap["informational
 type InformationalLinkedTableModel = {
   columns: string[];
   rows: string[][];
-};
-
-type InformationalCanonicalTableTarget = {
-  canonicalPageId: string;
-  legacyPageId: string;
-  blockId: string;
-  title: string;
-  type: string;
-  props: Record<string, unknown>;
 };
 
 type InformationalEmailMessage = EmailMetadata & {
@@ -107,8 +100,6 @@ const DEFAULT_EMAIL_STATE: InformationalEmailState = {
   contactsReviewed: 0,
   totalContacts: 0
 };
-
-const TABLE_TARGET_VALUE_SEPARATOR = "::";
 
 const createUniqueLabel = (label: string, used: Set<string>): string => {
   const base = label.trim() || "Column";
@@ -180,40 +171,6 @@ const normalizeEmailRecentLimit = (value: unknown): number => {
   return Math.max(MIN_EMAIL_RECENT_LIMIT, Math.min(MAX_EMAIL_RECENT_LIMIT, numeric));
 };
 
-const normalizeCanonicalBlockLinkRef = (value: unknown): CanonicalBlockLinkRef | null => {
-  if (!isRecord(value)) return null;
-  const canonicalPageId = normalizeString(value.canonicalPageId);
-  const legacyPageId = normalizeString(value.legacyPageId);
-  const blockId = normalizeString(value.blockId);
-  if (!canonicalPageId || !legacyPageId || !blockId) return null;
-  return {
-    canonicalPageId,
-    legacyPageId,
-    blockId,
-    title: normalizeString(value.title) || undefined,
-    type: normalizeString(value.type) || undefined
-  };
-};
-
-const encodeTableTargetValue = (legacyPageId: string, blockId: string): string =>
-  `${legacyPageId}${TABLE_TARGET_VALUE_SEPARATOR}${blockId}`;
-
-const decodeTableTargetValue = (
-  value: string
-): {
-  legacyPageId: string;
-  blockId: string;
-} | null => {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  const separatorIndex = raw.indexOf(TABLE_TARGET_VALUE_SEPARATOR);
-  if (separatorIndex < 0) return null;
-  const legacyPageId = raw.slice(0, separatorIndex).trim();
-  const blockId = raw.slice(separatorIndex + TABLE_TARGET_VALUE_SEPARATOR.length).trim();
-  if (!legacyPageId || !blockId) return null;
-  return { legacyPageId, blockId };
-};
-
 const normalizeSelectedColumns = (raw: unknown, availableColumns: string[]): string[] => {
   const allowed = new Set(availableColumns);
   return Array.from(
@@ -258,24 +215,6 @@ const estimateHeaderMinWidth = (label: string): number => {
 };
 
 const formatTargetLabel = (target: { pageId: string; title: string }) => `[${target.pageId}] ${target.title}`;
-
-const buildCanonicalTableLinkRef = async (
-  target: {
-    pageId: string;
-    blockId: string;
-    title: string;
-    type?: string;
-  }
-): Promise<CanonicalBlockLinkRef> => {
-  const resolved = await resolvePageByLegacyKey(target.pageId, true);
-  return {
-    canonicalPageId: resolved.id,
-    legacyPageId: target.pageId,
-    blockId: target.blockId,
-    title: target.title,
-    type: target.type
-  };
-};
 
 const trackerValueForColumn = (app: Application, key: string): string => {
   if (key.startsWith("prop__")) {
@@ -608,6 +547,14 @@ const normalizeInformationalEmailContactFilter = (value: unknown): string[] => {
   return legacyValue ? [legacyValue] : [];
 };
 
+const normalizeInformationalEmailCompanyFilter = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(normalizeStringArray(value)));
+  }
+  const legacyValue = normalizeString(value);
+  return legacyValue ? [legacyValue] : [];
+};
+
 const formatInformationalEmailContactFilterSummary = (
   selectedEmails: string[],
   contacts: Array<{ email: string; name: string; company: string }>
@@ -727,6 +674,43 @@ const InformationalEmailNotice: React.FC<{
           }
 
           if (cardId === "awaitingReply") {
+            if (cardOrder.includes("awaitingResponse")) {
+              return (
+                <article key={cardId} className="informational-email-metric informational-email-metric--split">
+                  <div className="informational-email-metric-head">
+                    <span className="informational-email-metric-kicker">Pendientes</span>
+                    <span className="informational-email-metric-window">
+                      ultimos {summary.awaitingReply.days} dias
+                    </span>
+                  </div>
+                  <div className="informational-email-metric-row">
+                    <span className="informational-email-metric-row-label">Pendientes de contestar</span>
+                    <div className="informational-email-metric-row-head">
+                      <strong>{summary.awaitingReply.count}</strong>
+                    </div>
+                    <p className="informational-email-metric-note">
+                      {formatPendingContactsPreview(
+                        summary.awaitingReply.contacts,
+                        "Les escribiste y no consta respuesta posterior."
+                      )}
+                    </p>
+                  </div>
+                  <div className="informational-email-metric-divider" />
+                  <div className="informational-email-metric-row">
+                    <span className="informational-email-metric-row-label">Esperando mi respuesta</span>
+                    <div className="informational-email-metric-row-head">
+                      <strong>{summary.awaitingResponse.count}</strong>
+                    </div>
+                    <p className="informational-email-metric-note">
+                      {formatPendingContactsPreview(
+                        summary.awaitingResponse.contacts,
+                        "Te escribieron y no consta respuesta posterior."
+                      )}
+                    </p>
+                  </div>
+                </article>
+              );
+            }
             return (
               <article key={cardId} className="informational-email-metric">
                 <div className="informational-email-metric-head">
@@ -747,24 +731,29 @@ const InformationalEmailNotice: React.FC<{
             );
           }
 
-          return (
-            <article key={cardId} className="informational-email-metric">
-              <div className="informational-email-metric-head">
-                <span className="informational-email-metric-kicker">Pendientes de contestar</span>
-                <span className="informational-email-metric-window">
-                  ultimos {summary.awaitingResponse.days} dias
-                </span>
-              </div>
-              <strong>{summary.awaitingResponse.count}</strong>
-              <span className="informational-email-metric-title">contactos pendientes de tu respuesta</span>
-              <p className="informational-email-metric-note">
-                {formatPendingContactsPreview(
-                  summary.awaitingResponse.contacts,
-                  "Te escribieron y no consta respuesta posterior."
-                )}
-              </p>
-            </article>
-          );
+          if (cardId === "awaitingResponse") {
+            if (cardOrder.includes("awaitingReply")) return null;
+            return (
+              <article key={cardId} className="informational-email-metric">
+                <div className="informational-email-metric-head">
+                  <span className="informational-email-metric-kicker">Pendientes de contestar</span>
+                  <span className="informational-email-metric-window">
+                    ultimos {summary.awaitingResponse.days} dias
+                  </span>
+                </div>
+                <strong>{summary.awaitingResponse.count}</strong>
+                <span className="informational-email-metric-title">contactos pendientes de tu respuesta</span>
+                <p className="informational-email-metric-note">
+                  {formatPendingContactsPreview(
+                    summary.awaitingResponse.contacts,
+                    "Te escribieron y no consta respuesta posterior."
+                  )}
+                </p>
+              </article>
+            );
+          }
+
+          return null;
         })}
       </div>
     </section>
@@ -793,18 +782,24 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
     const [isConfigOpen, setIsConfigOpen] = useState(false);
     const [emailState, setEmailState] = useState<InformationalEmailState>(DEFAULT_EMAIL_STATE);
     const [googleAccounts, setGoogleAccounts] = useState<GoogleAccount[]>([]);
-    const [canonicalTableTarget, setCanonicalTableTarget] = useState<InformationalCanonicalTableTarget | null>(null);
-    const [canonicalTableLoading, setCanonicalTableLoading] = useState(false);
-    const [canonicalTableResolving, setCanonicalTableResolving] = useState(false);
     const [visibleColumnsMenuOpen, setVisibleColumnsMenuOpen] = useState(false);
     const [visibleColumnsMenuPos, setVisibleColumnsMenuPos] = useState<{ top: number; left: number } | null>(null);
     const [draggedColumnOption, setDraggedColumnOption] = useState<string | null>(null);
     const [dragOverColumnOption, setDragOverColumnOption] = useState<string | null>(null);
     const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => normalizeColumnWidths(block.props.columnWidths));
     const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
+    const [companyFilterOpen, setCompanyFilterOpen] = useState(false);
+    const [companyFilterPos, setCompanyFilterPos] = useState<{ top: number; left: number } | null>(null);
+    const companyFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const companyFilterMenuRef = useRef<HTMLDivElement | null>(null);
+    const [contactFilterOpen, setContactFilterOpen] = useState(false);
+    const [contactFilterPos, setContactFilterPos] = useState<{ top: number; left: number } | null>(null);
+    const contactFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const contactFilterMenuRef = useRef<HTMLDivElement | null>(null);
     const visibleColumnsTriggerRef = useRef<HTMLButtonElement | null>(null);
     const visibleColumnsMenuRef = useRef<HTMLDivElement | null>(null);
     const columnWidthsRef = useRef<Record<string, number>>(normalizeColumnWidths(block.props.columnWidths));
+    const emailLoadInFlightKeyRef = useRef<string | null>(null);
     const slotContext = createSlotContext(mode, updateBlockProps, patchBlockProps);
     const slot = block.props.contentSlotId ? resolveSlot?.(block.props.contentSlotId, block, slotContext) : null;
     const enableColumnResize = mode === "edit";
@@ -817,20 +812,21 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       () => collectBlockTargets(settings).filter((target) => target.type === "email"),
       [settings]
     );
-    const linkedTableId = getBlockLink(block.props, INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY);
-    const canonicalTableRef = useMemo(
-      () => normalizeCanonicalBlockLinkRef(block.props.sourceCanonicalTableRef),
-      [block.props.sourceCanonicalTableRef]
-    );
+    const graph = useMemo(() => buildBlockGraph(settings), [settings]);
+    const linkedTableTarget = resolveLinkedBlock(graph, block.props, INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY);
     const linkedEmailId = getBlockLink(block.props, INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY);
+    const linkedEmailTarget = resolveLinkedBlock(graph, block.props, INFORMATIONAL_TABLE_SOURCE_EMAIL_LINK_KEY);
     const sourceMode = normalizeSourceMode(
       block.props.sourceMode,
-      canonicalTableRef || linkedTableId ? "editableTable" : linkedEmailId ? "email" : "manual"
+      linkedTableTarget ? "editableTable" : linkedEmailTarget ? "email" : "manual"
     );
     const emailRecentLimit = normalizeEmailRecentLimit(block.props.emailRecentLimit);
     const emailLookbackDays = normalizeEmailLookbackDays(block.props.emailLookbackDays);
     const emailAccountFilter = normalizeString(block.props.emailAccountFilter);
-    const emailCompanyFilter = normalizeString(block.props.emailCompanyFilter);
+    const emailCompanyFilter = useMemo(
+      () => normalizeInformationalEmailCompanyFilter(block.props.emailCompanyFilter),
+      [block.props.emailCompanyFilter]
+    );
     const emailContactFilter = useMemo(
       () => normalizeInformationalEmailContactFilter(block.props.emailContactFilter),
       [block.props.emailContactFilter]
@@ -860,34 +856,13 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
     const manualRows = useMemo(() => normalizeRows(block.props.rows, manualColumns.length), [block.props.rows, manualColumns]);
     const persistedColumnWidths = useMemo(() => normalizeColumnWidths(block.props.columnWidths), [block.props.columnWidths]);
 
-    const legacyLinkedTableTarget = linkedTableId
-      ? tableTargets.find((target) => target.blockId === linkedTableId) || null
-      : null;
-    const matchedCanonicalTableTarget = canonicalTableRef
-      ? tableTargets.find(
-          (target) =>
-            target.blockId === canonicalTableRef.blockId &&
-            target.pageId === canonicalTableRef.legacyPageId
-        ) || null
-      : null;
-    const linkedTableTarget = canonicalTableRef ? matchedCanonicalTableTarget : legacyLinkedTableTarget;
-    const linkedEmailTarget = linkedEmailId
-      ? emailTargets.find((target) => target.blockId === linkedEmailId) || null
-      : null;
-
     const linkedTableModel = useMemo<InformationalLinkedTableModel | null>(() => {
-      const sourceTarget = canonicalTableTarget
-        ? {
-            blockId: canonicalTableTarget.blockId,
-            props: canonicalTableTarget.props
-          }
-        : linkedTableTarget;
-      if (!sourceTarget) return null;
-      if (isTrackerSourceTarget(sourceTarget)) {
-        return buildTrackerSourceModel(sourceTarget.props, settings, applications);
+      if (!linkedTableTarget) return null;
+      if (isTrackerSourceTarget(linkedTableTarget)) {
+        return buildTrackerSourceModel(linkedTableTarget.props, settings, applications);
       }
-      return toVisibleEditableTableModel(sourceTarget.props as PageBlockPropsMap["editableTable"], settings);
-    }, [applications, canonicalTableTarget, linkedTableTarget, settings]);
+      return toVisibleEditableTableModel(linkedTableTarget.props as PageBlockPropsMap["editableTable"], settings);
+    }, [applications, linkedTableTarget, settings]);
 
     const selectedVisibleColumns = useMemo(
       () => normalizeSelectedColumns(block.props.sourceVisibleColumns, linkedTableModel?.columns || []),
@@ -960,11 +935,14 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
         ).sort((left, right) => left.localeCompare(right)),
       [scopedReadContacts]
     );
-    const effectiveEmailCompanyFilter = availableCompanyOptions.includes(emailCompanyFilter) ? emailCompanyFilter : "";
+    const effectiveEmailCompanyFilter = useMemo(
+      () => emailCompanyFilter.filter((c) => availableCompanyOptions.includes(c)),
+      [emailCompanyFilter, availableCompanyOptions]
+    );
     const companyFilteredContacts = useMemo(
       () =>
-        effectiveEmailCompanyFilter
-          ? scopedReadContacts.filter((contact) => contact.company === effectiveEmailCompanyFilter)
+        effectiveEmailCompanyFilter.length > 0
+          ? scopedReadContacts.filter((contact) => effectiveEmailCompanyFilter.includes(contact.company || ""))
           : scopedReadContacts,
       [scopedReadContacts, effectiveEmailCompanyFilter]
     );
@@ -988,11 +966,16 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       }
       return next;
     }, [companyFilteredContacts, effectiveEmailContactFilter]);
+    const filteredReadContactsKey = useMemo(
+      () => filteredReadContacts.map((contact) => contact.email).sort((left, right) => left.localeCompare(right)).join("|"),
+      [filteredReadContacts]
+    );
 
     const linkedEmailFolder = emailFolderFilter || normalizeString(linkedEmailTarget?.props.folder) || READ_MAILBOX_ALL;
     const linkedEmailFolderParam = resolveEmailMetadataFolderParam(linkedEmailFolder);
     const linkedEmailStartDate = normalizeString(linkedEmailTarget?.props.readStartDate) || undefined;
     const effectiveEmailStartDate = emailLookbackDays ? buildLookbackStartDate(emailLookbackDays) : linkedEmailStartDate;
+    const emailLoadRequestKey = `${linkedEmailId || ""}|${linkedEmailFolderParam || ""}|${effectiveEmailStartDate || ""}|${filteredReadContactsKey}`;
     const linkedEmailAccountFilter = normalizeString(linkedEmailTarget?.props.readAccountFilter) || READ_MAILBOX_ALL;
     const accountOptions = useMemo(
       () => buildEmailAccountOptions(googleAccounts, linkedEmailAccountFilter, emailAccountFilter),
@@ -1082,6 +1065,87 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
     }, [visibleColumnsMenuOpen]);
 
     useEffect(() => {
+      if (!isConfigOpen || sourceMode !== "email") {
+        setCompanyFilterOpen(false);
+        setCompanyFilterPos(null);
+        setContactFilterOpen(false);
+        setContactFilterPos(null);
+      }
+    }, [isConfigOpen, sourceMode]);
+
+    useEffect(() => {
+      if (!companyFilterOpen || !companyFilterTriggerRef.current) return;
+      const MENU_WIDTH = 280;
+      const updatePosition = () => {
+        if (!companyFilterTriggerRef.current) return;
+        const rect = companyFilterTriggerRef.current.getBoundingClientRect();
+        const menuHeight = companyFilterMenuRef.current?.offsetHeight || 280;
+        const menuWidth = Math.min(MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2);
+        const maxLeft = Math.max(FLOATING_MENU_GUTTER, window.innerWidth - menuWidth - FLOATING_MENU_GUTTER);
+        const left = Math.min(Math.max(rect.left, FLOATING_MENU_GUTTER), maxLeft);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const shouldFlip = spaceBelow < menuHeight + FLOATING_MENU_OFFSET && rect.top > spaceBelow;
+        const rawTop = shouldFlip ? rect.top - menuHeight - FLOATING_MENU_OFFSET : rect.bottom + FLOATING_MENU_OFFSET;
+        const maxTop = Math.max(FLOATING_MENU_GUTTER, window.innerHeight - menuHeight - FLOATING_MENU_GUTTER);
+        const top = Math.min(Math.max(rawTop, FLOATING_MENU_GUTTER), maxTop);
+        setCompanyFilterPos({ top, left });
+      };
+      const handleOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (
+          companyFilterMenuRef.current?.contains(target) ||
+          companyFilterTriggerRef.current?.contains(target)
+        ) return;
+        setCompanyFilterOpen(false);
+      };
+      updatePosition();
+      document.addEventListener("mousedown", handleOutside);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      return () => {
+        document.removeEventListener("mousedown", handleOutside);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }, [companyFilterOpen]);
+
+    useEffect(() => {
+      if (!contactFilterOpen || !contactFilterTriggerRef.current) return;
+      const MENU_WIDTH = 320;
+      const updatePosition = () => {
+        if (!contactFilterTriggerRef.current) return;
+        const rect = contactFilterTriggerRef.current.getBoundingClientRect();
+        const menuHeight = contactFilterMenuRef.current?.offsetHeight || 280;
+        const menuWidth = Math.min(MENU_WIDTH, window.innerWidth - FLOATING_MENU_GUTTER * 2);
+        const maxLeft = Math.max(FLOATING_MENU_GUTTER, window.innerWidth - menuWidth - FLOATING_MENU_GUTTER);
+        const left = Math.min(Math.max(rect.left, FLOATING_MENU_GUTTER), maxLeft);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const shouldFlip = spaceBelow < menuHeight + FLOATING_MENU_OFFSET && rect.top > spaceBelow;
+        const rawTop = shouldFlip ? rect.top - menuHeight - FLOATING_MENU_OFFSET : rect.bottom + FLOATING_MENU_OFFSET;
+        const maxTop = Math.max(FLOATING_MENU_GUTTER, window.innerHeight - menuHeight - FLOATING_MENU_GUTTER);
+        const top = Math.min(Math.max(rawTop, FLOATING_MENU_GUTTER), maxTop);
+        setContactFilterPos({ top, left });
+      };
+      const handleOutside = (event: MouseEvent) => {
+        const target = event.target as Node;
+        if (
+          contactFilterMenuRef.current?.contains(target) ||
+          contactFilterTriggerRef.current?.contains(target)
+        ) return;
+        setContactFilterOpen(false);
+      };
+      updatePosition();
+      document.addEventListener("mousedown", handleOutside);
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      return () => {
+        document.removeEventListener("mousedown", handleOutside);
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }, [contactFilterOpen]);
+
+    useEffect(() => {
       if (!resizing) return;
       const handleMove = (event: MouseEvent) => {
         const delta = event.clientX - resizing.startX;
@@ -1115,101 +1179,17 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       };
     }, [patchBlockProps, persistedColumnWidths, resizing]);
 
-    useEffect(() => {
-      if (sourceMode !== "editableTable") return;
-      if (canonicalTableRef || !legacyLinkedTableTarget) return;
-      let cancelled = false;
-
-      void (async () => {
-        try {
-          const nextRef = await buildCanonicalTableLinkRef(legacyLinkedTableTarget);
-          if (cancelled) return;
-          patchBlockProps({
-            ...(patchBlockLink(
-              { links: block.props.links },
-              INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
-              null
-            ) as Partial<PageBlockPropsMap["informationalTable"]>),
-            sourceCanonicalTableRef: nextRef
-          });
-        } catch {
-          // Keep the legacy link as fallback if canonical resolution is not available.
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [
-      block.props.links,
-      canonicalTableRef?.canonicalPageId,
-      canonicalTableRef?.legacyPageId,
-      canonicalTableRef?.blockId,
-      legacyLinkedTableTarget?.pageId,
-      legacyLinkedTableTarget?.blockId,
-      legacyLinkedTableTarget?.title,
-      patchBlockProps,
-      sourceMode
-    ]);
-
-    useEffect(() => {
-      if (sourceMode !== "editableTable" || !canonicalTableRef) {
-        setCanonicalTableTarget(null);
-        setCanonicalTableLoading(false);
-        return;
-      }
-      let cancelled = false;
-      setCanonicalTableLoading(true);
-
-      void (async () => {
-        try {
-          const payload = await getPageBlocks(canonicalTableRef.canonicalPageId);
-          if (cancelled) return;
-          const match = (payload.blocks || []).find((candidate) => candidate.id === canonicalTableRef.blockId) || null;
-          if (!match || (match.type !== "editableTable" && match.type !== "todoTable")) {
-            setCanonicalTableTarget(null);
-            return;
-          }
-          const props = isRecord(match.props) ? match.props : {};
-          setCanonicalTableTarget({
-            canonicalPageId: canonicalTableRef.canonicalPageId,
-            legacyPageId: canonicalTableRef.legacyPageId,
-            blockId: match.id,
-            title:
-              normalizeString(props.title) ||
-              canonicalTableRef.title ||
-              match.id,
-            type: match.type,
-            props
-          });
-        } catch {
-          if (cancelled) return;
-          setCanonicalTableTarget(null);
-        } finally {
-          if (!cancelled) {
-            setCanonicalTableLoading(false);
-          }
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [
-      canonicalTableRef?.canonicalPageId,
-      canonicalTableRef?.legacyPageId,
-      canonicalTableRef?.blockId,
-      canonicalTableRef?.title,
-      sourceMode
-    ]);
+    // Legacy canonical table resolution removed — the global BlockGraph resolves all blocks by blockId.
 
     useEffect(() => {
       if (sourceMode !== "email") {
+        emailLoadInFlightKeyRef.current = null;
         setEmailState(DEFAULT_EMAIL_STATE);
         return;
       }
 
       if (!linkedEmailTarget) {
+        emailLoadInFlightKeyRef.current = null;
         setEmailState({
           ...DEFAULT_EMAIL_STATE,
           totalContacts: filteredReadContacts.length
@@ -1218,6 +1198,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       }
 
       if (!linkedEmailReadEnabled) {
+        emailLoadInFlightKeyRef.current = null;
         setEmailState({
           ...DEFAULT_EMAIL_STATE,
           error: "El bloque de correo vinculado tiene la lectura de correos desactivada.",
@@ -1227,12 +1208,18 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       }
 
       if (filteredReadContacts.length === 0) {
+        emailLoadInFlightKeyRef.current = null;
         setEmailState({
           ...DEFAULT_EMAIL_STATE,
           totalContacts: 0
         });
         return;
       }
+
+      if (emailLoadInFlightKeyRef.current === emailLoadRequestKey) {
+        return;
+      }
+      emailLoadInFlightKeyRef.current = emailLoadRequestKey;
 
       const controller = new AbortController();
       const contactsToLoad = filteredReadContacts;
@@ -1291,13 +1278,19 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
         }
       })();
 
-      return () => controller.abort();
+      return () => {
+        controller.abort();
+        if (emailLoadInFlightKeyRef.current === emailLoadRequestKey) {
+          emailLoadInFlightKeyRef.current = null;
+        }
+      };
     }, [
-      filteredReadContacts,
+      emailLoadRequestKey,
+      filteredReadContactsKey,
       linkedEmailReadEnabled,
       linkedEmailFolderParam,
       effectiveEmailStartDate,
-      linkedEmailTarget,
+      linkedEmailId,
       sourceMode
     ]);
 
@@ -1348,11 +1341,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       [limitedDisplayEmailMessages, linkedEmailFolder]
     );
 
-    const selectedTableValue = canonicalTableRef
-      ? encodeTableTargetValue(canonicalTableRef.legacyPageId, canonicalTableRef.blockId)
-      : linkedTableTarget
-        ? encodeTableTargetValue(linkedTableTarget.pageId, linkedTableTarget.blockId)
-        : "";
+    const selectedTableValue = linkedTableTarget?.blockId || "";
     const visibleColumnsSummary = !linkedTableModel || linkedTableModel.columns.length === 0
       ? "Selecciona una tabla"
       : visibleLinkedColumns.length === linkedTableModel.columns.length
@@ -1407,43 +1396,18 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
       persistSourceColumnOrder(reorderByIndex(sourceColumnOrder, fromIndex, toIndex));
     };
 
-    const setLinkedTable = async (nextValue: string) => {
-      const decoded = decodeTableTargetValue(nextValue);
-      if (!decoded) {
-        patchBlockProps({
-          ...(patchBlockLink(
-            block.props,
-            INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
-            null
-          ) as Partial<PageBlockPropsMap["informationalTable"]>),
-          sourceCanonicalTableRef: undefined,
-          sourceColumnOrder: undefined,
-          sourceVisibleColumns: undefined,
-          sourceMode: "editableTable"
-        });
-        return;
-      }
-      const nextTarget = tableTargets.find(
-        (target) => target.pageId === decoded.legacyPageId && target.blockId === decoded.blockId
-      ) || null;
-      if (!nextTarget) return;
-      setCanonicalTableResolving(true);
-      try {
-        const nextRef = await buildCanonicalTableLinkRef(nextTarget);
-        patchBlockProps({
-          ...(patchBlockLink(
-            block.props,
-            INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
-            null
-          ) as Partial<PageBlockPropsMap["informationalTable"]>),
-          sourceCanonicalTableRef: nextRef,
-          sourceColumnOrder: undefined,
-          sourceVisibleColumns: undefined,
-          sourceMode: "editableTable"
-        });
-      } finally {
-        setCanonicalTableResolving(false);
-      }
+    const setLinkedTable = (nextBlockId: string) => {
+      patchBlockProps({
+        ...(patchBlockLink(
+          block.props,
+          INFORMATIONAL_TABLE_SOURCE_TABLE_LINK_KEY,
+          nextBlockId || null
+        ) as Partial<PageBlockPropsMap["informationalTable"]>),
+        sourceCanonicalTableRef: undefined,
+        sourceColumnOrder: undefined,
+        sourceVisibleColumns: undefined,
+        sourceMode: "editableTable"
+      });
     };
 
     const setLinkedEmail = (nextBlockId: string) => {
@@ -1487,10 +1451,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
 
     const renderBlockContent = () => {
       if (sourceMode === "editableTable") {
-        if (canonicalTableLoading || canonicalTableResolving) {
-          return <div className="empty">Resolviendo tabla editable canónica...</div>;
-        }
-        if (!canonicalTableRef && !linkedTableTarget) {
+        if (!linkedTableTarget) {
           return <div className="empty">Selecciona una tabla editable para vincular este bloque.</div>;
         }
         if (!linkedTableModel) {
@@ -1554,9 +1515,6 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
 
     const previewContent = (() => {
       if (sourceMode === "editableTable") {
-        if (canonicalTableLoading || canonicalTableResolving) {
-          return <div className="empty">Cargando vista previa de la tabla canónica...</div>;
-        }
         if (!linkedTableModel) {
           return <div className="empty">Vincula una tabla editable para ver una vista previa.</div>;
         }
@@ -1662,13 +1620,12 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                               onChange={(event) => {
                                 void setLinkedTable(event.target.value);
                               }}
-                              disabled={canonicalTableResolving}
                             >
                               <option value="">Selecciona una tabla</option>
                               {tableTargets.map((target) => (
                                 <option
-                                  key={`${target.pageId}:${target.blockId}`}
-                                  value={encodeTableTargetValue(target.pageId, target.blockId)}
+                                  key={target.blockId}
+                                  value={target.blockId}
                                 >
                                   {formatTargetLabel(target)}
                                 </option>
@@ -1688,8 +1645,6 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                                   className={`select-trigger informational-table-columns-trigger ${visibleColumnsMenuOpen ? "open" : ""}`}
                                   onClick={() => setVisibleColumnsMenuOpen((current) => !current)}
                                   disabled={
-                                    canonicalTableResolving ||
-                                    canonicalTableLoading ||
                                     !linkedTableModel ||
                                     linkedTableModel.columns.length === 0
                                   }
@@ -1704,8 +1659,6 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                                   className="ghost"
                                   onClick={resetVisibleColumns}
                                   disabled={
-                                    canonicalTableResolving ||
-                                    canonicalTableLoading ||
                                     !linkedTableModel ||
                                     linkedTableModel.columns.length === 0
                                   }
@@ -1715,9 +1668,7 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                               </div>
                               {!linkedTableModel || linkedTableModel.columns.length === 0 ? (
                                 <div className="empty">
-                                  {canonicalTableLoading || canonicalTableResolving
-                                    ? "Resolviendo la tabla canónica para cargar sus columnas."
-                                    : "Selecciona primero una tabla para elegir columnas."}
+                                  Selecciona primero una tabla para elegir columnas.
                                 </div>
                               ) : null}
                             </div>
@@ -1743,63 +1694,47 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                             </div>
 
                             <div className="field">
-                              <label htmlFor={`${block.id}-informational-email-company`}>Empresa</label>
-                              <select
-                                id={`${block.id}-informational-email-company`}
-                                value={effectiveEmailCompanyFilter}
-                                onChange={(event) =>
-                                  patchBlockProps({
-                                    emailCompanyFilter: event.target.value || undefined,
-                                    emailContactFilter: undefined
-                                  })
-                                }
+                              <label id={`${block.id}-informational-email-company`}>Empresa</label>
+                              <button
+                                ref={companyFilterTriggerRef}
+                                type="button"
+                                className={`select-trigger informational-email-filter-trigger ${companyFilterOpen ? "open" : ""}`}
+                                onClick={() => setCompanyFilterOpen((prev) => !prev)}
+                                disabled={availableCompanyOptions.length === 0}
+                                aria-haspopup="listbox"
+                                aria-expanded={companyFilterOpen}
                               >
-                                <option value="">Todas las empresas</option>
-                                {availableCompanyOptions.map((company) => (
-                                  <option key={`${block.id}-company-${company}`} value={company}>
-                                    {company}
-                                  </option>
-                                ))}
-                              </select>
+                                <span className="select-pill">
+                                  {effectiveEmailCompanyFilter.length === 0
+                                    ? "Todas las empresas"
+                                    : effectiveEmailCompanyFilter.length === 1
+                                      ? effectiveEmailCompanyFilter[0]
+                                      : `${effectiveEmailCompanyFilter[0]} +${effectiveEmailCompanyFilter.length - 1}`}
+                                </span>
+                                <span className="select-caret">▾</span>
+                              </button>
+                              {availableCompanyOptions.length === 0 ? (
+                                <p className="block-field-hint">No hay empresas disponibles.</p>
+                              ) : null}
                             </div>
 
                             <div className="field">
-                              <label htmlFor={`${block.id}-informational-email-contact`}>Contacto</label>
-                              <select
-                                className="informational-email-multi-select"
-                                id={`${block.id}-informational-email-contact`}
-                                multiple
-                                size={Math.min(Math.max(companyFilteredContacts.length, 4), 8)}
-                                value={effectiveEmailContactFilter}
-                                onChange={(event) => {
-                                  const nextSelectedContacts = Array.from(event.target.selectedOptions)
-                                    .map((option) => option.value)
-                                    .filter(Boolean);
-                                  patchBlockProps({
-                                    emailContactFilter: nextSelectedContacts.length > 0 ? nextSelectedContacts : undefined
-                                  });
-                                }}
+                              <label id={`${block.id}-informational-email-contact`}>Contacto</label>
+                              <button
+                                ref={contactFilterTriggerRef}
+                                type="button"
+                                className={`select-trigger informational-email-filter-trigger ${contactFilterOpen ? "open" : ""}`}
+                                onClick={() => setContactFilterOpen((prev) => !prev)}
+                                disabled={companyFilteredContacts.length === 0}
+                                aria-haspopup="listbox"
+                                aria-expanded={contactFilterOpen}
                               >
-                                {companyFilteredContacts.map((contact) => (
-                                  <option key={`${block.id}-contact-${contact.email}`} value={contact.email}>
-                                    {contact.name || contact.email}
-                                    {contact.company ? ` · ${contact.company}` : ""}
-                                  </option>
-                                ))}
-                              </select>
-                              <div className="informational-email-filter-actions">
-                                <p className="block-field-hint">
-                                  Sin selección = todos los contactos. Usa Cmd/Ctrl + clic para elegir varios.
-                                </p>
-                                <button
-                                  type="button"
-                                  className="ghost small"
-                                  onClick={() => patchBlockProps({ emailContactFilter: undefined })}
-                                  disabled={effectiveEmailContactFilter.length === 0}
-                                >
-                                  Mostrar todos
-                                </button>
-                              </div>
+                                <span className="select-pill">{effectiveEmailContactFilterSummary}</span>
+                                <span className="select-caret">▾</span>
+                              </button>
+                              {companyFilteredContacts.length === 0 ? (
+                                <p className="block-field-hint">No hay contactos disponibles.</p>
+                              ) : null}
                             </div>
 
                             <div className="field">
@@ -2037,15 +1972,9 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                           <span>Origen</span>
                           <strong>
                             {sourceMode === "editableTable"
-                              ? canonicalTableTarget
-                                ? `[${canonicalTableTarget.legacyPageId}] ${canonicalTableTarget.title}`
-                                : canonicalTableRef
-                                  ? `[${canonicalTableRef.legacyPageId}] ${canonicalTableRef.title || canonicalTableRef.blockId}`
-                                  : linkedTableTarget
-                                    ? formatTargetLabel(linkedTableTarget)
-                                    : canonicalTableResolving
-                                      ? "Resolviendo…"
-                                      : "Sin vincular"
+                              ? linkedTableTarget
+                                ? formatTargetLabel(linkedTableTarget)
+                                : "Sin vincular"
                               : sourceMode === "email"
                                 ? linkedEmailTarget
                                   ? formatTargetLabel(linkedEmailTarget)
@@ -2185,6 +2114,138 @@ export const INFORMATIONAL_TABLE_BLOCK_DEFINITION: BlockDefinition<"informationa
                 <button type="button" className="select-option" onClick={resetVisibleColumns}>
                   <span className="select-swatch" style={{ backgroundColor: "var(--panel)" }} />
                   <span className="select-label">Mostrar todas</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        {companyFilterOpen &&
+          companyFilterPos &&
+          availableCompanyOptions.length > 0 &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={companyFilterMenuRef}
+              className="select-menu informational-email-filter-menu"
+              style={{
+                position: "fixed",
+                top: companyFilterPos.top,
+                left: companyFilterPos.left,
+                width:
+                  typeof window !== "undefined"
+                    ? Math.min(280, window.innerWidth - FLOATING_MENU_GUTTER * 2)
+                    : 280,
+                zIndex: 80
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div
+                className="select-options informational-email-filter-list"
+                role="listbox"
+                aria-labelledby={`${block.id}-informational-email-company`}
+                aria-multiselectable="true"
+              >
+                {availableCompanyOptions.map((company) => {
+                  const checked = effectiveEmailCompanyFilter.includes(company);
+                  return (
+                    <button
+                      type="button"
+                      key={`${block.id}-company-${company}`}
+                      className={`select-option${checked ? " selected" : ""}`}
+                      onClick={() => {
+                        const next = checked
+                          ? effectiveEmailCompanyFilter.filter((c) => c !== company)
+                          : [...effectiveEmailCompanyFilter, company];
+                        patchBlockProps({
+                          emailCompanyFilter: next.length > 0 ? next : undefined,
+                          emailContactFilter: undefined
+                        });
+                      }}
+                    >
+                      <span className="select-label">{company}</span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+                <div className="column-menu-separator" />
+                <button
+                  type="button"
+                  className="select-option"
+                  onClick={() => {
+                    patchBlockProps({ emailCompanyFilter: undefined, emailContactFilter: undefined });
+                    setCompanyFilterOpen(false);
+                  }}
+                  disabled={effectiveEmailCompanyFilter.length === 0}
+                >
+                  <span className="select-label">Mostrar todas</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
+        {contactFilterOpen &&
+          contactFilterPos &&
+          companyFilteredContacts.length > 0 &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              ref={contactFilterMenuRef}
+              className="select-menu informational-email-filter-menu"
+              style={{
+                position: "fixed",
+                top: contactFilterPos.top,
+                left: contactFilterPos.left,
+                width:
+                  typeof window !== "undefined"
+                    ? Math.min(320, window.innerWidth - FLOATING_MENU_GUTTER * 2)
+                    : 320,
+                zIndex: 80
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div
+                className="select-options informational-email-filter-list"
+                role="listbox"
+                aria-labelledby={`${block.id}-informational-email-contact`}
+                aria-multiselectable="true"
+              >
+                {companyFilteredContacts.map((contact) => {
+                  const checked = effectiveEmailContactFilter.includes(contact.email);
+                  return (
+                    <button
+                      type="button"
+                      key={`${block.id}-contact-${contact.email}`}
+                      className={`select-option${checked ? " selected" : ""}`}
+                      onClick={() => {
+                        const next = checked
+                          ? effectiveEmailContactFilter.filter((e) => e !== contact.email)
+                          : [...effectiveEmailContactFilter, contact.email];
+                        patchBlockProps({
+                          emailContactFilter: next.length > 0 ? next : undefined
+                        });
+                      }}
+                    >
+                      <span className="select-label">
+                        {contact.name || contact.email}
+                        {contact.company ? (
+                          <span className="select-label-muted"> · {contact.company}</span>
+                        ) : null}
+                      </span>
+                      <span className="select-check">{checked ? "✓" : ""}</span>
+                    </button>
+                  );
+                })}
+                <div className="column-menu-separator" />
+                <button
+                  type="button"
+                  className="select-option"
+                  onClick={() => {
+                    patchBlockProps({ emailContactFilter: undefined });
+                    setContactFilterOpen(false);
+                  }}
+                  disabled={effectiveEmailContactFilter.length === 0}
+                >
+                  <span className="select-label">Mostrar todos</span>
                 </button>
               </div>
             </div>,
