@@ -200,10 +200,36 @@ export type InformationalTableBlockProps = LinkableBlockProps & {
   alertColumnOrder?: AlertVisibleColumn[];
 };
 
+export type CalendarEventType = "Application" | "Interview" | "Follow-Up" | "To-Do";
+export type CalendarDisplayMode = "month" | "week";
+export type CalendarColorScheme = "type" | "status" | "company";
+
 export type CalendarBlockProps = LinkableBlockProps & {
   title: string;
   description: string;
   contentSlotId?: string;
+  /** Which event types to show on the calendar grid */
+  visibleEventTypes?: CalendarEventType[];
+  /** Calendar display mode */
+  displayMode?: CalendarDisplayMode;
+  /** How events are color-coded */
+  colorScheme?: CalendarColorScheme;
+  /** Whether to show the day detail panel */
+  showDayPanel?: boolean;
+  /** Whether to show the event count badge per day */
+  showEventCount?: boolean;
+  /** Whether to show time labels on events */
+  showTimeLabels?: boolean;
+  /** Max events to display per day cell before "+N more" */
+  maxEventsPerDay?: number;
+  /** First day of the week: 0 = Monday, 6 = Sunday */
+  weekStartDay?: number;
+  /** Company filter — show only events for these companies */
+  companyFilter?: string[];
+  /** Status filter for highlighted alerts */
+  statusFilter?: AlertStatusFilter[];
+  /** Linked editable table blockIds (multi-select, excludes todoTables) */
+  linkedTableIds?: string[];
 };
 
 export type ChartBlockProps = LinkableBlockProps & {

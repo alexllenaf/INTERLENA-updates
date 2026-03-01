@@ -1123,7 +1123,7 @@ const AppShell: React.FC = () => {
           >
             <GearIcon />
           </button>
-          <p>{t("Local-first · SQLite/Postgres")}</p>
+          <p>Lenna Labs</p>
         </div>
       </BlockPanel>
       <main className="content">

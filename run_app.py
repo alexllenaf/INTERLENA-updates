@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import platform
 import signal
 import shutil
 import socket
@@ -15,6 +16,21 @@ from typing import Iterable
 
 
 DESKTOP_FRONTEND_PORT = 5173
+
+
+def _default_cargo_target_dir(project_root: Path) -> Path:
+    env_value = os.environ.get("CARGO_TARGET_DIR")
+    if env_value:
+        return Path(env_value).expanduser()
+
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Caches" / "interview-atlas" / "tauri-target"
+
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home:
+        return Path(xdg_cache_home) / "interview-atlas" / "tauri-target"
+
+    return project_root / ".cache" / "tauri-target"
 
 
 def _load_env_file(env_path: Path) -> dict[str, str]:
@@ -43,6 +59,14 @@ def _load_env_file(env_path: Path) -> dict[str, str]:
 
 def _build_runtime_env(project_root: Path) -> dict[str, str]:
     env = os.environ.copy()
+    node22_bin = Path("/opt/homebrew/opt/node@22/bin")
+    if platform.system() == "Darwin" and node22_bin.exists():
+        current_path = env.get("PATH", "")
+        path_parts = current_path.split(":") if current_path else []
+        node22_bin_str = str(node22_bin)
+        if node22_bin_str not in path_parts:
+            env["PATH"] = f"{node22_bin_str}:{current_path}" if current_path else node22_bin_str
+
     candidates = [
         project_root / ".env",
         project_root / ".env.local",
@@ -475,12 +499,45 @@ def _ensure_frontend_deps(frontend_dir: Path, allow_install: bool) -> None:
         "npm",
         "Install Node.js (npm) and retry. On macOS with Homebrew: brew install node",
     )
+    env = _build_runtime_env(frontend_dir.parent)
+
+    try:
+        node_version_result = subprocess.run(
+            ["node", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except OSError as exc:
+        raise SystemExit("Unable to execute 'node --version'.") from exc
+
+    node_version_raw = (node_version_result.stdout or node_version_result.stderr or "").strip()
+    if node_version_result.returncode != 0:
+        raise SystemExit(
+            "Node.js is installed but not executable in the current environment. "
+            f"Output: {node_version_raw}\n"
+            "On macOS, install and use Node 22 LTS (Homebrew): brew install node@22"
+        )
+
+    node_major = None
+    if node_version_raw.startswith("v"):
+        parts = node_version_raw[1:].split(".")
+        if parts and parts[0].isdigit():
+            node_major = int(parts[0])
+
+    if node_major is not None and node_major >= 25:
+        raise SystemExit(
+            f"Detected Node.js {node_version_raw}. This project uses Vite 5 and is unstable on Node >= 25. "
+            "Use Node 20 or 22 LTS and retry."
+        )
+
     if not allow_install:
         if not (frontend_dir / "node_modules").exists():
             raise SystemExit("node_modules is missing. Run: npm install (inside frontend).")
         return
     if not (frontend_dir / "node_modules").exists():
-        result = subprocess.call(["npm", "install"], cwd=frontend_dir)
+        result = subprocess.call(["npm", "install"], cwd=frontend_dir, env=env)
         if result != 0:
             raise SystemExit("Failed to install frontend dependencies (npm install).")
 
@@ -603,6 +660,9 @@ def _run_desktop_dev(*, backend_port: int, skip_install: bool) -> None:
         raise SystemExit("\n".join(msg))
 
     env = _build_runtime_env(root)
+    cargo_target_dir = _default_cargo_target_dir(root)
+    cargo_target_dir.mkdir(parents=True, exist_ok=True)
+    env.setdefault("CARGO_TARGET_DIR", str(cargo_target_dir))
     env["APP_PORT"] = str(backend_port)
     env.setdefault("GOOGLE_OAUTH_PORT", str(backend_port))
     backend_cmd = [

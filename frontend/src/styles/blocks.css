@@ -1826,6 +1826,99 @@ button.card-gallery-add {
   color: var(--muted);
 }
 
+/* ── Calendar Config ──────────────────────────────────────────── */
+
+.calendar-config-layout {
+  gap: 18px;
+}
+
+.calendar-config-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.calendar-config-status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-config-status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: var(--surface-alt);
+}
+
+.calendar-config-status-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendar-config-status-item strong {
+  color: var(--text);
+  font-size: 13px;
+  text-align: right;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-config-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calendar-config-quick-actions button {
+  width: 100%;
+  text-align: center;
+}
+
+.calendar-linked-tables-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.calendar-linked-table-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.calendar-linked-table-tag-remove {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.calendar-linked-table-tag-remove:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
 @media (max-width: 980px) {
   .block-config-modal {
     width: min(920px, 100%);

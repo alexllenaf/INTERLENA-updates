@@ -25,7 +25,7 @@ const ES: Record<string, string> = {
   "This sheet does not exist.": "Esta hoja no existe.",
   "Write your notes here...": "Escribe tus notas aqui...",
   "Settings": "Ajustes",
-  "Local-first · SQLite/Postgres": "Local-first · SQLite/Postgres",
+  "Lenna Labs": "Lenna Labs",
   "Personal Interview & Application Tracker": "Tracker de entrevistas y candidaturas",
   "Offline-first workspace for your job search pipeline.": "Espacio de trabajo offline-first para tu proceso de busqueda de empleo.",
   "Loading...": "Cargando...",

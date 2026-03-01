@@ -143,6 +143,14 @@
   color: #4a5568;
 }
 
+/* Company color-scheme: 6 hashed variants */
+.calendar-event-chip.company-0 { background: rgba(59, 130, 246, 0.15); color: #1e40af; }
+.calendar-event-chip.company-1 { background: rgba(16, 185, 129, 0.18); color: #065f46; }
+.calendar-event-chip.company-2 { background: rgba(245, 158, 11, 0.2); color: #92400e; }
+.calendar-event-chip.company-3 { background: rgba(239, 68, 68, 0.18); color: #991b1b; }
+.calendar-event-chip.company-4 { background: rgba(139, 92, 246, 0.18); color: #5b21b6; }
+.calendar-event-chip.company-5 { background: rgba(236, 72, 153, 0.18); color: #9d174d; }
+
 .calendar-more {
   font-size: 11px;
   color: var(--muted);

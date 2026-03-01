@@ -27,11 +27,17 @@ export const toDateKey = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-export const buildWeekdayLabels = (locale?: string): string[] => {
+/**
+ * Build localised weekday header labels.
+ * @param locale  – Intl locale string (e.g. "es", "en-US").
+ * @param weekStartDay – 0 = Monday … 6 = Sunday (ISO-style, default 0).
+ */
+export const buildWeekdayLabels = (locale?: string, weekStartDay: number = 0): string[] => {
   const formatter = new Intl.DateTimeFormat(locale || undefined, { weekday: "short" });
+  // 2021-01-04 is a Monday → index 0 = Mon when weekStartDay = 0
   const base = new Date(2021, 0, 4);
   return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + index);
+    const date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + weekStartDay + index);
     return formatter.format(date);
   });
 };

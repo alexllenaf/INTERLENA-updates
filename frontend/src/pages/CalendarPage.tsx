@@ -30,6 +30,7 @@ import {
 import ContactsEditor from "../components/ContactsEditor";
 import DocumentsDropzone from "../components/DocumentsDropzone";
 import { BlockSlotResolver, PageBlockConfig, PageBuilderPage } from "../components/pageBuilder";
+import type { CalendarBlockProps, CalendarColorScheme } from "../components/pageBuilder/types";
 import {
   TODO_SOURCE_TABLE_LINK_KEY,
   collectEditableTableTargets,
@@ -191,6 +192,22 @@ const CalendarPage: React.FC = () => {
   );
   const calendarGraph = useMemo(() => buildBlockGraph(settings), [settings]);
 
+  /* ── Calendar block configuration (calendar:month) ────────────────── */
+  const calendarBlockConfig = useMemo<Partial<CalendarBlockProps>>(() => {
+    const snap = resolveBlock(calendarGraph, "calendar:month");
+    return (snap?.props ?? {}) as Partial<CalendarBlockProps>;
+  }, [calendarGraph]);
+
+  const calVisibleEventTypes = calendarBlockConfig.visibleEventTypes;
+  const calColorScheme: CalendarColorScheme = calendarBlockConfig.colorScheme ?? "type";
+  const calShowDayPanel = calendarBlockConfig.showDayPanel ?? true;
+  const calShowEventCount = calendarBlockConfig.showEventCount ?? true;
+  const calShowTimeLabels = calendarBlockConfig.showTimeLabels ?? true;
+  const calMaxEventsPerDay = calendarBlockConfig.maxEventsPerDay ?? 2;
+  const calWeekStartDay = calendarBlockConfig.weekStartDay ?? 0;
+  const calCompanyFilter = calendarBlockConfig.companyFilter;
+  const calDisplayMode = calendarBlockConfig.displayMode ?? "month";
+
   const defaultTodoSourceTarget = useMemo(
     () => editableTableTargets.find((target) => target.hasTodoColumn) || editableTableTargets[0] || null,
     [editableTableTargets]
@@ -277,7 +294,7 @@ const CalendarPage: React.FC = () => {
     [defaultTodoSourceTarget, editableTableTargets, t]
   );
 
-  const weekdayLabels = useMemo(() => buildWeekdayLabels(locale), [locale]);
+  const weekdayLabels = useMemo(() => buildWeekdayLabels(locale, calWeekStartDay), [locale, calWeekStartDay]);
   useEffect(() => {
     if (!selected) return;
     const exists = applications.some((app) => app.application_id === selected);
@@ -392,9 +409,23 @@ const CalendarPage: React.FC = () => {
     return items.sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [applications]);
 
+  /* ── Apply calendar config filters (event types + company) ──────── */
+  const filteredEvents = useMemo<CalendarEvent[]>(() => {
+    let result = events;
+    if (calVisibleEventTypes && calVisibleEventTypes.length > 0) {
+      const allowedSet = new Set(calVisibleEventTypes);
+      result = result.filter((e) => allowedSet.has(e.type));
+    }
+    if (calCompanyFilter && calCompanyFilter.length > 0) {
+      const companySet = new Set(calCompanyFilter);
+      result = result.filter((e) => companySet.has(e.company));
+    }
+    return result;
+  }, [events, calVisibleEventTypes, calCompanyFilter]);
+
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
-    events.forEach((event) => {
+    filteredEvents.forEach((event) => {
       const list = map.get(event.dateKey);
       if (list) {
         list.push(event);
@@ -403,7 +434,7 @@ const CalendarPage: React.FC = () => {
       }
     });
     return map;
-  }, [events]);
+  }, [filteredEvents]);
 
   const alerts = useMemo(() => {
     const items: Array<{
@@ -447,8 +478,22 @@ const CalendarPage: React.FC = () => {
   }, [applications]);
 
   const calendarDays = useMemo(() => {
+    if (calDisplayMode === "week") {
+      // Week view: show 7 days starting from the week that contains `cursor`
+      const dayOfWeekMondayBased = (cursor.getDay() + 6) % 7;
+      const weekOffset = (dayOfWeekMondayBased - calWeekStartDay + 7) % 7;
+      const start = new Date(cursor);
+      start.setDate(cursor.getDate() - weekOffset);
+      return Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(start);
+        date.setDate(start.getDate() + index);
+        return date;
+      });
+    }
+    // Month view (default)
     const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-    const weekdayOffset = (firstOfMonth.getDay() + 6) % 7;
+    const dayOfWeekMondayBased = (firstOfMonth.getDay() + 6) % 7;
+    const weekdayOffset = (dayOfWeekMondayBased - calWeekStartDay + 7) % 7;
     const start = new Date(firstOfMonth);
     start.setDate(firstOfMonth.getDate() - weekdayOffset);
     return Array.from({ length: 42 }, (_, index) => {
@@ -456,21 +501,31 @@ const CalendarPage: React.FC = () => {
       date.setDate(start.getDate() + index);
       return date;
     });
-  }, [cursor]);
+  }, [cursor, calWeekStartDay, calDisplayMode]);
 
   const monthLabel = useMemo(
-    () => cursor.toLocaleDateString(locale, { month: "long", year: "numeric" }),
-    [cursor, locale]
+    () => {
+      if (calDisplayMode === "week") {
+        const first = calendarDays[0];
+        const last = calendarDays[calendarDays.length - 1];
+        const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+        return `${first.toLocaleDateString(locale, opts)} – ${last.toLocaleDateString(locale, { ...opts, year: "numeric" })}`;
+      }
+      return cursor.toLocaleDateString(locale, { month: "long", year: "numeric" });
+    },
+    [cursor, locale, calDisplayMode, calendarDays]
   );
 
   const eventsThisMonth = useMemo(
     () =>
-      events.filter(
+      filteredEvents.filter(
         (event) =>
-          event.date.getFullYear() === cursor.getFullYear() &&
-          event.date.getMonth() === cursor.getMonth()
+          calDisplayMode === "week"
+            ? event.date >= calendarDays[0] && event.date <= calendarDays[calendarDays.length - 1]
+            : event.date.getFullYear() === cursor.getFullYear() &&
+              event.date.getMonth() === cursor.getMonth()
       ).length,
-    [events, cursor]
+    [filteredEvents, cursor, calDisplayMode, calendarDays]
   );
 
   const selectedEvents = selectedDay ? eventsByDay.get(selectedDay) ?? [] : [];
@@ -1553,6 +1608,13 @@ const CalendarPage: React.FC = () => {
   }, [selectedDay]);
 
   const shiftMonth = (delta: number) => {
+    if (calDisplayMode === "week") {
+      const next = new Date(cursor);
+      next.setDate(cursor.getDate() + delta * 7);
+      setCursor(next);
+      setSelectedDay(toDateKey(next));
+      return;
+    }
     const next = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
     setCursor(next);
     setSelectedDay(toDateKey(next));
@@ -1886,6 +1948,41 @@ const CalendarPage: React.FC = () => {
   const detailDocuments = detailApp?.documents_files || [];
   const detailContacts = detailApp?.contacts || [];
 
+  /* ── Chip CSS class resolved by colorScheme config ──────────────── */
+  const getChipClass = useCallback(
+    (event: CalendarEvent): string => {
+      if (calColorScheme === "status") {
+        if (event.type === "To-Do") {
+          const app = appById.get(event.appId);
+          const todo = app?.todo_items?.find((t) => t.id === event.todoId);
+          const status = todo ? normalizeTodoStatus(todo.status) : "pending";
+          return status === "done" ? "application" : status === "in-progress" ? "interview" : "todo";
+        }
+        if (event.type === "Follow-Up") {
+          const app = appById.get(event.appId);
+          const fStatus = followupStatus(app?.followup_date);
+          return fStatus === "overdue" ? "followup" : fStatus === "soon" ? "interview" : "application";
+        }
+        return event.type === "Interview" ? "interview" : "application";
+      }
+      if (calColorScheme === "company") {
+        let hash = 0;
+        for (const ch of event.company) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+        const idx = Math.abs(hash) % 6;
+        return `company-${idx}`;
+      }
+      // default: "type"
+      return event.type === "Follow-Up"
+        ? "followup"
+        : event.type === "To-Do"
+        ? "todo"
+        : event.type === "Application"
+        ? "application"
+        : "interview";
+    },
+    [calColorScheme, appById]
+  );
+
   const calendarSlots: Array<{
     id: string;
     content: React.ReactNode;
@@ -1967,10 +2064,10 @@ const CalendarPage: React.FC = () => {
                 {calendarDays.map((date) => {
                   const key = toDateKey(date);
                   const dayEvents = eventsByDay.get(key) ?? [];
-                  const isCurrentMonth = date.getMonth() === cursor.getMonth();
+                  const isCurrentMonth = calDisplayMode === "week" || date.getMonth() === cursor.getMonth();
                   const isToday = key === toDateKey(today);
                   const isSelected = key === selectedDay;
-                  const visibleEvents = dayEvents.slice(0, 2);
+                  const visibleEvents = dayEvents.slice(0, calMaxEventsPerDay);
                   const remainingEvents = dayEvents.length - visibleEvents.length;
                   return (
                     <button
@@ -1988,20 +2085,13 @@ const CalendarPage: React.FC = () => {
                     >
                       <div className="calendar-day-header">
                         <span className="calendar-day-number">{date.getDate()}</span>
-                        {dayEvents.length > 0 ? (
+                        {calShowEventCount && dayEvents.length > 0 ? (
                           <span className="calendar-day-count">{dayEvents.length}</span>
                         ) : null}
                       </div>
                       <div className="calendar-day-events">
                         {visibleEvents.map((event) => {
-                          const chipClass =
-                            event.type === "Follow-Up"
-                              ? "followup"
-                              : event.type === "To-Do"
-                              ? "todo"
-                              : event.type === "Application"
-                              ? "application"
-                              : "interview";
+                          const chipClass = getChipClass(event);
                           return (
                             <span key={event.id} className={`calendar-event-chip ${chipClass}`}>
                               {event.type}
@@ -2017,6 +2107,7 @@ const CalendarPage: React.FC = () => {
                 })}
               </div>
 
+              {calShowDayPanel && (
               <div className="calendar-day-panel">
                 <h4>{selectedDateLabel}</h4>
                 {selectedEvents.length === 0 ? (
@@ -2030,7 +2121,9 @@ const CalendarPage: React.FC = () => {
                           <span>
                             {event.company} — {event.position}
                           </span>
-                          <span>{event.timeLabel ? `${event.timeLabel}` : t("All-day")}</span>
+                          {calShowTimeLabels && (
+                            <span>{event.timeLabel ? `${event.timeLabel}` : t("All-day")}</span>
+                          )}
                         </div>
                         <div className="row-actions">
                           <button
@@ -2081,6 +2174,7 @@ const CalendarPage: React.FC = () => {
                   </div>
                 )}
               </div>
+              )}
             </div>
           </>
         )
